@@ -28,7 +28,7 @@
 ```bash
 export HERMES_DASHBOARD_BASIC_AUTH_USERNAME=gianluca
 export HERMES_DASHBOARD_BASIC_AUTH_PASSWORD='<strong password>'
-hermes web --host <tailscale-ip> --port 9119   # non-loopback bind ⇒ auth_required=True
+hermes dashboard --no-open --host <tailscale-ip> --port 9119   # non-loopback bind ⇒ auth_required=True
 ```
 
 **Known platform risks (checked during Task 9, fallbacks named):**
@@ -1097,7 +1097,7 @@ git add app/chat/ && git commit -m "feat: chat screen with streaming deltas and 
 ```bash
 export HERMES_DASHBOARD_BASIC_AUTH_USERNAME=gianluca
 export HERMES_DASHBOARD_BASIC_AUTH_PASSWORD='<strong password>'
-hermes web --host $(tailscale ip -4) --port 9119
+hermes dashboard --no-open --host $(tailscale ip -4) --port 9119
 ```
 Expected: startup log shows auth required; visiting `http://<tailscale-ip>:9119` from a browser on the tailnet shows the login page.
 

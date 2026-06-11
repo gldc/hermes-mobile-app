@@ -13,7 +13,7 @@ reach `localhost`, and binding to a real interface is also what enables basic au
 ```bash
 export HERMES_DASHBOARD_BASIC_AUTH_USERNAME=<your-username>
 export HERMES_DASHBOARD_BASIC_AUTH_PASSWORD=<your-password>
-hermes web --host <LAN-or-tailscale-IP> --port 9119
+hermes dashboard --no-open --host <LAN-or-tailscale-IP> --port 9119
 ```
 
 Examples for `<LAN-or-tailscale-IP>`:
@@ -39,7 +39,7 @@ code printed in the terminal (iOS: Camera app; Android: Expo Go's built-in scann
 
 On the Connect screen, enter:
 
-- **Server URL:** `http://<that-ip>:9119` (the same IP you passed to `hermes web --host`)
+- **Server URL:** `http://<that-ip>:9119` (the same IP you passed to `hermes dashboard --no-open --host`)
 - **Username / Password:** the values of `HERMES_DASHBOARD_BASIC_AUTH_USERNAME`
   and `HERMES_DASHBOARD_BASIC_AUTH_PASSWORD`
 
