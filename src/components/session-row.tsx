@@ -8,6 +8,7 @@ import { timeAgo } from '@/lib/format';
 import { useTheme } from '@/theme';
 
 const ACTION_WIDTH = 74;
+const COMPACT_ACTION_WIDTH = 56;
 
 function SwipeAction({
   icon,
@@ -16,6 +17,7 @@ function SwipeAction({
   tint,
   accessibilityLabel,
   onPress,
+  compact,
 }: {
   icon: string;
   label: string;
@@ -23,6 +25,8 @@ function SwipeAction({
   tint: string;
   accessibilityLabel: string;
   onPress: () => void;
+  /** Icon-only, for short rows where icon + label would overflow. */
+  compact?: boolean;
 }) {
   return (
     <Pressable
@@ -30,7 +34,7 @@ function SwipeAction({
       accessibilityLabel={accessibilityLabel}
       onPress={onPress}
       style={({ pressed }) => ({
-        width: ACTION_WIDTH,
+        width: compact ? COMPACT_ACTION_WIDTH : ACTION_WIDTH,
         backgroundColor: background,
         alignItems: 'center',
         justifyContent: 'center',
@@ -39,7 +43,7 @@ function SwipeAction({
       })}
     >
       <Image source={icon} style={{ width: 20, height: 20 }} tintColor={tint} />
-      <Text style={{ color: tint, fontSize: 12, fontWeight: '600' }}>{label}</Text>
+      {compact ? null : <Text style={{ color: tint, fontSize: 12, fontWeight: '600' }}>{label}</Text>}
     </Pressable>
   );
 }
@@ -51,6 +55,7 @@ export const SessionRow = memo(function SessionRow({
   onArchive,
   archiveLabel = 'Archive',
   onDelete,
+  compact,
 }: {
   session: SessionSummary;
   onPress: () => void;
@@ -61,13 +66,32 @@ export const SessionRow = memo(function SessionRow({
   archiveLabel?: 'Archive' | 'Unarchive';
   /** When provided, swiping left reveals a destructive Delete action. */
   onDelete?: () => void;
+  /** Sidebar style: a single title line, like the Claude/ChatGPT drawers. */
+  compact?: boolean;
 }) {
   const { colors } = useTheme();
   const title = session.title?.trim() || session.preview?.trim() || 'Untitled conversation';
   const preview = session.title?.trim() ? session.preview?.trim() : undefined;
   const swipeable = Boolean(onRename || onArchive || onDelete);
 
-  const row = (
+  const row = compact ? (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Conversation: ${title}`}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        paddingHorizontal: 16,
+        paddingVertical: 12,
+        borderRadius: 10,
+        borderCurve: 'continuous',
+        backgroundColor: pressed ? colors.raised : swipeable ? colors.bg : 'transparent',
+      })}
+    >
+      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15.5, letterSpacing: -0.1 }}>
+        {title}
+      </Text>
+    </Pressable>
+  ) : (
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Conversation: ${title}`}
@@ -107,7 +131,7 @@ export const SessionRow = memo(function SessionRow({
   return (
     <ReanimatedSwipeable
       friction={2}
-      rightThreshold={ACTION_WIDTH / 2}
+      rightThreshold={(compact ? COMPACT_ACTION_WIDTH : ACTION_WIDTH) / 2}
       overshootRight={false}
       renderRightActions={(_progress, _translation, methods: SwipeableMethods) => (
         <View style={{ flexDirection: 'row' }}>
@@ -115,6 +139,7 @@ export const SessionRow = memo(function SessionRow({
             <SwipeAction
               icon="sf:pencil"
               label="Rename"
+              compact={compact}
               background={colors.raised}
               tint={colors.text}
               accessibilityLabel={`Rename conversation: ${title}`}
@@ -128,6 +153,7 @@ export const SessionRow = memo(function SessionRow({
             <SwipeAction
               icon={archiveLabel === 'Archive' ? 'sf:archivebox.fill' : 'sf:tray.and.arrow.up.fill'}
               label={archiveLabel}
+              compact={compact}
               background={colors.accent}
               tint={colors.onAccent}
               accessibilityLabel={`${archiveLabel} conversation: ${title}`}
@@ -141,6 +167,7 @@ export const SessionRow = memo(function SessionRow({
             <SwipeAction
               icon="sf:trash.fill"
               label="Delete"
+              compact={compact}
               background={colors.danger}
               tint={colors.onDanger}
               accessibilityLabel={`Delete conversation: ${title}`}

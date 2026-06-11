@@ -17,36 +17,40 @@ export interface ThemeColors {
   success: string;
 }
 
-/** Warm, dark-first palette. Bronze accent — Hermes, messenger of the gods. */
+/** Display face for the wordmark and greetings — warm serif, built into iOS. */
+export const serif = 'Georgia';
+
+/** Warm paper-and-ink palette: oat cream in light, soft charcoal in dark,
+ * terracotta accent. Follows the system color scheme. */
 export const palettes: Record<'dark' | 'light', ThemeColors> = {
   dark: {
-    bg: '#141310',
-    surface: '#1D1B17',
-    raised: '#26231E',
-    border: 'rgba(231, 222, 205, 0.08)',
-    text: '#ECE7DC',
-    textDim: '#A39C8F',
-    textFaint: '#6F695E',
-    accent: '#D9A24A',
-    accentPressed: '#BD8A39',
-    onAccent: '#1A1408',
-    userBubble: '#2A2620',
+    bg: '#262624',
+    surface: '#30302E',
+    raised: '#3A3936',
+    border: 'rgba(240, 238, 229, 0.09)',
+    text: '#F0EEE5',
+    textDim: '#A9A69B',
+    textFaint: '#787467',
+    accent: '#D97757',
+    accentPressed: '#BD6244',
+    onAccent: '#2A150C',
+    userBubble: '#393734',
     danger: '#E5685C',
     onDanger: '#FFF6F4',
     success: '#7FB069',
   },
   light: {
-    bg: '#FAF8F4',
-    surface: '#FFFFFF',
-    raised: '#F1EDE4',
-    border: 'rgba(60, 50, 30, 0.10)',
-    text: '#211E18',
-    textDim: '#6E675C',
-    textFaint: '#9B948A',
-    accent: '#B8812F',
-    accentPressed: '#9C6C24',
-    onAccent: '#FFF9EE',
-    userBubble: '#EFEAE0',
+    bg: '#F4F2EB',
+    surface: '#FCFBF8',
+    raised: '#E9E6DB',
+    border: 'rgba(31, 30, 26, 0.09)',
+    text: '#1F1E1A',
+    textDim: '#6F6C62',
+    textFaint: '#A3A093',
+    accent: '#C8643F',
+    accentPressed: '#AD5434',
+    onAccent: '#FFF7F2',
+    userBubble: '#E9E6DB',
     danger: '#C94F43',
     onDanger: '#FFF6F4',
     success: '#4E7A3A',

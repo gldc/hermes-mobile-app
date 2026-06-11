@@ -56,7 +56,7 @@ export default function PairScreen() {
     setError(null);
     try {
       await connectWithDevice(pending.url, pending.rt, pending.deviceId);
-      router.replace('/sessions');
+      router.replace('/chat/new');
       // Fresh pairing is the one moment we soft-ask for notification
       // permission; fire-and-forget so navigation never waits on it.
       void maybeRegisterPush({ softAsk: true });

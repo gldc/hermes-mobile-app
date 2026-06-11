@@ -11,9 +11,10 @@ import {
   View,
 } from 'react-native';
 import { AuthError } from '@/api/restClient';
+import { Starburst } from '@/components/starburst';
 import { connect, restore } from '@/connection';
 import { maybeRegisterPush } from '@/notifications';
-import { useTheme } from '@/theme';
+import { serif, useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
 
@@ -31,7 +32,7 @@ export default function ConnectScreen() {
     restore()
       .then((ok) => {
         if (ok) {
-          router.replace('/sessions');
+          router.replace('/chat/new');
           // Refresh a stale (>7 days) push registration; never prompts here.
           void maybeRegisterPush({ softAsk: false });
         }
@@ -53,7 +54,7 @@ export default function ConnectScreen() {
     setError(null);
     try {
       await connect(url.trim(), username.trim(), password);
-      router.replace('/sessions');
+      router.replace('/chat/new');
     } catch (e) {
       if (e instanceof AuthError) setError('Invalid username or password.');
       else setError('Could not reach the gateway. Check the address and your network.');
@@ -85,22 +86,9 @@ export default function ConnectScreen() {
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 24, gap: 28 }}
         style={{ backgroundColor: colors.bg }}
       >
-        <View style={{ alignItems: 'center', gap: 14 }}>
-          <View
-            style={{
-              width: 72,
-              height: 72,
-              borderRadius: 22,
-              borderCurve: 'continuous',
-              backgroundColor: colors.accent,
-              alignItems: 'center',
-              justifyContent: 'center',
-              boxShadow: '0 8px 28px rgba(217, 162, 74, 0.35)',
-            }}
-          >
-            <Image source="sf:paperplane.fill" style={{ width: 32, height: 32 }} tintColor={colors.onAccent} />
-          </View>
-          <Text style={{ color: colors.text, fontSize: 30, fontWeight: '700', letterSpacing: -0.5 }}>Hermes</Text>
+        <View style={{ alignItems: 'center', gap: 16 }}>
+          <Starburst size={56} />
+          <Text style={{ fontFamily: serif, color: colors.text, fontSize: 34 }}>Hermes</Text>
           <Text style={{ color: colors.textDim, fontSize: 15, textAlign: 'center' }}>
             Your agent, in your pocket.{'\n'}Connects over your private network.
           </Text>
