@@ -12,7 +12,6 @@ import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
 import { ApprovalCard } from '@/components/approval-card';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
-import { Starburst } from '@/components/starburst';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { openGateway, withAuthRetry } from '@/connection';
 import { getProfileState, hydrateProfileStore } from '@/profile-store';
@@ -518,7 +517,14 @@ export default function ChatScreen() {
     >
       {showGreeting ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 18 }}>
-          <Starburst size={46} />
+          <Image
+            source={require('../../../assets/images/hermesagent-text.svg')}
+            accessibilityLabel="Hermes Agent"
+            contentFit="contain"
+            tintColor={colors.text}
+            // The wordmark's viewBox is 52×24; size 56 matches HermesAgent.Text.
+            style={{ height: 56, width: (56 * 52) / 24 }}
+          />
           <Text style={{ fontFamily: serif, color: colors.text, fontSize: 28, textAlign: 'center' }}>
             {greetingForHour(new Date().getHours())}
           </Text>
