@@ -545,10 +545,10 @@ export default function ChatScreen() {
             // 52×24 lockup; size 56 matches HermesAgent.Text.
             style={{ height: 56, width: (56 * 52) / 24 }}
           />
-          <Text style={{ fontFamily: serif, color: colors.text, fontSize: 28, textAlign: 'center' }}>
+          <Text style={{ fontFamily: serif, color: colors.text, fontSize: 30, textAlign: 'center' }}>
             {greetingForHour(new Date().getHours())}
           </Text>
-          <Text style={{ color: colors.textFaint, fontSize: 13.5 }}>Messages run on your own gateway.</Text>
+          <Text style={{ color: colors.textFaint, fontSize: 14 }}>Messages run on your own gateway.</Text>
         </Animated.View>
       ) : (
         <FlatList

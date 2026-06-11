@@ -8,11 +8,11 @@ function buildStyles(c: ThemeColors) {
     backgroundColor: c.raised,
     color: c.text,
     fontFamily: 'Menlo',
-    fontSize: 13.5,
+    fontSize: 14,
     borderWidth: 0,
   };
   return {
-    body: { color: c.text, fontSize: 16, lineHeight: 25 },
+    body: { color: c.text, fontSize: 17, lineHeight: 27 },
     paragraph: { marginTop: 0, marginBottom: 10 },
     heading1: { color: c.text, fontSize: 24, lineHeight: 32, fontWeight: '700', marginTop: 14, marginBottom: 6 },
     heading2: { color: c.text, fontSize: 20, lineHeight: 28, fontWeight: '700', marginTop: 12, marginBottom: 6 },

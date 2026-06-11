@@ -103,8 +103,8 @@ export function Composer({
           editable={!disabled}
           multiline
           placeholder={streaming ? 'Hermes is responding…' : 'Chat with Hermes'}
-          placeholderTextColor={colors.textFaint}
-          style={{ color: colors.text, fontSize: 16.5, lineHeight: 22, maxHeight: 120, paddingTop: 10, paddingBottom: 2 }}
+          placeholderTextColor={colors.placeholder}
+          style={{ color: colors.text, fontSize: 17, lineHeight: 23, maxHeight: 120, paddingTop: 10, paddingBottom: 2 }}
         />
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
@@ -147,7 +147,7 @@ export function Composer({
                 maxWidth: 180,
               })}
             >
-              <Text numberOfLines={1} style={{ color: colors.textDim, fontSize: 13.5, fontWeight: '600' }}>
+              <Text numberOfLines={1} style={{ color: colors.text, fontSize: 14, fontWeight: '500' }}>
                 {modelName}
               </Text>
             </Pressable>
