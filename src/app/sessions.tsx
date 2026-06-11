@@ -1,8 +1,9 @@
 import { Stack, router, useFocusEffect } from 'expo-router';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
+import { ActionSheetIOS, Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import { getActiveProfile, listProfiles, listSessionsForProfile } from '@/api/profiles';
 import { searchSessions, type SearchResult } from '@/api/search';
 import { deleteSession, renameSession } from '@/api/sessions';
 import type { SessionSummary } from '@/api/types';
@@ -10,6 +11,15 @@ import { SearchResultRow } from '@/components/search-result-row';
 import { SessionRow } from '@/components/session-row';
 import { AuthError } from '@/api/restClient';
 import { withAuthRetry } from '@/connection';
+import {
+  activeProfileLabel,
+  canServerSearch,
+  getProfileState,
+  hydrateProfileStore,
+  setSelectedProfile,
+  setServerProfiles,
+  subscribeProfiles,
+} from '@/profile-store';
 import { useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
@@ -34,6 +44,8 @@ export default function SessionsScreen() {
   // never render while a newer request is still in flight.
   const [hits, setHits] = useState<{ q: string; results: SearchResult[] } | null>(null);
   const [searchPending, setSearchPending] = useState(false);
+  const profiles = useSyncExternalStore(subscribeProfiles, getProfileState);
+  const activeProfile = profiles.selected; // null = server default (no param sent)
 
   const handleLoadError = useCallback((e: unknown) => {
     if (e instanceof AuthError) {
@@ -48,7 +60,10 @@ export default function SessionsScreen() {
     setRefreshing(true);
     setError(null);
     try {
-      const res = await withAuthRetry((r) => r.listSessions());
+      await hydrateProfileStore();
+      const res = await withAuthRetry((r) =>
+        listSessionsForProfile(r, getProfileState().selected),
+      );
       setSessions(res.sessions);
       setTotal(res.total);
     } catch (e) {
@@ -57,13 +72,15 @@ export default function SessionsScreen() {
       setRefreshing(false);
       setLoaded(true);
     }
-  }, [handleLoadError]);
+  }, [handleLoadError, activeProfile]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || refreshing || query || sessions.length >= total) return;
     setLoadingMore(true);
     try {
-      const res = await withAuthRetry((r) => r.listSessions(sessions.length));
+      const res = await withAuthRetry((r) =>
+        listSessionsForProfile(r, activeProfile, sessions.length),
+      );
       setTotal(res.total);
       setSessions((prev) => {
         const seen = new Set(prev.map((s) => s.id));
@@ -74,7 +91,7 @@ export default function SessionsScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, refreshing, query, sessions, total, handleLoadError]);
+  }, [loadingMore, refreshing, query, sessions, total, handleLoadError, activeProfile]);
 
   useFocusEffect(
     useCallback(() => {
@@ -82,11 +99,57 @@ export default function SessionsScreen() {
     }, [load]),
   );
 
+  // Profile discovery: the switcher pill appears only when the server knows
+  // more than one profile. Failures keep the pill hidden — never blocking.
+  useEffect(() => {
+    (async () => {
+      await hydrateProfileStore();
+      try {
+        const [list, active] = await Promise.all([
+          withAuthRetry((r) => listProfiles(r)),
+          withAuthRetry((r) => getActiveProfile(r)),
+        ]);
+        setServerProfiles(
+          list.profiles.map((p) => p.name),
+          active.current || null,
+        );
+      } catch {
+        // offline or older server — single-profile behavior
+      }
+    })();
+  }, []);
+
+  const showProfilePicker = useCallback(() => {
+    const { names, selected, serverCurrent } = getProfileState();
+    const current = selected ?? serverCurrent;
+    const labels = names.map((n) => (n === current ? `${n} ✓` : n));
+    const pick = (index: number) => {
+      if (index < 0 || index >= names.length || names[index] === current) return;
+      if (isIOS) Haptics.selectionAsync();
+      void setSelectedProfile(names[index]);
+    };
+    if (isIOS) {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { title: 'Switch profile', options: [...labels, 'Cancel'], cancelButtonIndex: names.length },
+        (index) => pick(index === names.length ? -1 : index),
+      );
+    } else {
+      Alert.alert('Switch profile', undefined, [
+        ...names.map((n, i) => ({ text: labels[i], onPress: () => pick(i) })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ]);
+    }
+  }, []);
+
   // Debounced server-side full-text search. While a request is in flight the
   // list keeps showing the instant client-side filter below.
+  // FTS has no profile param (docs/contracts/sessions-extra.md) — it answers
+  // for the backend's own profile only, so skip it for other targets and let
+  // the client-side filter stand.
+  const serverSearchOk = canServerSearch(profiles);
   useEffect(() => {
     const q = query.trim();
-    if (!q) {
+    if (!q || !serverSearchOk) {
       setHits(null);
       setSearchPending(false);
       return;
@@ -113,7 +176,7 @@ export default function SessionsScreen() {
       stale = true;
       clearTimeout(timer);
     };
-  }, [query]);
+  }, [query, serverSearchOk]);
 
   const handleActionError = useCallback((e: unknown, what: string) => {
     if (e instanceof AuthError) {
@@ -136,7 +199,7 @@ export default function SessionsScreen() {
             style: 'destructive',
             onPress: async () => {
               try {
-                await withAuthRetry((r) => deleteSession(r, session.id));
+                await withAuthRetry((r) => deleteSession(r, session.id, activeProfile));
                 setSessions((prev) => prev.filter((s) => s.id !== session.id));
                 setTotal((t) => Math.max(0, t - 1));
                 if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -148,7 +211,7 @@ export default function SessionsScreen() {
         ],
       );
     },
-    [handleActionError],
+    [handleActionError, activeProfile],
   );
 
   const promptRename = useCallback(
@@ -165,7 +228,9 @@ export default function SessionsScreen() {
             onPress: async (value?: string) => {
               const title = (value ?? '').trim();
               try {
-                const res = await withAuthRetry((r) => renameSession(r, session.id, title));
+                const res = await withAuthRetry((r) =>
+                  renameSession(r, session.id, title, activeProfile),
+                );
                 setSessions((prev) =>
                   prev.map((s) =>
                     s.id === session.id ? { ...s, title: res.title?.trim() || null } : s,
@@ -181,7 +246,7 @@ export default function SessionsScreen() {
         session.title ?? '',
       );
     },
-    [handleActionError],
+    [handleActionError, activeProfile],
   );
 
   const titleById = useMemo(() => {
@@ -222,7 +287,39 @@ export default function SessionsScreen() {
             hideWhenScrolling: true,
           },
           headerRight: () => (
-            <View style={{ flexDirection: 'row', gap: 8 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              {profiles.names.length > 1 ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`Active profile: ${activeProfileLabel(profiles)}. Switch profile`}
+                  hitSlop={8}
+                  onPress={showProfilePicker}
+                  style={({ pressed }) => ({
+                    flexDirection: 'row',
+                    alignItems: 'center',
+                    gap: 5,
+                    maxWidth: 124,
+                    paddingHorizontal: 10,
+                    paddingVertical: 6,
+                    borderRadius: 999,
+                    borderCurve: 'continuous',
+                    backgroundColor: colors.raised,
+                    opacity: pressed ? 0.5 : 1,
+                  })}
+                >
+                  <Image
+                    source="sf:person.crop.circle"
+                    style={{ width: 16, height: 16 }}
+                    tintColor={colors.accent}
+                  />
+                  <Text
+                    numberOfLines={1}
+                    style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}
+                  >
+                    {activeProfileLabel(profiles)}
+                  </Text>
+                </Pressable>
+              ) : null}
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Settings"

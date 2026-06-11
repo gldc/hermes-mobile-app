@@ -5,12 +5,14 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
+import { withProfile } from '@/api/profiles';
 import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
 import { ApprovalCard } from '@/components/approval-card';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { openGateway, withAuthRetry } from '@/connection';
+import { getProfileState, hydrateProfileStore } from '@/profile-store';
 import { parseApprovalRequest, resolvedCount, type ApprovalChoice } from '@/lib/approval';
 import { historyToItems } from '@/lib/history';
 import { MAX_ATTACH_BYTES, base64ByteLength, buildAttachParams, type PickedImage } from '@/lib/image-attach';
@@ -38,6 +40,9 @@ export default function ChatScreen() {
   const liveIdRef = useRef<string | null>(null); // gateway (live) session handle
   const storedIdRef = useRef<string | null>(null); // persistent id, survives reconnects
   const cancelledRef = useRef(false);
+  // Profile target captured at mount — keeps create/resume/history consistent
+  // for this chat even if the user switches profiles elsewhere mid-session.
+  const profileRef = useRef<string | null>(getProfileState().selected);
   const keyCounter = useRef(0);
 
   const nextKey = () => `i${keyCounter.current++}`;
@@ -177,7 +182,7 @@ export default function ChatScreen() {
   }
 
   async function loadHistory(storedId: string) {
-    const history = await withAuthRetry((r) => r.getMessages(storedId));
+    const history = await withAuthRetry((r) => r.getMessages(storedId, profileRef.current ?? undefined));
     if (cancelledRef.current) return;
     setItems(historyToItems(history.messages, nextKey));
   }
@@ -241,9 +246,10 @@ export default function ChatScreen() {
     gwRef.current = gw;
     wireGateway(gw);
     if (storedIdRef.current) {
-      const resumed = await gw.call<SessionResumeResult>('session.resume', {
-        session_id: storedIdRef.current,
-      });
+      const resumed = await gw.call<SessionResumeResult>(
+        'session.resume',
+        withProfile({ session_id: storedIdRef.current }, profileRef.current),
+      );
       liveIdRef.current = resumed.session_id;
     }
   }
@@ -277,6 +283,8 @@ export default function ChatScreen() {
     cancelledRef.current = false;
     (async () => {
       try {
+        await hydrateProfileStore(); // no-op when sessions screen already ran
+        profileRef.current = getProfileState().selected;
         if (id !== 'new') {
           storedIdRef.current = id;
           await loadHistory(id);
@@ -383,7 +391,10 @@ export default function ChatScreen() {
       // Sessions are minted lazily on the first message so abandoned "new
       // chat" screens never create empty sessions server-side.
       if (!liveIdRef.current) {
-        const created = await gw.call<SessionCreateResult>('session.create', {});
+        const created = await gw.call<SessionCreateResult>(
+          'session.create',
+          withProfile({}, profileRef.current),
+        );
         liveIdRef.current = created.session_id;
         if (created.stored_session_id) storedIdRef.current = created.stored_session_id;
       }

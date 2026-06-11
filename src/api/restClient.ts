@@ -73,8 +73,9 @@ export class RestClient {
     return this.request<SessionListResponse>(`/api/sessions?limit=40&offset=${offset}&order=recent`);
   }
 
-  getMessages(sessionId: string): Promise<MessagesResponse> {
-    return this.request<MessagesResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/messages`);
+  getMessages(sessionId: string, profile?: string): Promise<MessagesResponse> {
+    const q = profile ? `?profile=${encodeURIComponent(profile)}` : '';
+    return this.request<MessagesResponse>(`/api/sessions/${encodeURIComponent(sessionId)}/messages${q}`);
   }
 
   /** ws:// or wss:// URL for the gateway socket. */
