@@ -1,8 +1,9 @@
 import * as Haptics from 'expo-haptics';
+import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Text, View } from 'react-native';
+import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Pressable, Share, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
 import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
@@ -12,6 +13,7 @@ import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-r
 import { ThinkingDots } from '@/components/thinking-dots';
 import { openGateway, withAuthRetry } from '@/connection';
 import { parseApprovalRequest, resolvedCount, type ApprovalChoice } from '@/lib/approval';
+import { exportAsJsonl, exportAsText } from '@/lib/export';
 import { historyToItems } from '@/lib/history';
 import { MAX_ATTACH_BYTES, base64ByteLength, buildAttachParams, type PickedImage } from '@/lib/image-attach';
 import { useTheme } from '@/theme';
@@ -356,6 +358,36 @@ export default function ChatScreen() {
     }
   }
 
+  /** Share the current conversation via the system share sheet. */
+  async function shareExport(format: 'text' | 'jsonl') {
+    try {
+      const message = format === 'text' ? exportAsText(items) : exportAsJsonl(items);
+      if (!message) return;
+      await Share.share({ message });
+    } catch {
+      // user dismissed the share sheet or sharing is unavailable — not an error
+    }
+  }
+
+  function showExportSheet() {
+    if (items.length === 0) return;
+    if (isIOS) {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { title: 'Export conversation', options: ['Text', 'JSONL', 'Cancel'], cancelButtonIndex: 2 },
+        (index) => {
+          if (index === 0) void shareExport('text');
+          else if (index === 1) void shareExport('jsonl');
+        },
+      );
+    } else {
+      Alert.alert('Export conversation', undefined, [
+        { text: 'Text', onPress: () => void shareExport('text') },
+        { text: 'JSONL', onPress: () => void shareExport('jsonl') },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    }
+  }
+
   async function send() {
     const text = input.trim();
     const image = stagedImage;
@@ -417,7 +449,23 @@ export default function ChatScreen() {
       behavior={isIOS ? 'padding' : undefined}
       keyboardVerticalOffset={headerHeight}
     >
-      <Stack.Screen options={{ title: id === 'new' ? 'New chat' : 'Chat' }} />
+      <Stack.Screen
+        options={{
+          title: id === 'new' ? 'New chat' : 'Chat',
+          headerRight: () =>
+            items.length > 0 ? (
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Export conversation"
+                hitSlop={4}
+                onPress={showExportSheet}
+                style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
+              >
+                <Image source="sf:square.and.arrow.up" style={{ width: 22, height: 22 }} tintColor={colors.accent} />
+              </Pressable>
+            ) : null,
+        }}
+      />
 
       {showGreeting ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 8 }}>
