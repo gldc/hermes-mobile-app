@@ -2,6 +2,7 @@ import { memo, useState } from 'react';
 import { ActivityIndicator, Pressable, Share, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
+import type { ApprovalInfo } from '@/components/approval-card';
 import { MarkdownView } from '@/components/markdown-view';
 import { useTheme } from '@/theme';
 
@@ -22,11 +23,14 @@ export interface ToolInfo {
 
 export interface ChatItem {
   key: string;
-  role: 'user' | 'assistant' | 'tool' | 'status';
+  role: 'user' | 'assistant' | 'tool' | 'status' | 'approval';
   text: string;
   /** Assistant messages render plain text while streaming, markdown once complete. */
   complete?: boolean;
   tool?: ToolInfo;
+  /** Gateway approval request, attached like ToolInfo. Rendered by the chat
+   * screen via ApprovalCard (it owns the respond callback), not MessageRow. */
+  approval?: ApprovalInfo;
 }
 
 function ToolCallCard({ tool }: { tool: ToolInfo }) {
@@ -164,6 +168,10 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
       </View>
     );
   }
+
+  // Approval items are rendered by the chat screen (ApprovalCard needs the
+  // respond callback); render nothing if one ever falls through here.
+  if (item.role === 'approval') return null;
 
   // status
   return (
