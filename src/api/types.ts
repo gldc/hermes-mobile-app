@@ -27,6 +27,8 @@ export interface SessionMessage {
   content?: unknown;
   timestamp: number;
   tool_name?: string | null;
+  /** Set on role='tool' rows; joins to assistant tool_calls[i].id. */
+  tool_call_id?: string | null;
 }
 
 export interface MessagesResponse {

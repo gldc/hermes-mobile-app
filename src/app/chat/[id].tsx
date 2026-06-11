@@ -9,7 +9,7 @@ import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { openGateway, withAuthRetry } from '@/connection';
-import { messageText } from '@/lib/message-text';
+import { historyToItems } from '@/lib/history';
 import { useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
@@ -115,17 +115,7 @@ export default function ChatScreen() {
   async function loadHistory(storedId: string) {
     const history = await withAuthRetry((r) => r.getMessages(storedId));
     if (cancelledRef.current) return;
-    setItems(
-      history.messages
-        .filter((m) => m.role === 'user' || m.role === 'assistant')
-        .map((m) => ({
-          key: nextKey(),
-          role: m.role as 'user' | 'assistant',
-          text: messageText(m),
-          complete: true,
-        }))
-        .filter((m) => m.text.trim().length > 0),
-    );
+    setItems(historyToItems(history.messages, nextKey));
   }
 
   function wireGateway(gw: GatewayClient) {
