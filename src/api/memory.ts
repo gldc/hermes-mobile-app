@@ -2,12 +2,19 @@
 //
 // Memory admin surface, per docs/contracts/memory.md.
 //
-// The dashboard exposes exactly three memory operations: status, provider
-// selection, and reset (file deletion). There is NO per-entry CRUD REST
-// surface — built-in memory is two markdown files on disk (MEMORY.md and
-// USER.md under <HERMES_HOME>/memories/), and provider-backed memory has no
-// REST read/write surface at all.
-import type { RestClient } from './restClient';
+// The dashboard core exposes exactly three memory operations: status,
+// provider selection, and reset (file deletion) — no per-entry CRUD.
+// Built-in memory is two markdown files on disk (MEMORY.md and USER.md
+// under <HERMES_HOME>/memories/).
+//
+// Whole-file read/write IS available when the hermes-mobile plugin (>= the
+// feat/memory-api build) is installed on the gateway: it mounts
+// /api/plugins/mobile/memory/files (manifest name "mobile" — the dashboard
+// mounts plugin routers at /api/plugins/<manifest name>). Those routes accept
+// any authenticated dashboard session and never path-join the file name
+// (fixed allowlist of MEMORY.md / USER.md). If the plugin is missing or too
+// old the routes 404 and the app degrades to read-only sizes.
+import { HttpError, type RestClient } from './restClient';
 
 export interface MemoryProviderInfo {
   name: string;
@@ -68,4 +75,109 @@ export function formatBytes(bytes: number): string {
 function trimDecimal(n: number): string {
   const fixed = n.toFixed(1);
   return fixed.endsWith('.0') ? fixed.slice(0, -2) : fixed;
+}
+
+// ---------------------------------------------------------------------------
+// Whole-file editing via the hermes-mobile plugin (/api/plugins/mobile).
+// ---------------------------------------------------------------------------
+
+/** Route prefix for the plugin's memory-file CRUD (dashboard mounts the
+ * plugin router at /api/plugins/<manifest name>, and the manifest name is
+ * "mobile"). */
+export const MEMORY_FILES_BASE = '/api/plugins/mobile/memory/files';
+
+/** Server-side cap on the UTF-8 encoded PUT body (256 KiB → HTTP 413). */
+export const MEMORY_FILE_MAX_BYTES = 256 * 1024;
+
+/** The fixed server allowlist — anything else 404s. */
+export const MEMORY_FILE_NAMES = ['MEMORY.md', 'USER.md'] as const;
+export type MemoryFileName = (typeof MEMORY_FILE_NAMES)[number];
+
+export interface MemoryFileInfo {
+  name: string;
+  /** Bytes on disk; 0 when absent. */
+  size: number;
+  /** Unix seconds (st_mtime, may be fractional); 0 when absent. */
+  mtime: number;
+  exists: boolean;
+}
+
+export interface MemoryFileListResponse {
+  files: MemoryFileInfo[];
+}
+
+export interface MemoryFileContent {
+  name: string;
+  /** Whole file as UTF-8 text; "" for an allowlisted-but-missing file. */
+  content: string;
+}
+
+export interface MemoryFileWriteResponse {
+  ok: boolean;
+  name: string;
+  size: number;
+}
+
+export function listMemoryFiles(r: RestClient): Promise<MemoryFileListResponse> {
+  return r.get<MemoryFileListResponse>(MEMORY_FILES_BASE);
+}
+
+export function readMemoryFile(r: RestClient, name: MemoryFileName): Promise<MemoryFileContent> {
+  return r.get<MemoryFileContent>(`${MEMORY_FILES_BASE}/${encodeURIComponent(name)}`);
+}
+
+/** Atomic whole-file replace. 413 over the cap, 404 unknown name/old plugin. */
+export function writeMemoryFile(
+  r: RestClient,
+  name: MemoryFileName,
+  content: string,
+): Promise<MemoryFileWriteResponse> {
+  return r.put<MemoryFileWriteResponse>(`${MEMORY_FILES_BASE}/${encodeURIComponent(name)}`, { content });
+}
+
+/** Type guard: is this string one of the two editable file names? */
+export function isMemoryFileName(name: unknown): name is MemoryFileName {
+  return name === 'MEMORY.md' || name === 'USER.md';
+}
+
+/** Human label matching the admin screen's wording. */
+export function memoryFileLabel(name: MemoryFileName): string {
+  return name === 'MEMORY.md' ? 'Agent memory' : 'User profile';
+}
+
+/** UTF-8 byte length of a JS string, mirroring the server's len(content.encode("utf-8")).
+ * Lone surrogates count as 3 bytes (same as TextEncoder's U+FFFD replacement). */
+export function utf8ByteLength(s: string): number {
+  let bytes = 0;
+  for (let i = 0; i < s.length; i++) {
+    const cp = s.codePointAt(i)!;
+    if (cp > 0xffff) i++; // astral char consumed two code units
+    bytes += cp <= 0x7f ? 1 : cp <= 0x7ff ? 2 : cp <= 0xffff ? 3 : 4;
+  }
+  return bytes;
+}
+
+/** Client-side mirror of the server's 413 boundary (262144 bytes is OK, 262145 is not). */
+export function memoryFileTooLarge(content: string): boolean {
+  return utf8ByteLength(content) > MEMORY_FILE_MAX_BYTES;
+}
+
+/** True when an error from the memory-file routes means the gateway's
+ * hermes-mobile plugin is absent or predates the memory API (routes 404/405).
+ * A 404 from the list route can only mean "routes not mounted" — when mounted
+ * it always answers, even with both files missing. */
+export function isMemoryPluginMissing(e: unknown): boolean {
+  return e instanceof HttpError && (e.status === 404 || e.status === 405);
+}
+
+/** User-facing message for a failed memory-file save. */
+export function memoryWriteErrorMessage(e: unknown): string {
+  if (e instanceof HttpError) {
+    if (e.status === 413) return `Too large — memory files are capped at ${formatBytes(MEMORY_FILE_MAX_BYTES)}.`;
+    if (e.status === 403) return 'Permission denied — this session is not allowed to edit memory files.';
+    if (e.status === 404 || e.status === 405) return 'Update the hermes-mobile plugin on the gateway to edit memory.';
+    if (e.status === 503) return 'Memory store unavailable on the gateway — try again.';
+  }
+  if (e instanceof Error && e.message) return e.message;
+  return 'Save failed — the gateway did not accept the change.';
 }
