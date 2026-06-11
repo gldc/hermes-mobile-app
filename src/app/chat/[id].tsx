@@ -518,11 +518,13 @@ export default function ChatScreen() {
       {showGreeting ? (
         <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 18 }}>
           <Image
-            source={require('../../../assets/images/hermesagent-text.svg')}
+            // Pre-rasterized at 3× from the lobehub HermesAgent.Text SVG —
+            // expo-image's SVG coder mangles its evenodd paths.
+            source={require('../../../assets/images/hermesagent-text.png')}
             accessibilityLabel="Hermes Agent"
             contentFit="contain"
             tintColor={colors.text}
-            // The wordmark's viewBox is 52×24; size 56 matches HermesAgent.Text.
+            // 52×24 lockup; size 56 matches HermesAgent.Text.
             style={{ height: 56, width: (56 * 52) / 24 }}
           />
           <Text style={{ fontFamily: serif, color: colors.text, fontSize: 28, textAlign: 'center' }}>
