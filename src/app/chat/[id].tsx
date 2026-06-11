@@ -4,15 +4,16 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
-import type { SessionCreateResult } from '@/api/types';
+import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { ThinkingDots } from '@/components/thinking-dots';
-import { getRest, openGateway } from '@/connection';
+import { openGateway, withAuthRetry } from '@/connection';
 import { messageText } from '@/lib/message-text';
 import { useTheme } from '@/theme';
 
 const isIOS = process.env.EXPO_OS === 'ios';
+const MAX_RECONNECT_ATTEMPTS = 5;
 
 export default function ChatScreen() {
   const { colors } = useTheme();
@@ -24,9 +25,12 @@ export default function ChatScreen() {
   const [streaming, setStreaming] = useState(false);
   const [waiting, setWaiting] = useState(false); // sent, no tokens yet
   const [error, setError] = useState<string | null>(null);
+  const [reconnectNote, setReconnectNote] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const gwRef = useRef<GatewayClient | null>(null);
-  const sessionIdRef = useRef<string | null>(null);
+  const liveIdRef = useRef<string | null>(null); // gateway (live) session handle
+  const storedIdRef = useRef<string | null>(null); // persistent id, survives reconnects
+  const cancelledRef = useRef(false);
   const keyCounter = useRef(0);
 
   const nextKey = () => `i${keyCounter.current++}`;
@@ -71,10 +75,9 @@ export default function ChatScreen() {
   }
 
   function completeTool(payload: any) {
-    const id = String(payload?.tool_id ?? '');
+    const tid = String(payload?.tool_id ?? '');
     setItems((prev) => {
-      // Find the matching running tool (by id, else last running with same name).
-      let idx = prev.findIndex((it) => it.tool?.running && it.tool.id === id);
+      let idx = prev.findIndex((it) => it.tool?.running && it.tool.id === tid);
       if (idx < 0) {
         for (let i = prev.length - 1; i >= 0; i--) {
           if (prev[i].tool?.running && prev[i].tool!.name === String(payload?.name ?? '')) {
@@ -107,76 +110,120 @@ export default function ChatScreen() {
     });
   }
 
+  async function loadHistory(storedId: string) {
+    const history = await withAuthRetry((r) => r.getMessages(storedId));
+    if (cancelledRef.current) return;
+    setItems(
+      history.messages
+        .filter((m) => m.role === 'user' || m.role === 'assistant')
+        .map((m) => ({
+          key: nextKey(),
+          role: m.role as 'user' | 'assistant',
+          text: messageText(m),
+          complete: true,
+        }))
+        .filter((m) => m.text.trim().length > 0),
+    );
+  }
+
+  function wireGateway(gw: GatewayClient) {
+    gw.onEvent((e) => {
+      switch (e.type) {
+        case 'message.delta':
+          appendDelta(e.payload?.text ?? '');
+          break;
+        case 'message.complete':
+          finishAssistant();
+          setStreaming(false);
+          setWaiting(false);
+          if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          break;
+        case 'tool.start':
+          setWaiting(false);
+          finishAssistant();
+          startTool(e.payload);
+          break;
+        case 'tool.complete':
+          completeTool(e.payload);
+          break;
+        case 'status.update':
+          if (e.payload?.text) append('status', e.payload.text);
+          break;
+        case 'error':
+          setStreaming(false);
+          setWaiting(false);
+          setError(e.payload?.message ?? 'agent error');
+          break;
+      }
+    });
+    gw.onClose(() => {
+      if (cancelledRef.current) return;
+      setReady(false);
+      setStreaming(false);
+      setWaiting(false);
+      void reconnect();
+    });
+  }
+
+  /** Open the gateway (fresh single-use ticket) and re-attach the persistent
+   * session, if there is one. */
+  async function establish(): Promise<void> {
+    const gw = await openGateway();
+    if (cancelledRef.current) {
+      gw.close();
+      throw new Error('cancelled');
+    }
+    gwRef.current = gw;
+    wireGateway(gw);
+    if (storedIdRef.current) {
+      const resumed = await gw.call<SessionResumeResult>('session.resume', {
+        session_id: storedIdRef.current,
+      });
+      liveIdRef.current = resumed.session_id;
+    }
+  }
+
+  async function reconnect(): Promise<void> {
+    for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
+      if (cancelledRef.current) return;
+      setReconnectNote(`Connection lost — reconnecting (${attempt}/${MAX_RECONNECT_ATTEMPTS})…`);
+      await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** (attempt - 1), 8000)));
+      if (cancelledRef.current) return;
+      try {
+        await establish();
+        // Resync from the store: anything streamed while offline never reached us.
+        if (storedIdRef.current) await loadHistory(storedIdRef.current);
+        if (cancelledRef.current) return;
+        setReconnectNote(null);
+        setError(null);
+        setReady(true);
+        return;
+      } catch {
+        // next attempt with longer backoff
+      }
+    }
+    if (!cancelledRef.current) {
+      setReconnectNote(null);
+      setError('Could not reconnect. Check your VPN or Wi-Fi, then reopen this chat.');
+    }
+  }
+
   useEffect(() => {
-    let cancelled = false;
+    cancelledRef.current = false;
     (async () => {
       try {
         if (id !== 'new') {
-          const history = await getRest().getMessages(id);
-          if (cancelled) return;
-          setItems(
-            history.messages
-              .filter((m) => m.role === 'user' || m.role === 'assistant')
-              .map((m) => ({
-                key: nextKey(),
-                role: m.role as 'user' | 'assistant',
-                text: messageText(m),
-                complete: true,
-              }))
-              .filter((m) => m.text.trim().length > 0),
-          );
+          storedIdRef.current = id;
+          await loadHistory(id);
         }
-        const gw = await openGateway();
-        if (cancelled) {
-          gw.close();
-          return;
-        }
-        gwRef.current = gw;
-        gw.onEvent((e) => {
-          switch (e.type) {
-            case 'message.delta':
-              appendDelta(e.payload?.text ?? '');
-              break;
-            case 'message.complete':
-              finishAssistant();
-              setStreaming(false);
-              setWaiting(false);
-              if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-              break;
-            case 'tool.start':
-              setWaiting(false);
-              finishAssistant();
-              startTool(e.payload);
-              break;
-            case 'tool.complete':
-              completeTool(e.payload);
-              break;
-            case 'status.update':
-              if (e.payload?.text) append('status', e.payload.text);
-              break;
-            case 'error':
-              setStreaming(false);
-              setWaiting(false);
-              setError(e.payload?.message ?? 'agent error');
-              break;
-          }
-        });
-        gw.onClose(() => {
-          setReady(false);
-          setError('Connection lost — go back and reopen the chat.');
-        });
-        const created = await gw.call<SessionCreateResult>('session.create', {
-          title: id === 'new' ? '' : `Continued from ${id.slice(0, 8)}`,
-        });
-        if (cancelled) return;
-        sessionIdRef.current = created.session_id;
-        setReady(true);
+        await establish();
+        if (!cancelledRef.current) setReady(true);
       } catch {
-        if (!cancelled) setError('Could not open a live session. Check your VPN or Wi-Fi.');
+        if (!cancelledRef.current) setError('Could not open a live session. Check your VPN or Wi-Fi.');
       }
     })();
     return () => {
-      cancelled = true;
+      cancelledRef.current = true;
       gwRef.current?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -185,8 +232,7 @@ export default function ChatScreen() {
   async function send() {
     const text = input.trim();
     const gw = gwRef.current;
-    const sid = sessionIdRef.current;
-    if (!text || !gw || !sid || streaming) return;
+    if (!text || !gw || streaming) return;
     if (isIOS) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setInput('');
     setError(null);
@@ -194,7 +240,14 @@ export default function ChatScreen() {
     setStreaming(true);
     setWaiting(true);
     try {
-      await gw.call('prompt.submit', { session_id: sid, text });
+      // Sessions are minted lazily on the first message so abandoned "new
+      // chat" screens never create empty sessions server-side.
+      if (!liveIdRef.current) {
+        const created = await gw.call<SessionCreateResult>('session.create', {});
+        liveIdRef.current = created.session_id;
+        if (created.stored_session_id) storedIdRef.current = created.stored_session_id;
+      }
+      await gw.call('prompt.submit', { session_id: liveIdRef.current, text });
     } catch (e) {
       setStreaming(false);
       setWaiting(false);
@@ -233,12 +286,17 @@ export default function ChatScreen() {
         />
       )}
 
+      {reconnectNote ? (
+        <Text style={{ color: colors.textDim, fontSize: 13, paddingHorizontal: 16, paddingBottom: 6 }}>
+          {reconnectNote}
+        </Text>
+      ) : null}
       {error ? (
         <Text selectable style={{ color: colors.danger, fontSize: 14, paddingHorizontal: 16, paddingBottom: 6 }}>
           {error}
         </Text>
       ) : null}
-      {!ready && !error && !showGreeting && items.length === 0 ? (
+      {!ready && !error && !reconnectNote && !showGreeting && items.length === 0 ? (
         <View style={{ paddingBottom: 10 }}>
           <ActivityIndicator color={colors.accent} />
         </View>

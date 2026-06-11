@@ -2,7 +2,7 @@
 import * as SecureStore from 'expo-secure-store';
 import { CookieJar } from './api/cookieJar';
 import { GatewayClient, makeNativeSocket } from './api/gatewayClient';
-import { RestClient } from './api/restClient';
+import { AuthError, RestClient } from './api/restClient';
 
 const STORE_KEY = 'hermes-connection';
 
@@ -49,6 +49,34 @@ export async function restore(): Promise<boolean> {
   return true;
 }
 
+/** Silent re-login using stored credentials. False if none stored or rejected. */
+async function reloginFromStore(): Promise<boolean> {
+  const raw = await SecureStore.getItemAsync(STORE_KEY);
+  if (!raw || !rest) return false;
+  const saved: StoredConnection = JSON.parse(raw);
+  try {
+    await rest.login(saved.username, saved.password);
+  } catch {
+    return false;
+  }
+  await SecureStore.setItemAsync(STORE_KEY, JSON.stringify({ ...saved, cookies: jar.toJSON() }));
+  return true;
+}
+
+/** Run an authed call; on session expiry, silently re-login once and retry.
+ * Rethrows AuthError when re-login fails (password changed, access revoked)
+ * — callers route back to the Connect screen on that. */
+export async function withAuthRetry<T>(fn: (r: RestClient) => Promise<T>): Promise<T> {
+  const r = getRest();
+  try {
+    return await fn(r);
+  } catch (e) {
+    if (!(e instanceof AuthError)) throw e;
+    if (!(await reloginFromStore())) throw e;
+    return fn(getRest());
+  }
+}
+
 /** Saved connection details for display (settings screen). */
 export async function connectionInfo(): Promise<{ baseUrl: string; username: string } | null> {
   const raw = await SecureStore.getItemAsync(STORE_KEY);
@@ -65,8 +93,8 @@ export async function disconnect(): Promise<void> {
 
 /** Mint a fresh single-use ticket and open a gateway socket (tickets live 30s — always mint immediately before connecting). */
 export async function openGateway(): Promise<GatewayClient> {
+  const { ticket } = await withAuthRetry((r) => r.wsTicket());
   const r = getRest();
-  const { ticket } = await r.wsTicket();
   const gw = new GatewayClient((url) => makeNativeSocket(url));
   await gw.connect(r.wsUrl(ticket));
   return gw;

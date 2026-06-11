@@ -45,6 +45,12 @@ export interface SessionCreateResult {
   info: { model?: string; profile_name?: string; lazy?: boolean };
 }
 
+/** session.resume reuses a live session or rebuilds it from stored state. */
+export interface SessionResumeResult {
+  session_id: string;
+  resumed?: string;
+}
+
 export type GatewayEventType =
   | 'gateway.ready'
   | 'message.start'
