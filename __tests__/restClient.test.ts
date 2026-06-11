@@ -78,3 +78,14 @@ describe('RestClient', () => {
     expect(f.calls[0].url).toBe('http://h/api/sessions?limit=40&offset=40&order=recent');
   });
 });
+
+describe('listSessions archived', () => {
+  it('appends archived=only and keeps the default URL unchanged otherwise', async () => {
+    const f = fakeFetch(200, { sessions: [], total: 0, limit: 40, offset: 0 });
+    const c = new RestClient('http://h', new CookieJar(), f as any);
+    await c.listSessions(0, 'only');
+    await c.listSessions(0);
+    expect(f.calls[0].url).toBe('http://h/api/sessions?limit=40&offset=0&order=recent&archived=only');
+    expect(f.calls[1].url).toBe('http://h/api/sessions?limit=40&offset=0&order=recent');
+  });
+});

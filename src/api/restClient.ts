@@ -80,8 +80,9 @@ export class RestClient {
     return this.request<WsTicketResponse>('/api/auth/ws-ticket', { method: 'POST', body: '{}' });
   }
 
-  listSessions(offset = 0): Promise<SessionListResponse> {
-    return this.request<SessionListResponse>(`/api/sessions?limit=40&offset=${offset}&order=recent`);
+  listSessions(offset = 0, archived: 'exclude' | 'only' = 'exclude'): Promise<SessionListResponse> {
+    const arch = archived === 'only' ? '&archived=only' : '';
+    return this.request<SessionListResponse>(`/api/sessions?limit=40&offset=${offset}&order=recent${arch}`);
   }
 
   getMessages(sessionId: string, profile?: string): Promise<MessagesResponse> {

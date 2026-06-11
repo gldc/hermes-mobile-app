@@ -85,10 +85,12 @@ export function listSessionsForProfile(
   r: Pick<RestClient, 'get' | 'listSessions'>,
   profile: string | null,
   offset = 0,
+  archived: 'exclude' | 'only' = 'exclude',
 ): Promise<SessionListResponse> {
-  if (!profile) return r.listSessions(offset);
+  if (!profile) return r.listSessions(offset, archived);
+  const arch = archived === 'only' ? '&archived=only' : '';
   return r.get<ProfileSessionsResponse>(
     `/api/profiles/sessions?profile=${encodeURIComponent(profile)}` +
-      `&limit=${SESSIONS_PAGE_SIZE}&offset=${offset}&order=recent`,
+      `&limit=${SESSIONS_PAGE_SIZE}&offset=${offset}&order=recent${arch}`,
   );
 }

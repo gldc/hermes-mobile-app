@@ -79,3 +79,15 @@ describe('deleteSession', () => {
     await expect(deleteSession(c, 'missing')).rejects.toThrow('Not found');
   });
 });
+
+describe('setSessionArchived', () => {
+  it('PATCHes archived true/false with optional profile', async () => {
+    const calls: { path: string; body: unknown }[] = [];
+    const client = { patch: async (path: string, body: unknown) => { calls.push({ path, body }); return { ok: true, archived: true }; } };
+    const { setSessionArchived } = require('../src/api/sessions');
+    await setSessionArchived(client as any, 'abc', true);
+    await setSessionArchived(client as any, 'abc', false, 'work');
+    expect(calls[0]).toEqual({ path: '/api/sessions/abc', body: { archived: true } });
+    expect(calls[1]).toEqual({ path: '/api/sessions/abc', body: { archived: false, profile: 'work' } });
+  });
+});
