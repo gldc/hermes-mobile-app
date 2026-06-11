@@ -96,16 +96,19 @@ export function SidebarHost({ children }: { children: ReactNode }) {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      {enabled ? (
-        <Animated.View
-          style={[
-            { position: 'absolute', top: 0, bottom: 0, left: 0, width: drawerWidth },
-            drawerStyle,
-          ]}
-        >
-          <Sidebar open={open} width={drawerWidth} />
-        </Animated.View>
-      ) : null}
+      {/* The drawer stays mounted at all times: unmounting it while the close
+          animation is still running orphans the swipeable rows' native views
+          (Reanimated retains them and repaints at the screen origin). Closed,
+          it is fully covered by the opaque main panel and ignores touches. */}
+      <Animated.View
+        pointerEvents={open ? 'auto' : 'none'}
+        style={[
+          { position: 'absolute', top: 0, bottom: 0, left: 0, width: drawerWidth },
+          drawerStyle,
+        ]}
+      >
+        <Sidebar open={open} width={drawerWidth} />
+      </Animated.View>
 
       <Animated.View
         style={[
