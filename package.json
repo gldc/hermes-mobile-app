@@ -6,6 +6,7 @@
     "@expo/ui": "~56.0.17",
     "expo": "~56.0.11",
     "expo-constants": "~56.0.18",
+    "expo-dev-client": "~56.0.20",
     "expo-device": "~56.0.4",
     "expo-font": "~56.0.6",
     "expo-glass-effect": "~56.0.4",
@@ -45,7 +46,9 @@
   },
   "jest": {
     "preset": "jest-expo",
-    "testMatch": ["**/__tests__/**/*.test.ts"]
+    "testMatch": [
+      "**/__tests__/**/*.test.ts"
+    ]
   },
   "private": true
 }
