@@ -42,7 +42,14 @@
           }
         }
       ],
-      "expo-secure-store"
+      "expo-secure-store",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Hermes attaches photos you choose to your messages.",
+          "cameraPermission": "Hermes lets you photograph something and send it to your agent."
+        }
+      ]
     ],
     "experiments": {
       "typedRoutes": true,
