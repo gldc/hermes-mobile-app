@@ -6,17 +6,19 @@ import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react'
 import { Keyboard, Pressable, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
-  Easing,
   runOnJS,
   useAnimatedStyle,
   useSharedValue,
-  withTiming,
+  withSpring,
 } from 'react-native-reanimated';
 import { Sidebar } from '@/components/sidebar';
 import { isSidebarOpen, setSidebarOpen, subscribeSidebar } from '@/sidebar-store';
 import { useTheme } from '@/theme';
 
-const TIMING = { duration: 280, easing: Easing.out(Easing.cubic) };
+// Critically-damped spring: settles fast with no overshoot (overshoot past 1
+// would pull the panel beyond the drawer edge). Velocity carries over from
+// the pan gesture, so a flick lands with momentum instead of a fixed curve.
+const SPRING = { damping: 32, stiffness: 320, mass: 1, overshootClamping: true };
 const EDGE_WIDTH = 24;
 
 /**
@@ -44,12 +46,15 @@ export function SidebarHost({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (open) Keyboard.dismiss();
-    progress.value = withTiming(open ? 1 : 0, TIMING);
+    progress.value = withSpring(open ? 1 : 0, SPRING);
   }, [open, progress]);
 
-  const settle = (shouldOpen: boolean) => {
+  const settle = (shouldOpen: boolean, velocityX: number) => {
     'worklet';
-    progress.value = withTiming(shouldOpen ? 1 : 0, TIMING);
+    progress.value = withSpring(shouldOpen ? 1 : 0, {
+      ...SPRING,
+      velocity: velocityX / drawerWidth,
+    });
     runOnJS(setSidebarOpen)(shouldOpen);
   };
 
@@ -62,7 +67,7 @@ export function SidebarHost({ children }: { children: ReactNode }) {
           progress.value = Math.min(Math.max(e.translationX / drawerWidth, 0), 1);
         })
         .onEnd((e) => {
-          settle(progress.value > 0.3 || e.velocityX > 500);
+          settle(progress.value > 0.3 || e.velocityX > 500, e.velocityX);
         }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [drawerWidth],
@@ -77,7 +82,7 @@ export function SidebarHost({ children }: { children: ReactNode }) {
           progress.value = Math.min(Math.max(1 + e.translationX / drawerWidth, 0), 1);
         })
         .onEnd((e) => {
-          settle(!(progress.value < 0.7 || e.velocityX < -500));
+          settle(!(progress.value < 0.7 || e.velocityX < -500), e.velocityX);
         }),
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [drawerWidth],
