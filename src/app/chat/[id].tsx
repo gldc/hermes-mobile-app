@@ -1,8 +1,8 @@
-import { useHeaderHeight } from '@react-navigation/elements';
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Text, View } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
 import type { SessionCreateResult } from '@/api/types';
 import { Composer } from '@/components/composer';
@@ -15,7 +15,8 @@ const isIOS = process.env.EXPO_OS === 'ios';
 
 export default function ChatScreen() {
   const { colors } = useTheme();
-  const headerHeight = useHeaderHeight();
+  // Standard compact nav bar (44pt) + status bar — what useHeaderHeight would report.
+  const headerHeight = useSafeAreaInsets().top + 44;
   const { id } = useLocalSearchParams<{ id: string }>();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
