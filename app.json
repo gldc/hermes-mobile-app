@@ -8,7 +8,7 @@
     "scheme": "hermesmobileapp",
     "userInterfaceStyle": "automatic",
     "ios": {
-      "icon": "./assets/expo.icon",
+      "icon": "./assets/hermes-agent.icon",
       "bundleIdentifier": "com.dintinoconte.hermesmobile",
       "infoPlist": {
         "NSAppTransportSecurity": {
