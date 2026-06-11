@@ -5,10 +5,12 @@ import { ActivityIndicator, FlatList, KeyboardAvoidingView, Text, View } from 'r
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
 import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
+import { ApprovalCard } from '@/components/approval-card';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { openGateway, withAuthRetry } from '@/connection';
+import { parseApprovalRequest, resolvedCount, type ApprovalChoice } from '@/lib/approval';
 import { messageText } from '@/lib/message-text';
 import { useTheme } from '@/theme';
 
@@ -112,6 +114,65 @@ export default function ChatScreen() {
     });
   }
 
+  /** Append a pending approval card for a gateway `approval.request` event. */
+  function appendApproval(payload: any) {
+    const request = parseApprovalRequest(payload);
+    if (!request) return; // nothing displayable; gateway will deny on timeout
+    setItems((prev) => [
+      ...prev,
+      { key: nextKey(), role: 'approval', text: request.command, approval: { request, status: 'pending' } },
+    ]);
+  }
+
+  /** Turn ended / interrupted / connection lost: the gateway force-denies
+   * pending approvals, so drop any still-interactive cards. */
+  function cancelPendingApprovals() {
+    setItems((prev) => {
+      if (!prev.some((it) => it.approval && it.approval.status !== 'approved' && it.approval.status !== 'denied' && it.approval.status !== 'cancelled')) {
+        return prev;
+      }
+      return prev.map((it) =>
+        it.approval && (it.approval.status === 'pending' || it.approval.status === 'answering')
+          ? { ...it, approval: { ...it.approval, status: 'cancelled' as const } }
+          : it,
+      );
+    });
+  }
+
+  /** Send the verified approval.respond RPC. Approvals are FIFO per session,
+   * so only the oldest pending card is actionable and `key` is that card. */
+  async function respondApproval(key: string, choice: ApprovalChoice) {
+    const gw = gwRef.current;
+    const sid = liveIdRef.current;
+    if (!gw || !sid) return;
+    setItems((prev) =>
+      prev.map((it) =>
+        it.key === key && it.approval?.status === 'pending'
+          ? { ...it, approval: { ...it.approval, status: 'answering' as const } }
+          : it,
+      ),
+    );
+    try {
+      const result = await gw.call('approval.respond', { session_id: sid, choice });
+      // resolved=0 means nothing was pending server-side (stale/raced).
+      const resolved = resolvedCount(result) > 0;
+      const status = resolved ? (choice === 'deny' ? ('denied' as const) : ('approved' as const)) : ('cancelled' as const);
+      setItems((prev) =>
+        prev.map((it) => (it.key === key && it.approval ? { ...it, approval: { ...it.approval, status } } : it)),
+      );
+    } catch (e) {
+      // Re-arm the card so the user can retry.
+      setItems((prev) =>
+        prev.map((it) =>
+          it.key === key && it.approval?.status === 'answering'
+            ? { ...it, approval: { ...it.approval, status: 'pending' as const } }
+            : it,
+        ),
+      );
+      setError(e instanceof Error ? e.message : 'approval response failed');
+    }
+  }
+
   async function loadHistory(storedId: string) {
     const history = await withAuthRetry((r) => r.getMessages(storedId));
     if (cancelledRef.current) return;
@@ -136,6 +197,7 @@ export default function ChatScreen() {
           break;
         case 'message.complete':
           finishAssistant();
+          cancelPendingApprovals(); // gateway force-denies leftovers on turn end
           setStreaming(false);
           setWaiting(false);
           if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -151,7 +213,14 @@ export default function ChatScreen() {
         case 'status.update':
           if (e.payload?.text) append('status', e.payload.text);
           break;
+        case 'approval.request':
+          setWaiting(false);
+          finishAssistant();
+          if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          appendApproval(e.payload);
+          break;
         case 'error':
+          cancelPendingApprovals(); // gateway force-denies on interrupt/failure
           setStreaming(false);
           setWaiting(false);
           setError(e.payload?.message ?? 'agent error');
@@ -163,6 +232,7 @@ export default function ChatScreen() {
       setReady(false);
       setStreaming(false);
       setWaiting(false);
+      cancelPendingApprovals(); // can't answer across a dead socket
       void reconnect();
     });
   }
@@ -260,6 +330,12 @@ export default function ChatScreen() {
   // Inverted list: index 0 renders at the visual bottom, so newest goes first.
   const reversedItems = useMemo(() => [...items].reverse(), [items]);
 
+  // FIFO approvals: the oldest unresolved card is the only actionable one
+  // (the server resolves the oldest pending approval on respond).
+  const activeApprovalKey = items.find(
+    (it) => it.approval?.status === 'pending' || it.approval?.status === 'answering',
+  )?.key;
+
   const showGreeting = ready && items.length === 0 && !error;
 
   return (
@@ -283,7 +359,17 @@ export default function ChatScreen() {
           inverted
           keyExtractor={(i) => i.key}
           contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12 }}
-          renderItem={({ item }) => <MessageRow item={item} />}
+          renderItem={({ item }) =>
+            item.approval ? (
+              <ApprovalCard
+                approval={item.approval}
+                active={item.key === activeApprovalKey}
+                onRespond={(choice) => respondApproval(item.key, choice)}
+              />
+            ) : (
+              <MessageRow item={item} />
+            )
+          }
           ListHeaderComponent={waiting ? <ThinkingDots /> : null}
         />
       )}
