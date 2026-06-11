@@ -9,6 +9,7 @@ import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem } from '@/components/message-row';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { getRest, openGateway } from '@/connection';
+import { messageText } from '@/lib/message-text';
 import { useTheme } from '@/theme';
 
 const isIOS = process.env.EXPO_OS === 'ios';
@@ -70,9 +71,10 @@ export default function ChatScreen() {
               .map((m) => ({
                 key: nextKey(),
                 role: m.role as 'user' | 'assistant',
-                text: m.text ?? '',
+                text: messageText(m),
                 complete: true,
-              })),
+              }))
+              .filter((m) => m.text.trim().length > 0),
           );
         }
         const gw = await openGateway();

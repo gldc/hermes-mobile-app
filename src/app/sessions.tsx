@@ -57,12 +57,20 @@ export default function SessionsScreen() {
             hideWhenScrolling: true,
           },
           headerRight: () => (
-            <View style={{ flexDirection: 'row', gap: 18 }}>
-              <Pressable hitSlop={8} onPress={() => router.push('/settings')}>
-                <Image source="sf:gearshape" style={{ width: 21, height: 21 }} tintColor={colors.textDim} />
+            <View style={{ flexDirection: 'row', gap: 8 }}>
+              <Pressable
+                hitSlop={4}
+                onPress={() => router.push('/settings')}
+                style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
+              >
+                <Image source="sf:gearshape" style={{ width: 24, height: 24 }} tintColor={colors.textDim} />
               </Pressable>
-              <Pressable hitSlop={8} onPress={() => router.push('/chat/new')}>
-                <Image source="sf:square.and.pencil" style={{ width: 21, height: 21 }} tintColor={colors.accent} />
+              <Pressable
+                hitSlop={4}
+                onPress={() => router.push('/chat/new')}
+                style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
+              >
+                <Image source="sf:square.and.pencil" style={{ width: 24, height: 24 }} tintColor={colors.accent} />
               </Pressable>
             </View>
           ),

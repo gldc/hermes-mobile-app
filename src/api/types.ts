@@ -20,7 +20,11 @@ export interface SessionListResponse {
 
 export interface SessionMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
-  text: string | null;
+  /** Some endpoints provide plain text… */
+  text?: string | null;
+  /** …but session-DB rows store `content`: a string or decoded structure
+   * (e.g. parts array). Use messageText() to extract display text. */
+  content?: unknown;
   timestamp: number;
   tool_name?: string | null;
 }
