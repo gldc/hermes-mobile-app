@@ -3,7 +3,8 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Pressable, Share, Text, View } from 'react-native';
+import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, Pressable, Share, Text, View } from 'react-native';
+import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
 import { getModelInfo, modelDisplayName } from '@/api/models';
@@ -510,13 +511,19 @@ export default function ChatScreen() {
 
   const showGreeting = ready && items.length === 0 && !error;
 
+  // Per-frame keyboard tracking (UI thread) — the composer rides the keyboard
+  // instead of jumping when it appears. One continuous function: home-indicator
+  // padding at rest, an 8pt gap above the keyboard once it's up.
+  const keyboard = useAnimatedKeyboard();
+  const containerStyle = useAnimatedStyle(() => ({
+    paddingBottom: Math.max(insets.bottom, 10, keyboard.height.value + 8),
+  }));
+
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.bg }}
-      behavior={isIOS ? 'padding' : undefined}
-    >
+    <Animated.View style={[{ flex: 1, backgroundColor: colors.bg }, containerStyle]}>
       {showGreeting ? (
-        <View
+        <Animated.View
+          entering={FadeIn.duration(350)}
           style={{
             flex: 1,
             alignItems: 'center',
@@ -542,12 +549,13 @@ export default function ChatScreen() {
             {greetingForHour(new Date().getHours())}
           </Text>
           <Text style={{ color: colors.textFaint, fontSize: 13.5 }}>Messages run on your own gateway.</Text>
-        </View>
+        </Animated.View>
       ) : (
         <FlatList
           data={reversedItems}
           inverted
           keyExtractor={(i) => i.key}
+          keyboardDismissMode="interactive"
           // Inverted list: contentContainer paddingBottom is the visual top —
           // clearance for the floating header buttons.
           contentContainerStyle={{
@@ -555,18 +563,28 @@ export default function ChatScreen() {
             paddingTop: 12,
             paddingBottom: insets.top + 64,
           }}
-          renderItem={({ item }) =>
-            item.approval ? (
-              <ApprovalCard
-                approval={item.approval}
-                active={item.key === activeApprovalKey}
-                onRespond={(choice) => respondApproval(item.key, choice)}
-              />
-            ) : (
-              <MessageRow item={item} />
-            )
+          renderItem={({ item }) => (
+            // Entering-only fade (exiting animations orphan views — see
+            // sidebar-host). Streaming updates keep the key, so no re-runs.
+            <Animated.View entering={FadeIn.duration(180)}>
+              {item.approval ? (
+                <ApprovalCard
+                  approval={item.approval}
+                  active={item.key === activeApprovalKey}
+                  onRespond={(choice) => respondApproval(item.key, choice)}
+                />
+              ) : (
+                <MessageRow item={item} />
+              )}
+            </Animated.View>
+          )}
+          ListHeaderComponent={
+            waiting ? (
+              <Animated.View entering={FadeIn.duration(200)}>
+                <ThinkingDots />
+              </Animated.View>
+            ) : null
           }
-          ListHeaderComponent={waiting ? <ThinkingDots /> : null}
         />
       )}
 
@@ -586,7 +604,9 @@ export default function ChatScreen() {
         <HeaderButton icon="sf:line.3.horizontal" label="Open menu" onPress={openSidebar} />
         <View style={{ flex: 1 }} />
         {items.length > 0 ? (
-          <HeaderButton icon="sf:square.and.arrow.up" label="Export conversation" onPress={showExportSheet} />
+          <Animated.View entering={FadeIn.duration(200)}>
+            <HeaderButton icon="sf:square.and.arrow.up" label="Export conversation" onPress={showExportSheet} />
+          </Animated.View>
         ) : null}
         {id !== 'new' ? (
           <HeaderButton
@@ -600,14 +620,21 @@ export default function ChatScreen() {
       </View>
 
       {reconnectNote ? (
-        <Text style={{ color: colors.textDim, fontSize: 13, paddingHorizontal: 16, paddingBottom: 6 }}>
+        <Animated.Text
+          entering={FadeIn.duration(200)}
+          style={{ color: colors.textDim, fontSize: 13, paddingHorizontal: 16, paddingBottom: 6 }}
+        >
           {reconnectNote}
-        </Text>
+        </Animated.Text>
       ) : null}
       {error ? (
-        <Text selectable style={{ color: colors.danger, fontSize: 14, paddingHorizontal: 16, paddingBottom: 6 }}>
+        <Animated.Text
+          entering={FadeIn.duration(200)}
+          selectable
+          style={{ color: colors.danger, fontSize: 14, paddingHorizontal: 16, paddingBottom: 6 }}
+        >
           {error}
-        </Text>
+        </Animated.Text>
       ) : null}
       {!ready && !error && !reconnectNote && !showGreeting && items.length === 0 ? (
         <View style={{ paddingBottom: 10 }}>
@@ -627,6 +654,6 @@ export default function ChatScreen() {
         modelName={modelName}
         onModelPress={() => router.push('/models')}
       />
-    </KeyboardAvoidingView>
+    </Animated.View>
   );
 }

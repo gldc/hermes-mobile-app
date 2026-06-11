@@ -31,10 +31,11 @@ export default function Layout() {
         >
           <Stack.Screen name="index" options={{ headerShown: false }} />
           {/* Chat is the root surface: no native header (floating buttons
-              instead) and no back-swipe — the left edge opens the sidebar. */}
+              instead) and no back-swipe — the left edge opens the sidebar.
+              Crossfade between chats instead of a hard cut. */}
           <Stack.Screen
             name="chat/[id]"
-            options={{ headerShown: false, gestureEnabled: false, animation: 'none' }}
+            options={{ headerShown: false, gestureEnabled: false, animation: 'fade' }}
           />
           <Stack.Screen
             name="settings"

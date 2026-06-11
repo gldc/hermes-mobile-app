@@ -1,7 +1,6 @@
-import { useEffect, useState } from 'react';
-import { Keyboard, Pressable, Text, TextInput, View } from 'react-native';
+import { Pressable, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import Animated, { FadeIn } from 'react-native-reanimated';
 import { useTheme } from '@/theme';
 
 interface ComposerProps {
@@ -39,31 +38,12 @@ export function Composer({
   onModelPress,
 }: ComposerProps) {
   const { colors, dark } = useTheme();
-  const insets = useSafeAreaInsets();
   const canSend = !disabled && !streaming && (value.trim().length > 0 || Boolean(stagedImageUri));
 
-  // With the keyboard up the home-indicator inset is irrelevant — hug the
-  // keyboard like the big chat apps instead of floating 34pt above it.
-  const [keyboardUp, setKeyboardUp] = useState(false);
-  useEffect(() => {
-    const showEvent = process.env.EXPO_OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
-    const hideEvent = process.env.EXPO_OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
-    const show = Keyboard.addListener(showEvent, () => setKeyboardUp(true));
-    const hide = Keyboard.addListener(hideEvent, () => setKeyboardUp(false));
-    return () => {
-      show.remove();
-      hide.remove();
-    };
-  }, []);
-
   return (
-    <View
-      style={{
-        paddingHorizontal: 10,
-        paddingTop: 6,
-        paddingBottom: keyboardUp ? 8 : Math.max(insets.bottom, 10),
-      }}
-    >
+    // Bottom spacing is owned by the chat screen, which tracks the keyboard
+    // per-frame (useAnimatedKeyboard) so the card rides it smoothly.
+    <View style={{ paddingHorizontal: 10, paddingTop: 6 }}>
       <View
         style={{
           backgroundColor: colors.surface,
@@ -79,7 +59,7 @@ export function Composer({
         }}
       >
         {stagedImageUri ? (
-          <View style={{ flexDirection: 'row', paddingTop: 8 }}>
+          <Animated.View entering={FadeIn.duration(200)} style={{ flexDirection: 'row', paddingTop: 8 }}>
             <View style={{ width: 64, height: 64 }}>
               <Image
                 source={{ uri: stagedImageUri }}
@@ -114,7 +94,7 @@ export function Composer({
                 <Image source="sf:xmark" style={{ width: 10, height: 10 }} tintColor={colors.text} />
               </Pressable>
             </View>
-          </View>
+          </Animated.View>
         ) : null}
 
         <TextInput

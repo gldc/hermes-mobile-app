@@ -1,5 +1,5 @@
 import { memo, useState } from 'react';
-import { ActivityIndicator, Pressable, Share, Text, View } from 'react-native';
+import { ActivityIndicator, LayoutAnimation, Pressable, Share, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import type { ApprovalInfo } from '@/components/approval-card';
@@ -48,7 +48,14 @@ function ToolCallCard({ tool }: { tool: ToolInfo }) {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Tool ${tool.name}${tool.running ? ', running' : ', finished'}${hasDetail ? ', tap for details' : ''}`}
-      onPress={hasDetail ? () => setExpanded((e) => !e) : undefined}
+      onPress={
+        hasDetail
+          ? () => {
+              LayoutAnimation.configureNext(LayoutAnimation.create(220, 'easeInEaseOut', 'opacity'));
+              setExpanded((e) => !e);
+            }
+          : undefined
+      }
       style={{
         backgroundColor: colors.raised,
         borderRadius: 14,

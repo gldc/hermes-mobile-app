@@ -5,13 +5,13 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import {
   ActionSheetIOS,
   Alert,
-  FlatList,
   Pressable,
   RefreshControl,
   Text,
   TextInput,
   View,
 } from 'react-native';
+import Animated, { LinearTransition } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getActiveProfile, listProfiles, listSessionsForProfile } from '@/api/profiles';
 import { searchSessions, type SearchResult } from '@/api/search';
@@ -504,11 +504,13 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
         </Text>
       ) : null}
 
-      <FlatList
+      <Animated.FlatList
         data={rows}
         keyExtractor={(row, index) =>
           row.kind === 'session' ? `s:${row.session.id}` : `h:${row.hit.session_id}:${index}`
         }
+        // Remaining rows slide up smoothly when one is archived or deleted.
+        itemLayoutAnimation={LinearTransition.duration(220)}
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: 4, paddingBottom: insets.bottom + 92 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.textDim} />}
