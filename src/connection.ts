@@ -49,6 +49,14 @@ export async function restore(): Promise<boolean> {
   return true;
 }
 
+/** Saved connection details for display (settings screen). */
+export async function connectionInfo(): Promise<{ baseUrl: string; username: string } | null> {
+  const raw = await SecureStore.getItemAsync(STORE_KEY);
+  if (!raw) return null;
+  const saved: StoredConnection = JSON.parse(raw);
+  return { baseUrl: saved.baseUrl, username: saved.username };
+}
+
 export async function disconnect(): Promise<void> {
   await SecureStore.deleteItemAsync(STORE_KEY);
   jar.clear();
