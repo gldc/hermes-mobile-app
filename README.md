@@ -1,56 +1,56 @@
-# Welcome to your Expo app 👋
+# Hermes Mobile
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+An **unofficial, open-source iOS client** for [hermes-agent](https://github.com/NousResearch/hermes-agent) —
+chat with your self-hosted Hermes from your phone, over your own private network.
 
-## Get started
+- 🔒 **Private by construction** — the app talks only to *your* gateway over Tailscale/VPN/LAN.
+  No third-party backend, no telemetry, nothing leaves your network.
+- 💬 **Real chat experience** — streaming responses, rendered markdown, expandable tool-call
+  cards with live status and durations, haptics, session continuation (`session.resume`).
+- 🔁 **Resilient** — automatic WebSocket reconnection with fresh auth tickets, silent
+  re-login on session expiry, offline-aware error states.
+- 🎨 **Native polish** — warm dark theme with full light-mode support, large-title headers,
+  native search, settings sheet, VoiceOver labels.
 
-1. Install dependencies
+> This is a community project, not affiliated with or endorsed by Nous Research.
 
-   ```bash
-   npm install
-   ```
+## Requirements
 
-2. Start the app
+- A running [hermes-agent](https://github.com/NousResearch/hermes-agent) dashboard, reachable
+  from your phone (same LAN or tailnet)
+- iOS 18+; for development: Xcode + an Apple developer account (the app uses a dev/standalone
+  build — Expo Go ships SDK 54 and can't run this SDK 56 project)
 
-   ```bash
-   npx expo start
-   ```
-
-In the output, you'll find options to open the app in a
-
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
-
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
-
-## Get a fresh project
-
-When you're ready, run:
+## Gateway setup
 
 ```bash
-npm run reset-project
+export HERMES_DASHBOARD_BASIC_AUTH_USERNAME=you
+export HERMES_DASHBOARD_BASIC_AUTH_PASSWORD='a strong password'
+hermes dashboard --no-open --host <lan-or-tailscale-ip> --port 9119
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+The non-loopback bind enables the dashboard's auth gate (required). Do **not** use
+`--insecure`. In the app, enter `http://<that-ip>:9119` plus the credentials.
 
-### Other setup steps
+## Development
 
-- To set up ESLint for linting, run `npx expo lint`, or follow our guide on ["Using ESLint and Prettier"](https://docs.expo.dev/guides/using-eslint/)
-- If you'd like to set up unit testing, follow our guide on ["Unit Testing with Jest"](https://docs.expo.dev/develop/unit-testing/)
-- Learn more about the TypeScript setup in this template in our guide on ["Using TypeScript"](https://docs.expo.dev/guides/typescript/)
+```bash
+npm install
+npx expo start              # JS development (hot reload)
+npx expo run:ios --device   # build the dev client onto a phone (first time / native changes)
+npx jest && npx tsc --noEmit
+```
 
-## Learn more
+See `READY.md` for the full first-run walkthrough and `AGENTS.md` for architecture and
+conventions. Design docs live in `docs/`.
 
-To learn more about developing your project with Expo, look at the following resources:
+## Roadmap
 
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
+- QR pairing with per-device revocable tokens (server plugin already shipped:
+  [hermes-mobile-plugin](../hermes-mobile-plugin))
+- Push notifications via Expo push (redacted by default)
+- App Store release
 
-## Join the community
+## License
 
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+[MIT](LICENSE)
