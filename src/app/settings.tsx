@@ -2,10 +2,34 @@ import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Image } from 'expo-image';
 import { connectionInfo, disconnect } from '@/connection';
 import { useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
+
+function NavRow({ icon, label, href }: { icon: string; label: string; href: string }) {
+  const { colors } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={() => router.push(href as any)}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        padding: 16,
+        minHeight: 52,
+        backgroundColor: pressed ? colors.raised : 'transparent',
+      })}
+    >
+      <Image source={icon} style={{ width: 20, height: 20 }} tintColor={colors.accent} />
+      <Text style={{ color: colors.text, fontSize: 15.5, flex: 1 }}>{label}</Text>
+      <Image source="sf:chevron.right" style={{ width: 13, height: 13 }} tintColor={colors.textFaint} />
+    </Pressable>
+  );
+}
 
 function Row({ label, value }: { label: string; value: string }) {
   const { colors } = useTheme();
@@ -56,6 +80,21 @@ export default function SettingsScreen() {
         <Row label="User" value={info?.username ?? '—'} />
         <View style={{ height: 1, backgroundColor: colors.border }} />
         <Row label="Version" value={Constants.expoConfig?.version ?? 'dev'} />
+      </View>
+
+      <View
+        style={{
+          backgroundColor: colors.surface,
+          borderRadius: 16,
+          borderCurve: 'continuous',
+          borderWidth: 1,
+          borderColor: colors.border,
+          overflow: 'hidden',
+        }}
+      >
+        <NavRow icon="sf:clock.arrow.circlepath" label="Cron Jobs" href="/cron" />
+        <View style={{ height: 1, backgroundColor: colors.border }} />
+        <NavRow icon="sf:brain" label="Memory" href="/memory" />
       </View>
 
       <Pressable
