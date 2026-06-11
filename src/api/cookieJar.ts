@@ -9,9 +9,23 @@ export function splitSetCookie(joined: string): string[] {
 
 export class CookieJar {
   private cookies = new Map<string, string>();
+  private listener: ((snapshot: Record<string, string>) => void) | null = null;
+
+  /** Register a callback fired after every mutation that actually changed the
+   * jar (ingest of a rotated cookie, deletion, clear). Refresh tokens rotate
+   * server-side and replaying a stale one revokes the device, so connection.ts
+   * uses this to persist the jar to SecureStore after EVERY change. */
+  onChange(fn: ((snapshot: Record<string, string>) => void) | null): void {
+    this.listener = fn;
+  }
+
+  private notify(): void {
+    this.listener?.(this.toJSON());
+  }
 
   /** Accepts individual Set-Cookie strings or RN comma-joined ones. */
   ingest(setCookies: string[]): void {
+    let changed = false;
     for (const raw of setCookies.flatMap(splitSetCookie)) {
       const [pair, ...attrs] = raw.split(';');
       const eq = pair.indexOf('=');
@@ -19,9 +33,14 @@ export class CookieJar {
       const name = pair.slice(0, eq).trim();
       const value = pair.slice(eq + 1).trim();
       const expired = attrs.some((a) => /^\s*max-age\s*=\s*0+\s*$/i.test(a));
-      if (expired || value === '') this.cookies.delete(name);
-      else this.cookies.set(name, value);
+      if (expired || value === '') {
+        if (this.cookies.delete(name)) changed = true;
+      } else if (this.cookies.get(name) !== value) {
+        this.cookies.set(name, value);
+        changed = true;
+      }
     }
+    if (changed) this.notify();
   }
 
   header(): string | null {
@@ -30,7 +49,9 @@ export class CookieJar {
   }
 
   clear(): void {
+    if (this.cookies.size === 0) return;
     this.cookies.clear();
+    this.notify();
   }
 
   toJSON(): Record<string, string> {

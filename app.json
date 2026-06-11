@@ -44,6 +44,12 @@
       ],
       "expo-secure-store",
       [
+        "expo-camera",
+        {
+          "cameraPermission": "Hermes scans the pairing QR code shown by 'hermes mobile pair' to connect to your gateway."
+        }
+      ],
+      [
         "expo-image-picker",
         {
           "photosPermission": "Hermes attaches photos you choose to your messages.",
