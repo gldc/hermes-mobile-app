@@ -130,9 +130,9 @@ export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<voi
 
 /** Install the foreground handler (banner, no sound/badge) and the tap
  * listener. Gateway pushes carry no data payload (push.py sends title/body
- * only), so taps can only mean "go look" → caller navigates to /sessions.
+ * only), so taps can only mean "go look" → caller navigates to the chat home.
  * Cold-start taps need no handling here: the app lands on the connect screen,
- * whose restore flow already replaces to /sessions. Returns an unsubscribe. */
+ * whose restore flow already replaces to the chat home. Returns an unsubscribe. */
 export function setupNotificationHandling(onTap: () => void): () => void {
   Notifications.setNotificationHandler({
     handleNotification: async () => ({

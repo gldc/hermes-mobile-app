@@ -1,8 +1,18 @@
-import { Stack, router, useFocusEffect } from 'expo-router';
+import { router, usePathname, type Href } from 'expo-router';
 import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
-import { ActionSheetIOS, Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import {
+  ActionSheetIOS,
+  Alert,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  Text,
+  TextInput,
+  View,
+} from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { getActiveProfile, listProfiles, listSessionsForProfile } from '@/api/profiles';
 import { searchSessions, type SearchResult } from '@/api/search';
 import { deleteSession, renameSession, setSessionArchived } from '@/api/sessions';
@@ -20,9 +30,8 @@ import {
   setServerProfiles,
   subscribeProfiles,
 } from '@/profile-store';
-import { useTheme } from '@/theme';
-
-export { RouteError as ErrorBoundary } from '@/components/route-error';
+import { closeSidebar } from '@/sidebar-store';
+import { serif, useTheme } from '@/theme';
 
 const isIOS = process.env.EXPO_OS === 'ios';
 const SEARCH_DEBOUNCE_MS = 300;
@@ -31,8 +40,39 @@ type Row =
   | { kind: 'session'; session: SessionSummary }
   | { kind: 'hit'; hit: SearchResult };
 
-export default function SessionsScreen() {
+function NavItem({ icon, label, onPress }: { icon: string; label: string; onPress: () => void }) {
   const { colors } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        paddingHorizontal: 16,
+        paddingVertical: 11,
+        borderRadius: 10,
+        borderCurve: 'continuous',
+        backgroundColor: pressed ? colors.raised : 'transparent',
+      })}
+    >
+      <Image source={icon} style={{ width: 19, height: 19 }} tintColor={colors.textDim} />
+      <Text style={{ color: colors.text, fontSize: 15.5, fontWeight: '500' }}>{label}</Text>
+    </Pressable>
+  );
+}
+
+/**
+ * Slide-over sidebar in the style of the Claude app: wordmark + avatar,
+ * search, destination list, recents, and a floating New chat pill. Rendered
+ * by SidebarHost behind the main content; `open` drives data loading.
+ */
+export function Sidebar({ open, width }: { open: boolean; width: number }) {
+  const { colors, dark } = useTheme();
+  const insets = useSafeAreaInsets();
+  const pathname = usePathname();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [total, setTotal] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -51,6 +91,7 @@ export default function SessionsScreen() {
   const handleLoadError = useCallback((e: unknown) => {
     if (e instanceof AuthError) {
       // Silent re-login already failed inside withAuthRetry — credentials are dead.
+      closeSidebar();
       router.replace('/');
       return;
     }
@@ -94,15 +135,15 @@ export default function SessionsScreen() {
     }
   }, [loadingMore, refreshing, query, sessions, total, handleLoadError, activeProfile, showArchived]);
 
-  useFocusEffect(
-    useCallback(() => {
-      load();
-    }, [load]),
-  );
-
-  // Profile discovery: the switcher pill appears only when the server knows
-  // more than one profile. Failures keep the pill hidden — never blocking.
+  // Refresh whenever the drawer opens (and on archive/profile switches while open).
   useEffect(() => {
+    if (open) load();
+  }, [open, load]);
+
+  // Profile discovery: the switcher appears only when the server knows more
+  // than one profile. Failures keep it hidden — never blocking.
+  useEffect(() => {
+    if (!open) return;
     (async () => {
       await hydrateProfileStore();
       try {
@@ -118,7 +159,7 @@ export default function SessionsScreen() {
         // offline or older server — single-profile behavior
       }
     })();
-  }, []);
+  }, [open]);
 
   const showProfilePicker = useCallback(() => {
     const { names, selected, serverCurrent } = getProfileState();
@@ -164,6 +205,7 @@ export default function SessionsScreen() {
       } catch (e) {
         if (stale) return;
         if (e instanceof AuthError) {
+          closeSidebar();
           router.replace('/');
           return;
         }
@@ -181,6 +223,7 @@ export default function SessionsScreen() {
 
   const handleActionError = useCallback((e: unknown, what: string) => {
     if (e instanceof AuthError) {
+      closeSidebar();
       router.replace('/');
       return;
     }
@@ -266,6 +309,25 @@ export default function SessionsScreen() {
     [handleActionError, activeProfile],
   );
 
+  const openChat = useCallback(
+    (sessionId: string) => {
+      closeSidebar();
+      if (pathname !== `/chat/${sessionId}`) router.replace(`/chat/${sessionId}`);
+    },
+    [pathname],
+  );
+
+  const newChat = useCallback(() => {
+    if (isIOS) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    closeSidebar();
+    if (pathname !== '/chat/new') router.replace('/chat/new');
+  }, [pathname]);
+
+  const pushRoute = useCallback((route: Href) => {
+    closeSidebar();
+    router.push(route);
+  }, []);
+
   const titleById = useMemo(() => {
     const map = new Map<string, string | null>();
     for (const s of sessions) map.set(s.id, s.title?.trim() || s.preview?.trim() || null);
@@ -290,98 +352,154 @@ export default function SessionsScreen() {
     return list.map((session) => ({ kind: 'session' as const, session }));
   }, [sessions, query, hits]);
 
+  const searching = query.trim().length > 0;
+  const profileInitial = (activeProfileLabel(profiles) || 'H')[0]?.toUpperCase() ?? 'H';
+
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Stack.Screen
-        options={{
-          title: showArchived ? 'Archived' : 'Hermes',
-          headerLargeTitle: true,
-          headerLargeTitleStyle: { color: colors.text },
-          headerLargeStyle: { backgroundColor: colors.bg },
-          headerSearchBarOptions: {
-            placeholder: 'Search conversations',
-            onChangeText: (e) => setQuery(e.nativeEvent.text),
-            hideWhenScrolling: true,
-          },
-          headerRight: () => (
-            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
-              {profiles.names.length > 1 ? (
-                <Pressable
-                  accessibilityRole="button"
-                  accessibilityLabel={`Active profile: ${activeProfileLabel(profiles)}. Switch profile`}
-                  hitSlop={8}
-                  onPress={showProfilePicker}
-                  style={({ pressed }) => ({
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    gap: 5,
-                    maxWidth: 124,
-                    paddingHorizontal: 10,
-                    paddingVertical: 6,
-                    borderRadius: 999,
-                    borderCurve: 'continuous',
-                    backgroundColor: colors.raised,
-                    opacity: pressed ? 0.5 : 1,
-                  })}
-                >
-                  <Image
-                    source="sf:person.crop.circle"
-                    style={{ width: 16, height: 16 }}
-                    tintColor={colors.accent}
-                  />
-                  <Text
-                    numberOfLines={1}
-                    style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}
-                  >
-                    {activeProfileLabel(profiles)}
-                  </Text>
-                </Pressable>
-              ) : null}
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={showArchived ? 'Show active conversations' : 'Show archived conversations'}
-                accessibilityState={{ selected: showArchived }}
-                hitSlop={4}
-                onPress={() => {
-                  if (isIOS) Haptics.selectionAsync();
-                  setSessions([]);
-                  setTotal(0);
-                  setLoaded(false);
-                  setShowArchived((v) => !v);
-                }}
-                style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
-              >
-                <Image
-                  source={showArchived ? 'sf:archivebox.fill' : 'sf:archivebox'}
-                  style={{ width: 24, height: 24 }}
-                  tintColor={showArchived ? colors.accent : colors.textDim}
-                />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Settings"
-                hitSlop={4}
-                onPress={() => router.push('/settings')}
-                style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
-              >
-                <Image source="sf:gearshape" style={{ width: 24, height: 24 }} tintColor={colors.textDim} />
-              </Pressable>
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="New chat"
-                hitSlop={4}
-                onPress={() => router.push('/chat/new')}
-                style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
-              >
-                <Image source="sf:square.and.pencil" style={{ width: 24, height: 24 }} tintColor={colors.accent} />
-              </Pressable>
-            </View>
-          ),
+    <View style={{ width, flex: 1, paddingTop: insets.top + 10 }}>
+      {/* Wordmark + avatar */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+          paddingLeft: 20,
+          paddingRight: 14,
+          paddingBottom: 10,
         }}
-      />
+      >
+        <Text style={{ fontFamily: serif, fontSize: 25, color: colors.text, letterSpacing: 0.2 }}>
+          Hermes
+        </Text>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="Settings"
+          hitSlop={6}
+          onPress={() => pushRoute('/settings')}
+          style={({ pressed }) => ({
+            width: 34,
+            height: 34,
+            borderRadius: 17,
+            alignItems: 'center',
+            justifyContent: 'center',
+            backgroundColor: colors.raised,
+            opacity: pressed ? 0.6 : 1,
+          })}
+        >
+          <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '600' }}>{profileInitial}</Text>
+        </Pressable>
+      </View>
+
+      {/* Search */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 8,
+          marginHorizontal: 14,
+          marginBottom: 8,
+          paddingHorizontal: 12,
+          height: 38,
+          borderRadius: 19,
+          backgroundColor: colors.raised,
+        }}
+      >
+        <Image source="sf:magnifyingglass" style={{ width: 15, height: 15 }} tintColor={colors.textFaint} />
+        <TextInput
+          value={query}
+          onChangeText={setQuery}
+          placeholder="Search"
+          placeholderTextColor={colors.textFaint}
+          autoCapitalize="none"
+          autoCorrect={false}
+          clearButtonMode="while-editing"
+          style={{ flex: 1, color: colors.text, fontSize: 15.5, height: 38 }}
+        />
+      </View>
+
+      {/* Destinations (hidden while searching to give results room) */}
+      {!searching ? (
+        <View style={{ paddingHorizontal: 8, paddingBottom: 4 }}>
+          <NavItem icon="sf:bubble.left.and.bubble.right" label="Chats" onPress={newChat} />
+          <NavItem icon="sf:clock.arrow.circlepath" label="Cron jobs" onPress={() => pushRoute('/cron')} />
+          <NavItem icon="sf:books.vertical" label="Memory" onPress={() => pushRoute('/memory')} />
+          <NavItem icon="sf:sparkles" label="Skills" onPress={() => pushRoute('/skills')} />
+          <NavItem icon="sf:cpu" label="Models" onPress={() => pushRoute('/models')} />
+        </View>
+      ) : null}
+
+      {/* Recents header */}
+      <View
+        style={{
+          flexDirection: 'row',
+          alignItems: 'center',
+          paddingLeft: 20,
+          paddingRight: 10,
+          paddingTop: 8,
+          paddingBottom: 2,
+          gap: 8,
+        }}
+      >
+        <Text
+          style={{
+            flex: 1,
+            color: colors.textFaint,
+            fontSize: 12.5,
+            fontWeight: '600',
+            textTransform: 'uppercase',
+            letterSpacing: 0.4,
+          }}
+        >
+          {searching ? 'Results' : showArchived ? 'Archived' : 'Recents'}
+        </Text>
+        {profiles.names.length > 1 ? (
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={`Active profile: ${activeProfileLabel(profiles)}. Switch profile`}
+            hitSlop={8}
+            onPress={showProfilePicker}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              gap: 4,
+              maxWidth: 110,
+              paddingHorizontal: 8,
+              paddingVertical: 4,
+              borderRadius: 999,
+              backgroundColor: colors.raised,
+              opacity: pressed ? 0.5 : 1,
+            })}
+          >
+            <Image source="sf:person.crop.circle" style={{ width: 13, height: 13 }} tintColor={colors.accent} />
+            <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>
+              {activeProfileLabel(profiles)}
+            </Text>
+          </Pressable>
+        ) : null}
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={showArchived ? 'Show active conversations' : 'Show archived conversations'}
+          accessibilityState={{ selected: showArchived }}
+          hitSlop={8}
+          onPress={() => {
+            if (isIOS) Haptics.selectionAsync();
+            setSessions([]);
+            setTotal(0);
+            setLoaded(false);
+            setShowArchived((v) => !v);
+          }}
+          style={({ pressed }) => ({ padding: 6, opacity: pressed ? 0.5 : 1 })}
+        >
+          <Image
+            source={showArchived ? 'sf:archivebox.fill' : 'sf:archivebox'}
+            style={{ width: 17, height: 17 }}
+            tintColor={showArchived ? colors.accent : colors.textFaint}
+          />
+        </Pressable>
+      </View>
 
       {error ? (
-        <Text selectable style={{ color: colors.danger, fontSize: 14, paddingHorizontal: 16, paddingTop: 8 }}>
+        <Text selectable style={{ color: colors.danger, fontSize: 13.5, paddingHorizontal: 20, paddingTop: 6 }}>
           {error}
         </Text>
       ) : null}
@@ -391,22 +509,22 @@ export default function SessionsScreen() {
         keyExtractor={(row, index) =>
           row.kind === 'session' ? `s:${row.session.id}` : `h:${row.hit.session_id}:${index}`
         }
-        contentInsetAdjustmentBehavior="automatic"
+        style={{ flex: 1 }}
+        contentContainerStyle={{ paddingHorizontal: 4, paddingBottom: insets.bottom + 92 }}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.textDim} />}
-        ItemSeparatorComponent={() => (
-          <View style={{ height: 1, backgroundColor: colors.border, marginLeft: 16 }} />
-        )}
+        keyboardShouldPersistTaps="handled"
         renderItem={({ item }) =>
           item.kind === 'hit' ? (
             <SearchResultRow
               hit={item.hit}
               title={titleById.get(item.hit.session_id)}
-              onPress={() => router.push(`/chat/${item.hit.session_id}`)}
+              onPress={() => openChat(item.hit.session_id)}
             />
           ) : (
             <SessionRow
+              compact
               session={item.session}
-              onPress={() => router.push(`/chat/${item.session.id}`)}
+              onPress={() => openChat(item.session.id)}
               onRename={isIOS && !showArchived ? () => promptRename(item.session) : undefined}
               onArchive={() => toggleArchived(item.session)}
               archiveLabel={showArchived ? 'Unarchive' : 'Archive'}
@@ -425,38 +543,50 @@ export default function SessionsScreen() {
         }
         ListEmptyComponent={
           loaded && !refreshing ? (
-            <View style={{ alignItems: 'center', gap: 14, paddingTop: 96, paddingHorizontal: 32 }}>
-              <Image
-                source="sf:bubble.left.and.bubble.right"
-                style={{ width: 44, height: 44 }}
-                tintColor={colors.textFaint}
-              />
-              <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>
-                {query
-                  ? searchPending
-                    ? 'Searching…'
-                    : 'No matches'
-                  : showArchived
-                    ? 'No archived conversations'
-                    : 'No conversations yet'}
-              </Text>
-              {!query && !showArchived && (
-                <Pressable
-                  onPress={() => router.push('/chat/new')}
-                  style={({ pressed }) => ({
-                    backgroundColor: pressed ? colors.accentPressed : colors.accent,
-                    borderRadius: 999,
-                    paddingHorizontal: 22,
-                    paddingVertical: 12,
-                  })}
-                >
-                  <Text style={{ color: colors.onAccent, fontSize: 15.5, fontWeight: '600' }}>Start chatting</Text>
-                </Pressable>
-              )}
-            </View>
+            <Text style={{ color: colors.textFaint, fontSize: 14, paddingHorizontal: 16, paddingTop: 18 }}>
+              {searching
+                ? searchPending
+                  ? 'Searching…'
+                  : 'No matches'
+                : showArchived
+                  ? 'No archived conversations'
+                  : 'No conversations yet'}
+            </Text>
           ) : null
         }
       />
+
+      {/* Floating New chat pill */}
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          left: 0,
+          right: 0,
+          bottom: insets.bottom + 18,
+          alignItems: 'center',
+        }}
+      >
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel="New chat"
+          onPress={newChat}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 7,
+            paddingHorizontal: 20,
+            height: 46,
+            borderRadius: 23,
+            backgroundColor: colors.text,
+            opacity: pressed ? 0.85 : 1,
+            boxShadow: dark ? '0 6px 22px rgba(0, 0, 0, 0.5)' : '0 6px 22px rgba(31, 30, 26, 0.3)',
+          })}
+        >
+          <Image source="sf:plus" style={{ width: 15, height: 15 }} tintColor={colors.bg} />
+          <Text style={{ color: colors.bg, fontSize: 15.5, fontWeight: '600' }}>New chat</Text>
+        </Pressable>
+      </View>
     </View>
   );
 }

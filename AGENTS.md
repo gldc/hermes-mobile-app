@@ -28,8 +28,8 @@ opening the PR.
 ```
 src/app/          expo-router routes — THIS is the router root, not a top-level app/
   index.tsx       Connect screen (gateway URL + basic-auth credentials)
-  sessions.tsx    Session list (large-title header, search, infinite scroll)
-  chat/[id].tsx   Chat ("new" = lazy-created session; otherwise session.resume)
+  chat/[id].tsx   Root surface after connect ("new" = lazy-created session;
+                  otherwise session.resume). No native header — floating buttons.
   settings.tsx    formSheet (gateway info, disconnect)
 src/api/          transport, all unit-tested with injected fetch/socket
   cookieJar.ts    manual cookie store (RN fetch doesn't manage cookies)
@@ -37,7 +37,14 @@ src/api/          transport, all unit-tested with injected fetch/socket
   gatewayClient.ts JSON-RPC 2.0 over WebSocket
 src/connection.ts singleton glue: SecureStore persistence, withAuthRetry, openGateway
 src/components/   message rows, tool cards, composer, theme'd pieces
-src/theme.ts      single source of color truth (warm dark + light palettes)
+  sidebar-host.tsx Claude-style slide-over: wraps the Stack in root _layout;
+                  custom Reanimated drawer (no @react-navigation/drawer — banned
+                  in SDK 56). Active on /chat/* only; left edge opens it there.
+  sidebar.tsx     Session list, search, profile switcher, archive view, nav
+                  destinations, New chat pill — lives inside the drawer.
+src/sidebar-store.ts open/close state (useSyncExternalStore, like profile-store)
+src/theme.ts      single source of color truth (warm cream light / charcoal dark,
+                  terracotta accent, Georgia serif for wordmark + greetings)
 ```
 
 ## Wire contract (server = hermes dashboard, port 9119, gated auth mode)

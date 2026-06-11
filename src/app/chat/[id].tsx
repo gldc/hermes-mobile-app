@@ -1,34 +1,73 @@
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
-import { Stack, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Pressable, Share, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
+import { getModelInfo, modelDisplayName } from '@/api/models';
 import { withProfile } from '@/api/profiles';
 import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
 import { ApprovalCard } from '@/components/approval-card';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
+import { Starburst } from '@/components/starburst';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { openGateway, withAuthRetry } from '@/connection';
 import { getProfileState, hydrateProfileStore } from '@/profile-store';
+import { openSidebar } from '@/sidebar-store';
 import { parseApprovalRequest, resolvedCount, type ApprovalChoice } from '@/lib/approval';
 import { exportAsJsonl, exportAsText } from '@/lib/export';
+import { greetingForHour } from '@/lib/greeting';
 import { historyToItems } from '@/lib/history';
 import { MAX_ATTACH_BYTES, base64ByteLength, buildAttachParams, type PickedImage } from '@/lib/image-attach';
-import { useTheme } from '@/theme';
+import { serif, useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
 
 const isIOS = process.env.EXPO_OS === 'ios';
 const MAX_RECONNECT_ATTEMPTS = 5;
 
+// Module-level so the pill shows instantly on later chat mounts; refreshed
+// quietly on every mount (the picker can change it between visits).
+let cachedModelName: string | null = null;
+
+/** Floating circular header button — the header bar itself is hidden. */
+function HeaderButton({
+  icon,
+  label,
+  onPress,
+}: {
+  icon: string;
+  label: string;
+  onPress: () => void;
+}) {
+  const { colors, dark } = useTheme();
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={label}
+      hitSlop={4}
+      onPress={onPress}
+      style={({ pressed }) => ({
+        width: 40,
+        height: 40,
+        borderRadius: 20,
+        alignItems: 'center',
+        justifyContent: 'center',
+        backgroundColor: pressed ? colors.raised : colors.surface,
+        boxShadow: dark ? '0 2px 10px rgba(0, 0, 0, 0.35)' : '0 2px 10px rgba(31, 30, 26, 0.10)',
+      })}
+    >
+      <Image source={icon} style={{ width: 17, height: 17 }} tintColor={colors.text} />
+    </Pressable>
+  );
+}
+
 export default function ChatScreen() {
   const { colors } = useTheme();
-  // Standard compact nav bar (44pt) + status bar — what useHeaderHeight would report.
-  const headerHeight = useSafeAreaInsets().top + 44;
+  const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
@@ -38,6 +77,7 @@ export default function ChatScreen() {
   const [error, setError] = useState<string | null>(null);
   const [reconnectNote, setReconnectNote] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
+  const [modelName, setModelName] = useState<string | null>(cachedModelName);
   const gwRef = useRef<GatewayClient | null>(null);
   const liveIdRef = useRef<string | null>(null); // gateway (live) session handle
   const storedIdRef = useRef<string | null>(null); // persistent id, survives reconnects
@@ -304,6 +344,23 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  // Composer model pill — best-effort, never blocks the chat.
+  useEffect(() => {
+    let stale = false;
+    withAuthRetry((r) => getModelInfo(r))
+      .then((info) => {
+        const name = modelDisplayName(info.model);
+        cachedModelName = name;
+        if (!stale) setModelName(name);
+      })
+      .catch(() => {
+        // offline or older server — pill simply stays hidden
+      });
+    return () => {
+      stale = true;
+    };
+  }, []);
+
   /** Photo picking — staged locally, uploaded via image.attach_bytes on send. */
   async function pickImage(source: 'camera' | 'library') {
     try {
@@ -458,39 +515,27 @@ export default function ChatScreen() {
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={isIOS ? 'padding' : undefined}
-      keyboardVerticalOffset={headerHeight}
     >
-      <Stack.Screen
-        options={{
-          title: id === 'new' ? 'New chat' : 'Chat',
-          headerRight: () =>
-            items.length > 0 ? (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel="Export conversation"
-                hitSlop={4}
-                onPress={showExportSheet}
-                style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
-              >
-                <Image source="sf:square.and.arrow.up" style={{ width: 22, height: 22 }} tintColor={colors.accent} />
-              </Pressable>
-            ) : null,
-        }}
-      />
-
       {showGreeting ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 8 }}>
-          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '700', letterSpacing: -0.4 }}>
-            What can I help with?
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 18 }}>
+          <Starburst size={46} />
+          <Text style={{ fontFamily: serif, color: colors.text, fontSize: 28, textAlign: 'center' }}>
+            {greetingForHour(new Date().getHours())}
           </Text>
-          <Text style={{ color: colors.textFaint, fontSize: 14.5 }}>Messages run on your own gateway.</Text>
+          <Text style={{ color: colors.textFaint, fontSize: 13.5 }}>Messages run on your own gateway.</Text>
         </View>
       ) : (
         <FlatList
           data={reversedItems}
           inverted
           keyExtractor={(i) => i.key}
-          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12 }}
+          // Inverted list: contentContainer paddingBottom is the visual top —
+          // clearance for the floating header buttons.
+          contentContainerStyle={{
+            paddingHorizontal: 16,
+            paddingTop: 12,
+            paddingBottom: insets.top + 64,
+          }}
           renderItem={({ item }) =>
             item.approval ? (
               <ApprovalCard
@@ -505,6 +550,35 @@ export default function ChatScreen() {
           ListHeaderComponent={waiting ? <ThinkingDots /> : null}
         />
       )}
+
+      {/* Floating header — the native bar is hidden on chat routes. */}
+      <View
+        pointerEvents="box-none"
+        style={{
+          position: 'absolute',
+          top: insets.top + 6,
+          left: 14,
+          right: 14,
+          flexDirection: 'row',
+          alignItems: 'center',
+          gap: 10,
+        }}
+      >
+        <HeaderButton icon="sf:line.3.horizontal" label="Open menu" onPress={openSidebar} />
+        <View style={{ flex: 1 }} />
+        {items.length > 0 ? (
+          <HeaderButton icon="sf:square.and.arrow.up" label="Export conversation" onPress={showExportSheet} />
+        ) : null}
+        {id !== 'new' ? (
+          <HeaderButton
+            icon="sf:square.and.pencil"
+            label="New chat"
+            onPress={() => router.replace('/chat/new')}
+          />
+        ) : (
+          <HeaderButton icon="sf:gearshape" label="Settings" onPress={() => router.push('/settings')} />
+        )}
+      </View>
 
       {reconnectNote ? (
         <Text style={{ color: colors.textDim, fontSize: 13, paddingHorizontal: 16, paddingBottom: 6 }}>
@@ -531,6 +605,8 @@ export default function ChatScreen() {
         stagedImageUri={stagedImage?.uri ?? null}
         onAttachPress={showAttachSheet}
         onRemoveImage={() => setStagedImage(null)}
+        modelName={modelName}
+        onModelPress={() => router.push('/models')}
       />
     </KeyboardAvoidingView>
   );
