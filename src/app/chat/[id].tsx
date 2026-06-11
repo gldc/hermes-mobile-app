@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
 import { Stack, useLocalSearchParams } from 'expo-router';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, FlatList, KeyboardAvoidingView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
@@ -27,7 +27,6 @@ export default function ChatScreen() {
   const [ready, setReady] = useState(false);
   const gwRef = useRef<GatewayClient | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const listRef = useRef<FlatList<ChatItem>>(null);
   const keyCounter = useRef(0);
 
   const nextKey = () => `i${keyCounter.current++}`;
@@ -149,6 +148,9 @@ export default function ChatScreen() {
     }
   }
 
+  // Inverted list: index 0 renders at the visual bottom, so newest goes first.
+  const reversedItems = useMemo(() => [...items].reverse(), [items]);
+
   const showGreeting = ready && items.length === 0 && !error;
 
   return (
@@ -168,14 +170,12 @@ export default function ChatScreen() {
         </View>
       ) : (
         <FlatList
-          ref={listRef}
-          data={items}
+          data={reversedItems}
+          inverted
           keyExtractor={(i) => i.key}
-          contentInsetAdjustmentBehavior="automatic"
           contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12 }}
-          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
           renderItem={({ item }) => <MessageRow item={item} />}
-          ListFooterComponent={waiting ? <ThinkingDots /> : null}
+          ListHeaderComponent={waiting ? <ThinkingDots /> : null}
         />
       )}
 
