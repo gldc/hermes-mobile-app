@@ -1,14 +1,24 @@
 // __tests__/memory.test.ts
 import {
   BUILT_IN_PROVIDER,
+  MEMORY_FILE_MAX_BYTES,
   formatBytes,
   getMemoryStatus,
+  isMemoryFileName,
+  isMemoryPluginMissing,
+  listMemoryFiles,
+  memoryFileLabel,
+  memoryFileTooLarge,
+  memoryWriteErrorMessage,
   providerLabel,
+  readMemoryFile,
   resetMemory,
   setMemoryProvider,
+  utf8ByteLength,
+  writeMemoryFile,
 } from '../src/api/memory';
 import { CookieJar } from '../src/api/cookieJar';
-import { RestClient } from '../src/api/restClient';
+import { AuthError, HttpError, RestClient } from '../src/api/restClient';
 
 function fakeFetch(status: number, body: unknown) {
   const calls: { url: string; init: RequestInit }[] = [];
@@ -86,6 +96,128 @@ describe('memory api', () => {
     });
     it('passes provider names through', () => {
       expect(providerLabel('mem0')).toBe('mem0');
+    });
+  });
+
+  describe('memory file routes (hermes-mobile plugin)', () => {
+    it('listMemoryFiles hits GET /api/plugins/mobile/memory/files', async () => {
+      const files = [
+        { name: 'MEMORY.md', size: 1234, mtime: 1760000000, exists: true },
+        { name: 'USER.md', size: 0, mtime: 0, exists: false },
+      ];
+      const f = fakeFetch(200, { files });
+      const res = await listMemoryFiles(client(f));
+      expect(f.calls[0].url).toBe('http://h/api/plugins/mobile/memory/files');
+      expect(f.calls[0].init.method).toBeUndefined(); // GET
+      expect(res.files).toEqual(files);
+    });
+
+    it('readMemoryFile GETs the named file', async () => {
+      const f = fakeFetch(200, { name: 'USER.md', content: '# About the user\n' });
+      const res = await readMemoryFile(client(f), 'USER.md');
+      expect(f.calls[0].url).toBe('http://h/api/plugins/mobile/memory/files/USER.md');
+      expect(res.content).toBe('# About the user\n');
+    });
+
+    it('writeMemoryFile PUTs {content} to the named file', async () => {
+      const f = fakeFetch(200, { ok: true, name: 'MEMORY.md', size: 5 });
+      const res = await writeMemoryFile(client(f), 'MEMORY.md', 'hello');
+      expect(f.calls[0].url).toBe('http://h/api/plugins/mobile/memory/files/MEMORY.md');
+      expect(f.calls[0].init.method).toBe('PUT');
+      expect(JSON.parse(f.calls[0].init.body as string)).toEqual({ content: 'hello' });
+      expect(res).toEqual({ ok: true, name: 'MEMORY.md', size: 5 });
+    });
+
+    it('writeMemoryFile surfaces 413 over the size cap', async () => {
+      const f = fakeFetch(413, { detail: 'content exceeds 262144 bytes' });
+      await expect(writeMemoryFile(client(f), 'MEMORY.md', 'x')).rejects.toThrow('HTTP 413');
+    });
+  });
+
+  describe('isMemoryFileName', () => {
+    it('accepts exactly the two allowlisted names', () => {
+      expect(isMemoryFileName('MEMORY.md')).toBe(true);
+      expect(isMemoryFileName('USER.md')).toBe(true);
+    });
+    it('rejects everything else, including traversal and case tricks', () => {
+      for (const bad of ['memory.md', 'MEMORY.MD', '../MEMORY.md', 'MEMORY.md/..', 'SECRET.md', '', null, undefined, 7]) {
+        expect(isMemoryFileName(bad)).toBe(false);
+      }
+    });
+  });
+
+  describe('memoryFileLabel', () => {
+    it('matches the admin screen wording', () => {
+      expect(memoryFileLabel('MEMORY.md')).toBe('Agent memory');
+      expect(memoryFileLabel('USER.md')).toBe('User profile');
+    });
+  });
+
+  describe('utf8ByteLength', () => {
+    it('counts ASCII as 1 byte per char', () => {
+      expect(utf8ByteLength('')).toBe(0);
+      expect(utf8ByteLength('hello')).toBe(5);
+    });
+    it('counts 2/3/4-byte sequences like the server UTF-8 encode', () => {
+      expect(utf8ByteLength('é')).toBe(2); // U+00E9
+      expect(utf8ByteLength('€')).toBe(3); // U+20AC
+      expect(utf8ByteLength('𝄞')).toBe(4); // U+1D11E (surrogate pair)
+      expect(utf8ByteLength('🎺')).toBe(4); // U+1F3BA
+      expect(utf8ByteLength('aé€🎺')).toBe(1 + 2 + 3 + 4);
+    });
+    it('counts a lone surrogate as 3 bytes (TextEncoder replacement-char behavior)', () => {
+      expect(utf8ByteLength('\uD800')).toBe(3);
+    });
+  });
+
+  describe('memoryFileTooLarge (262144/262145 boundary)', () => {
+    it('allows exactly MEMORY_FILE_MAX_BYTES', () => {
+      expect(MEMORY_FILE_MAX_BYTES).toBe(262144);
+      expect(memoryFileTooLarge('a'.repeat(262144))).toBe(false);
+    });
+    it('rejects one byte over', () => {
+      expect(memoryFileTooLarge('a'.repeat(262145))).toBe(true);
+    });
+    it('counts bytes, not chars, for multibyte content', () => {
+      const twoByte = 'é'.repeat(262144 / 2); // exactly at the cap
+      expect(memoryFileTooLarge(twoByte)).toBe(false);
+      expect(memoryFileTooLarge(twoByte + 'a')).toBe(true);
+    });
+  });
+
+  describe('isMemoryPluginMissing', () => {
+    it('is true for 404/405 (routes not mounted — plugin absent or too old)', () => {
+      expect(isMemoryPluginMissing(new HttpError(404, 'HTTP 404'))).toBe(true);
+      expect(isMemoryPluginMissing(new HttpError(405, 'HTTP 405'))).toBe(true);
+    });
+    it('is false for other failures', () => {
+      expect(isMemoryPluginMissing(new HttpError(503, 'HTTP 503'))).toBe(false);
+      expect(isMemoryPluginMissing(new HttpError(413, 'HTTP 413'))).toBe(false);
+      expect(isMemoryPluginMissing(new AuthError('expired'))).toBe(false);
+      expect(isMemoryPluginMissing(new Error('network down'))).toBe(false);
+      expect(isMemoryPluginMissing(undefined)).toBe(false);
+    });
+  });
+
+  describe('memoryWriteErrorMessage', () => {
+    it('maps the size cap (413) to a friendly limit message', () => {
+      expect(memoryWriteErrorMessage(new HttpError(413, 'HTTP 413'))).toBe(
+        'Too large — memory files are capped at 256 KB.',
+      );
+    });
+    it('maps 403 to a permission message', () => {
+      expect(memoryWriteErrorMessage(new HttpError(403, 'HTTP 403'))).toMatch(/Permission denied/);
+    });
+    it('maps 404/405 to a plugin-update hint', () => {
+      expect(memoryWriteErrorMessage(new HttpError(404, 'HTTP 404'))).toMatch(/Update the hermes-mobile plugin/);
+      expect(memoryWriteErrorMessage(new HttpError(405, 'HTTP 405'))).toMatch(/Update the hermes-mobile plugin/);
+    });
+    it('maps 503 to a retry hint', () => {
+      expect(memoryWriteErrorMessage(new HttpError(503, 'HTTP 503'))).toMatch(/unavailable/);
+    });
+    it('passes through other error messages and falls back for non-errors', () => {
+      expect(memoryWriteErrorMessage(new Error('Network request failed'))).toBe('Network request failed');
+      expect(memoryWriteErrorMessage('weird')).toBe('Save failed — the gateway did not accept the change.');
     });
   });
 

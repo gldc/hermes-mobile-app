@@ -1,23 +1,30 @@
 // src/app/memory.tsx
 //
-// Memory admin screen. Per docs/contracts/memory.md the gateway exposes no
-// per-entry memory CRUD — only status, provider selection, and reset. So this
-// screen manages the backend and the two built-in files; browsing/editing
-// individual entries happens through the agent itself in a conversation.
+// Memory admin screen. The dashboard core exposes status / provider
+// selection / reset; whole-file viewing+editing of MEMORY.md and USER.md
+// rides on the hermes-mobile plugin's /api/plugins/mobile/memory routes.
+// When those routes 404 (plugin missing or too old) the file list degrades
+// to read-only sizes with an update hint.
 import { Image } from 'expo-image';
-import { Stack, router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { Stack, router, useFocusEffect } from 'expo-router';
+import { useCallback, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import {
   BUILT_IN_PROVIDER,
   formatBytes,
   getMemoryStatus,
+  isMemoryFileName,
+  isMemoryPluginMissing,
+  listMemoryFiles,
+  memoryFileLabel,
   providerLabel,
   resetMemory,
   setMemoryProvider,
+  type MemoryFileInfo,
   type MemoryResetTarget,
   type MemoryStatus,
 } from '@/api/memory';
+import { timeAgo } from '@/lib/format';
 import { AuthError } from '@/api/restClient';
 import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
@@ -102,6 +109,34 @@ function ProviderRow({
   );
 }
 
+function EditableFileRow({ file }: { file: MemoryFileInfo }) {
+  const { colors } = useTheme();
+  const label = isMemoryFileName(file.name) ? memoryFileLabel(file.name) : file.name;
+  const detail = file.exists ? `${formatBytes(file.size)} · ${timeAgo(file.mtime)}` : 'Empty';
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`${label}, ${detail}. Opens the file for viewing and editing.`}
+      onPress={() => router.push({ pathname: '/memory-file', params: { name: file.name } })}
+      style={({ pressed }) => ({
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 12,
+        padding: 16,
+        minHeight: 44,
+        backgroundColor: pressed ? colors.raised : 'transparent',
+      })}
+    >
+      <View style={{ flex: 1, gap: 3 }}>
+        <Text style={{ color: colors.text, fontSize: 15.5 }}>{label}</Text>
+        <Text style={{ color: colors.textFaint, fontSize: 13 }}>{file.name}</Text>
+      </View>
+      <Text style={{ color: file.exists ? colors.textDim : colors.textFaint, fontSize: 14 }}>{detail}</Text>
+      <Image source="sf:chevron.right" style={{ width: 12, height: 12 }} tintColor={colors.textFaint} />
+    </Pressable>
+  );
+}
+
 function FileRow({ label, file, size }: { label: string; file: string; size: number }) {
   const { colors } = useTheme();
   return (
@@ -146,9 +181,16 @@ const RESET_LABELS: Record<MemoryResetTarget, { action: string; detail: string }
   all: { action: 'Reset all memory', detail: 'This permanently deletes MEMORY.md and USER.md on the gateway.' },
 };
 
+type FilesState =
+  | { kind: 'loading' }
+  | { kind: 'ok'; files: MemoryFileInfo[] }
+  | { kind: 'missing' } // plugin routes 404 — plugin absent or predates the memory API
+  | { kind: 'error'; message: string };
+
 export default function MemoryScreen() {
   const { colors } = useTheme();
   const [status, setStatus] = useState<MemoryStatus | null>(null);
+  const [filesState, setFilesState] = useState<FilesState>({ kind: 'loading' });
   const [refreshing, setRefreshing] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -165,6 +207,16 @@ export default function MemoryScreen() {
   const load = useCallback(async () => {
     setRefreshing(true);
     setError(null);
+    // Settle handlers attached immediately so a fast plugin-route failure
+    // never sits as an unhandled rejection while the status call runs.
+    const filesReq: Promise<FilesState | null> = withAuthRetry((r) => listMemoryFiles(r)).then(
+      (res): FilesState => ({ kind: 'ok', files: res.files }),
+      (e): FilesState | null => {
+        if (e instanceof AuthError) return null; // status handler redirects
+        if (isMemoryPluginMissing(e)) return { kind: 'missing' };
+        return { kind: 'error', message: 'Could not load memory files — pull to retry.' };
+      },
+    );
     try {
       setStatus(await withAuthRetry((r) => getMemoryStatus(r)));
     } catch (e) {
@@ -173,11 +225,16 @@ export default function MemoryScreen() {
       setRefreshing(false);
       setLoaded(true);
     }
+    const nextFiles = await filesReq;
+    if (nextFiles) setFilesState(nextFiles);
   }, [handleError]);
 
-  useEffect(() => {
-    load();
-  }, [load]);
+  // Focus, not mount: refreshes sizes/mtimes after editing a file.
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
   async function selectProvider(provider: string) {
     if (!status || busy || provider === status.active) return;
@@ -262,16 +319,48 @@ export default function MemoryScreen() {
 
           <View style={{ height: 8 }} />
           <SectionTitle>Built-in files</SectionTitle>
-          <Card>
-            <FileRow label="Agent memory" file="MEMORY.md" size={status.builtin_files.memory} />
-            <Separator />
-            <FileRow label="User profile" file="USER.md" size={status.builtin_files.user} />
-          </Card>
-          <Text style={{ color: colors.textFaint, fontSize: 12.5, marginHorizontal: 4 }}>
-            {builtinEmpty
-              ? 'Memory is empty — the agent fills it in as you chat.'
-              : 'The gateway has no API to browse or edit individual entries — ask the agent in a chat to show or update its memory.'}
-          </Text>
+          {filesState.kind === 'ok' ? (
+            <>
+              <Card>
+                {filesState.files.map((f, i) => (
+                  <View key={f.name}>
+                    {i > 0 ? <Separator /> : null}
+                    <EditableFileRow file={f} />
+                  </View>
+                ))}
+              </Card>
+              <Text style={{ color: colors.textFaint, fontSize: 12.5, marginHorizontal: 4 }}>
+                {filesState.files.every((f) => !f.exists)
+                  ? 'Memory is empty — the agent fills it in as you chat, or tap a file to write it yourself.'
+                  : 'Tap a file to read it or edit it directly.'}
+              </Text>
+            </>
+          ) : (
+            <>
+              <Card>
+                <FileRow label="Agent memory" file="MEMORY.md" size={status.builtin_files.memory} />
+                <Separator />
+                <FileRow label="User profile" file="USER.md" size={status.builtin_files.user} />
+              </Card>
+              {filesState.kind === 'missing' ? (
+                <Card>
+                  <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, minHeight: 44 }}>
+                    <Image source="sf:arrow.down.circle" style={{ width: 22, height: 22 }} tintColor={colors.textDim} />
+                    <Text style={{ flex: 1, color: colors.textDim, fontSize: 14, lineHeight: 19 }}>
+                      Update the hermes-mobile plugin to edit memory.
+                    </Text>
+                  </View>
+                </Card>
+              ) : filesState.kind === 'error' ? (
+                <Text style={{ color: colors.danger, fontSize: 12.5, marginHorizontal: 4 }}>{filesState.message}</Text>
+              ) : null}
+              <Text style={{ color: colors.textFaint, fontSize: 12.5, marginHorizontal: 4 }}>
+                {builtinEmpty
+                  ? 'Memory is empty — the agent fills it in as you chat.'
+                  : 'Ask the agent in a chat to show or update its memory.'}
+              </Text>
+            </>
+          )}
 
           <View style={{ height: 8 }} />
           <SectionTitle>Danger zone</SectionTitle>
