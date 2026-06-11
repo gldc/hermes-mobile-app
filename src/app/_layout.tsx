@@ -1,10 +1,17 @@
-import { Stack } from 'expo-router';
+import { Stack, router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
+import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
+import { setupNotificationHandling } from '@/notifications';
 import { useTheme } from '@/theme';
 
 export default function Layout() {
   const { colors, dark } = useTheme();
+
+  // Foreground banners + tap → sessions list. Pushes carry no data payload
+  // (docs/contracts/push.md), so the sessions list is the only sane target;
+  // its AuthError path already bounces to the connect screen when needed.
+  useEffect(() => setupNotificationHandling(() => router.navigate('/sessions')), []);
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>
