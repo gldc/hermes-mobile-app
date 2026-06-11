@@ -11,10 +11,9 @@ import {
   View,
 } from 'react-native';
 import { AuthError } from '@/api/restClient';
-import { Starburst } from '@/components/starburst';
 import { connect, restore } from '@/connection';
 import { maybeRegisterPush } from '@/notifications';
-import { serif, useTheme } from '@/theme';
+import { useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
 
@@ -86,9 +85,14 @@ export default function ConnectScreen() {
         contentContainerStyle={{ flexGrow: 1, justifyContent: 'center', padding: 24, gap: 28 }}
         style={{ backgroundColor: colors.bg }}
       >
-        <View style={{ alignItems: 'center', gap: 16 }}>
-          <Starburst size={56} />
-          <Text style={{ fontFamily: serif, color: colors.text, fontSize: 34 }}>Hermes</Text>
+        <View style={{ alignItems: 'center', gap: 20 }}>
+          <Image
+            source={require('../../assets/images/hermesagent-text.png')}
+            accessibilityLabel="Hermes Agent"
+            contentFit="contain"
+            tintColor={colors.text}
+            style={{ height: 64, width: (64 * 52) / 24 }}
+          />
           <Text style={{ color: colors.textDim, fontSize: 15, textAlign: 'center' }}>
             Your agent, in your pocket.{'\n'}Connects over your private network.
           </Text>
