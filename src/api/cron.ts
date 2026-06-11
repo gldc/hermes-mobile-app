@@ -53,14 +53,71 @@ export interface CronRunsResponse {
   limit: number;
 }
 
+/** Delivery target row from GET /api/cron/delivery-targets (web_server.py:6282-6307). */
+export interface DeliveryTarget {
+  id: string;
+  name: string;
+  home_target_set?: boolean;
+  home_env_var?: string | null;
+}
+
+/** The only fields the REST create endpoint accepts (CronJobCreate,
+ * web_server.py:6100-6104). Richer fields are set post-create via PUT. */
+export interface CronJobCreateBody {
+  prompt: string;
+  schedule: string;
+  name?: string;
+  deliver?: string;
+}
+
 /** Only the generic verbs — keeps tests trivial and RestClient lean. */
 type Rest = Pick<RestClient, 'get' | 'post'>;
 
 const enc = encodeURIComponent;
 
+/** `?profile=<name>` — empty string when omitted (server then scans profiles). */
+function profileQuery(profile: string | undefined, sep: '?' | '&' = '?'): string {
+  return profile ? `${sep}profile=${enc(profile)}` : '';
+}
+
 /** All jobs across every profile, paused ones included (bare JSON array). */
 export function listCronJobs(rest: Rest): Promise<CronJob[]> {
   return rest.get<CronJob[]>('/api/cron/jobs?profile=all');
+}
+
+/** One job by id (or unambiguous name); 404 if unknown. */
+export function getCronJob(rest: Rest, id: string, profile?: string): Promise<CronJob> {
+  return rest.get<CronJob>(`/api/cron/jobs/${enc(id)}${profileQuery(profile)}`);
+}
+
+/** Delivery targets for the create/edit form picker. */
+export function listDeliveryTargets(rest: Rest): Promise<{ targets: DeliveryTarget[] }> {
+  return rest.get<{ targets: DeliveryTarget[] }>('/api/cron/delivery-targets');
+}
+
+/** Create a job. 400 (with `detail`) on schedule-parse errors. */
+export function createCronJob(rest: Rest, body: CronJobCreateBody, profile?: string): Promise<CronJob> {
+  return rest.post<CronJob>(`/api/cron/jobs${profileQuery(profile)}`, body);
+}
+
+/** Partial update — body is `{updates: {...}}`; `schedule` may be a raw string
+ * (re-parsed server-side). Immutable fields (id) are rejected with 400. */
+export function updateCronJob(
+  rest: Pick<RestClient, 'put'>,
+  id: string,
+  profile: string | undefined,
+  updates: Record<string, unknown>,
+): Promise<CronJob> {
+  return rest.put<CronJob>(`/api/cron/jobs/${enc(id)}${profileQuery(profile)}`, { updates });
+}
+
+/** Delete a job → {ok: true}; 404 unknown. */
+export function deleteCronJob(
+  rest: Pick<RestClient, 'del'>,
+  id: string,
+  profile?: string,
+): Promise<{ ok: boolean }> {
+  return rest.del<{ ok: boolean }>(`/api/cron/jobs/${enc(id)}${profileQuery(profile)}`);
 }
 
 /** Pause: sets enabled=false, state="paused". Returns the updated job. */

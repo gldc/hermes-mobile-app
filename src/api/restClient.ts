@@ -32,7 +32,18 @@ export class RestClient {
     if (setCookie) this.jar.ingest([setCookie]);
     if (res.status === 401) throw new AuthError('session expired or invalid credentials');
     if (res.status === 429) throw new HttpError(429, 'rate limited — wait a minute');
-    if (!res.ok) throw new HttpError(res.status, `HTTP ${res.status} on ${path}`);
+    if (!res.ok) {
+      // FastAPI errors carry {"detail": "..."} — surface it (e.g. cron
+      // schedule-parse 400s) instead of a bare status code.
+      let message = `HTTP ${res.status} on ${path}`;
+      try {
+        const body = (await res.json()) as { detail?: unknown };
+        if (typeof body?.detail === 'string' && body.detail) message = body.detail;
+      } catch {
+        // non-JSON error body — keep the generic message
+      }
+      throw new HttpError(res.status, message);
+    }
     return (await res.json()) as T;
   }
 

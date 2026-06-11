@@ -50,6 +50,20 @@ describe('RestClient', () => {
     await expect(c.listSessions()).rejects.toThrow(AuthError);
   });
 
+  it('surfaces FastAPI {detail} on non-ok responses (e.g. cron schedule-parse 400s)', async () => {
+    const c = new RestClient(
+      'http://h',
+      new CookieJar(),
+      fakeFetch(400, { detail: 'Could not parse schedule: "every blarg"' }) as any,
+    );
+    await expect(c.get('/api/cron/jobs')).rejects.toThrow('Could not parse schedule: "every blarg"');
+  });
+
+  it('falls back to a generic message when the error body has no detail', async () => {
+    const c = new RestClient('http://h', new CookieJar(), fakeFetch(500, { nope: 1 }) as any);
+    await expect(c.get('/api/x')).rejects.toThrow('HTTP 500 on /api/x');
+  });
+
   it('listSessions hits the right URL', async () => {
     const f = fakeFetch(200, { sessions: [], total: 0, limit: 40, offset: 0 });
     const c = new RestClient('http://h', new CookieJar(), f as any);

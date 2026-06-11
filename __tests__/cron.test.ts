@@ -1,27 +1,40 @@
 // __tests__/cron.test.ts
 import {
+  createCronJob,
+  deleteCronJob,
+  getCronJob,
   getRunMessages,
   lastAssistantText,
   listCronJobs,
   listCronRuns,
+  listDeliveryTargets,
   pauseCronJob,
   resumeCronJob,
   scheduleDisplay,
   triggerCronJob,
+  updateCronJob,
 } from '../src/api/cron';
 import type { SessionMessage } from '../src/api/types';
 
-/** Records the verb + path of every call; returns a canned body. */
+/** Records the verb + path + body of every call; returns a canned body. */
 function fakeRest(body: unknown = {}) {
-  const calls: { verb: 'get' | 'post'; path: string }[] = [];
+  const calls: { verb: 'get' | 'post' | 'put' | 'del'; path: string; body?: unknown }[] = [];
   return {
     calls,
     get: async <T>(path: string) => {
       calls.push({ verb: 'get', path });
       return body as T;
     },
-    post: async <T>(path: string) => {
-      calls.push({ verb: 'post', path });
+    post: async <T>(path: string, reqBody?: unknown) => {
+      calls.push({ verb: 'post', path, body: reqBody });
+      return body as T;
+    },
+    put: async <T>(path: string, reqBody?: unknown) => {
+      calls.push({ verb: 'put', path, body: reqBody });
+      return body as T;
+    },
+    del: async <T>(path: string) => {
+      calls.push({ verb: 'del', path });
       return body as T;
     },
   };
@@ -51,6 +64,54 @@ describe('cron API paths', () => {
     const r = fakeRest({});
     await pauseCronJob(r, 'Morning digest', 'côté/dev');
     expect(r.calls[0].path).toBe('/api/cron/jobs/Morning%20digest/pause?profile=c%C3%B4t%C3%A9%2Fdev');
+  });
+
+  it('gets one job, profile-scoped or scan-all when profile is unknown', async () => {
+    const r = fakeRest({ id: 'a1b2c3d4e5f6' });
+    await getCronJob(r, 'a1b2c3d4e5f6', 'work');
+    await getCronJob(r, 'a1b2c3d4e5f6'); // omitted profile → server scans
+    expect(r.calls.map((c) => c.path)).toEqual([
+      '/api/cron/jobs/a1b2c3d4e5f6?profile=work',
+      '/api/cron/jobs/a1b2c3d4e5f6',
+    ]);
+  });
+
+  it('creates with exactly the 4 REST-accepted fields', async () => {
+    const r = fakeRest({ id: 'newjob', profile: 'default' });
+    await createCronJob(
+      r,
+      { prompt: 'do it', schedule: 'every day at 9am', name: 'Digest', deliver: 'local' },
+      'default',
+    );
+    expect(r.calls).toEqual([
+      {
+        verb: 'post',
+        path: '/api/cron/jobs?profile=default',
+        body: { prompt: 'do it', schedule: 'every day at 9am', name: 'Digest', deliver: 'local' },
+      },
+    ]);
+  });
+
+  it('updates via PUT with an {updates} wrapper', async () => {
+    const r = fakeRest({ id: 'a1b2c3d4e5f6' });
+    await updateCronJob(r, 'a1b2c3d4e5f6', 'default', { schedule: 'every hour', name: 'New name' });
+    expect(r.calls).toEqual([
+      {
+        verb: 'put',
+        path: '/api/cron/jobs/a1b2c3d4e5f6?profile=default',
+        body: { updates: { schedule: 'every hour', name: 'New name' } },
+      },
+    ]);
+  });
+
+  it('deletes profile-scoped and lists delivery targets', async () => {
+    const r = fakeRest({ ok: true });
+    await deleteCronJob(r, 'a1b2c3d4e5f6', 'côté/dev');
+    await listDeliveryTargets(r);
+    expect(r.calls.map((c) => `${c.verb} ${c.path}`)).toEqual([
+      'del /api/cron/jobs/a1b2c3d4e5f6?profile=c%C3%B4t%C3%A9%2Fdev',
+      'get /api/cron/delivery-targets',
+    ]);
   });
 
   it('fetches runs with a limit and run transcripts profile-scoped', async () => {
