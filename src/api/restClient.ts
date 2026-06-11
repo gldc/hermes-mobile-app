@@ -36,6 +36,20 @@ export class RestClient {
     return (await res.json()) as T;
   }
 
+  /** Generic authed verbs — feature modules (cron, memory, …) build on these
+   * instead of growing this class. */
+  get<T>(path: string): Promise<T> {
+    return this.request<T>(path);
+  }
+
+  post<T>(path: string, body?: unknown): Promise<T> {
+    return this.request<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) });
+  }
+
+  del<T>(path: string): Promise<T> {
+    return this.request<T>(path, { method: 'DELETE' });
+  }
+
   async login(username: string, password: string): Promise<void> {
     await this.request<{ ok: boolean }>('/auth/password-login', {
       method: 'POST',
