@@ -81,13 +81,14 @@ export const SessionRow = memo(function SessionRow({
       onPress={onPress}
       style={({ pressed }) => ({
         paddingHorizontal: 16,
-        paddingVertical: 12,
+        paddingVertical: 13,
         borderRadius: 10,
         borderCurve: 'continuous',
-        backgroundColor: pressed ? colors.raised : swipeable ? colors.bg : 'transparent',
+        // Opaque over the swipe actions, identical to the sidebar background.
+        backgroundColor: pressed ? colors.raised : swipeable ? colors.sidebarBg : 'transparent',
       })}
     >
-      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 15.5, letterSpacing: -0.1 }}>
+      <Text numberOfLines={1} style={{ color: colors.text, fontSize: 16.5, letterSpacing: -0.1 }}>
         {title}
       </Text>
     </Pressable>

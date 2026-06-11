@@ -154,7 +154,7 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
               paddingVertical: 11,
             }}
           >
-            <Text selectable style={{ color: colors.text, fontSize: 16, lineHeight: 23 }}>
+            <Text selectable style={{ color: colors.text, fontSize: 17, lineHeight: 24 }}>
               {item.text}
             </Text>
           </View>
@@ -182,7 +182,7 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
         {item.complete ? (
           <MarkdownView text={item.text} />
         ) : (
-          <Text selectable style={{ color: colors.text, fontSize: 16, lineHeight: 25 }}>
+          <Text selectable style={{ color: colors.text, fontSize: 17, lineHeight: 27 }}>
             {item.text}
             <Text style={{ color: colors.accent }}>▍</Text>
           </Text>

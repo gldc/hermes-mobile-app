@@ -50,16 +50,16 @@ function NavItem({ icon, label, onPress }: { icon: string; label: string; onPres
       style={({ pressed }) => ({
         flexDirection: 'row',
         alignItems: 'center',
-        gap: 12,
+        gap: 13,
         paddingHorizontal: 16,
-        paddingVertical: 11,
+        paddingVertical: 12.5,
         borderRadius: 10,
         borderCurve: 'continuous',
         backgroundColor: pressed ? colors.raised : 'transparent',
       })}
     >
-      <Image source={icon} style={{ width: 19, height: 19 }} tintColor={colors.textDim} />
-      <Text style={{ color: colors.text, fontSize: 15.5, fontWeight: '500' }}>{label}</Text>
+      <Image source={icon} style={{ width: 20, height: 20 }} tintColor={colors.text} />
+      <Text style={{ color: colors.text, fontSize: 16.5 }}>{label}</Text>
     </Pressable>
   );
 }
@@ -368,7 +368,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           paddingBottom: 10,
         }}
       >
-        <Text style={{ fontFamily: serif, fontSize: 25, color: colors.text, letterSpacing: 0.2 }}>
+        <Text style={{ fontFamily: serif, fontSize: 27, color: colors.text, letterSpacing: 0.2 }}>
           Hermes
         </Text>
         <Pressable
@@ -382,8 +382,9 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
             borderRadius: 17,
             alignItems: 'center',
             justifyContent: 'center',
-            backgroundColor: colors.raised,
-            opacity: pressed ? 0.6 : 1,
+            backgroundColor: pressed ? colors.raised : colors.surface,
+            borderWidth: 1,
+            borderColor: colors.border,
           })}
         >
           <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '600' }}>{profileInitial}</Text>
@@ -399,12 +400,12 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           marginHorizontal: 14,
           marginBottom: 8,
           paddingHorizontal: 12,
-          height: 38,
-          borderRadius: 19,
+          height: 40,
+          borderRadius: 20,
           backgroundColor: colors.raised,
         }}
       >
-        <Image source="sf:magnifyingglass" style={{ width: 15, height: 15 }} tintColor={colors.textFaint} />
+        <Image source="sf:magnifyingglass" style={{ width: 16, height: 16 }} tintColor={colors.textFaint} />
         <TextInput
           value={query}
           onChangeText={setQuery}
@@ -413,7 +414,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           autoCapitalize="none"
           autoCorrect={false}
           clearButtonMode="while-editing"
-          style={{ flex: 1, color: colors.text, fontSize: 15.5, height: 38 }}
+          style={{ flex: 1, color: colors.text, fontSize: 16, height: 40 }}
         />
       </View>
 
@@ -440,16 +441,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           gap: 8,
         }}
       >
-        <Text
-          style={{
-            flex: 1,
-            color: colors.textFaint,
-            fontSize: 12.5,
-            fontWeight: '600',
-            textTransform: 'uppercase',
-            letterSpacing: 0.4,
-          }}
-        >
+        <Text style={{ flex: 1, color: colors.textFaint, fontSize: 13.5, fontWeight: '500' }}>
           {searching ? 'Results' : showArchived ? 'Archived' : 'Recents'}
         </Text>
         {profiles.names.length > 1 ? (
@@ -577,16 +569,16 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
             flexDirection: 'row',
             alignItems: 'center',
             gap: 7,
-            paddingHorizontal: 20,
-            height: 46,
-            borderRadius: 23,
-            backgroundColor: colors.text,
+            paddingHorizontal: 22,
+            height: 48,
+            borderRadius: 24,
+            backgroundColor: colors.inverseSurface,
             opacity: pressed ? 0.85 : 1,
-            boxShadow: dark ? '0 6px 22px rgba(0, 0, 0, 0.5)' : '0 6px 22px rgba(31, 30, 26, 0.3)',
+            boxShadow: dark ? '0 6px 22px rgba(0, 0, 0, 0.5)' : '0 6px 22px rgba(24, 24, 23, 0.3)',
           })}
         >
-          <Image source="sf:plus" style={{ width: 15, height: 15 }} tintColor={colors.bg} />
-          <Text style={{ color: colors.bg, fontSize: 15.5, fontWeight: '600' }}>New chat</Text>
+          <Image source="sf:plus" style={{ width: 16, height: 16 }} tintColor={colors.onInverse} />
+          <Text style={{ color: colors.onInverse, fontSize: 16, fontWeight: '600' }}>New chat</Text>
         </Pressable>
       </View>
     </View>

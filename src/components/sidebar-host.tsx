@@ -100,7 +100,7 @@ export function SidebarHost({ children }: { children: ReactNode }) {
   }));
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+    <View style={{ flex: 1, backgroundColor: colors.sidebarBg }}>
       {/* The drawer stays mounted at all times: unmounting it while the close
           animation is still running orphans the swipeable rows' native views
           (Reanimated retains them and repaints at the screen origin). Closed,
