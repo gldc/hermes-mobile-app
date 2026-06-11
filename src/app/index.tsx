@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 import { AuthError } from '@/api/restClient';
 import { connect, restore } from '@/connection';
+import { maybeRegisterPush } from '@/notifications';
 import { useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
@@ -29,7 +30,11 @@ export default function ConnectScreen() {
   useEffect(() => {
     restore()
       .then((ok) => {
-        if (ok) router.replace('/sessions');
+        if (ok) {
+          router.replace('/sessions');
+          // Refresh a stale (>7 days) push registration; never prompts here.
+          void maybeRegisterPush({ softAsk: false });
+        }
       })
       .catch((e) => {
         // Device-mode restore throws AuthError(REPAIR_MESSAGE) when the

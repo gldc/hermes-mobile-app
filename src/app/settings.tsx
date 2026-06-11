@@ -4,7 +4,19 @@ import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { connectionInfo, disconnect } from '@/connection';
+import { getPushStatus, type PushStatus } from '@/notifications';
 import { useTheme } from '@/theme';
+
+function pushLabel(s: PushStatus): string {
+  switch (s.state) {
+    case 'registered': return 'On';
+    case 'denied': return 'Off';
+    case 'no-project-id': return 'Not set up';
+    case 'unavailable': return 'Unavailable';
+    case 'error': return 'Retrying';
+    default: return 'Off';
+  }
+}
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
 
@@ -46,6 +58,9 @@ function Row({ label, value }: { label: string; value: string }) {
 export default function SettingsScreen() {
   const { colors } = useTheme();
   const [info, setInfo] = useState<{ baseUrl: string; username: string } | null>(null);
+  // Snapshot of the in-memory push state (set by maybeRegisterPush at
+  // connect/app-start time) — read once per open, not live.
+  const [push] = useState<PushStatus>(() => getPushStatus());
 
   useEffect(() => {
     connectionInfo().then(setInfo);
@@ -79,8 +94,16 @@ export default function SettingsScreen() {
         <View style={{ height: 1, backgroundColor: colors.border }} />
         <Row label="User" value={info?.username ?? '—'} />
         <View style={{ height: 1, backgroundColor: colors.border }} />
+        <Row label="Notifications" value={pushLabel(push)} />
+        <View style={{ height: 1, backgroundColor: colors.border }} />
         <Row label="Version" value={Constants.expoConfig?.version ?? 'dev'} />
       </View>
+
+      {push.note ? (
+        <Text style={{ color: colors.textFaint, fontSize: 13, paddingHorizontal: 4, marginTop: -12 }}>
+          {push.note}
+        </Text>
+      ) : null}
 
       <View
         style={{

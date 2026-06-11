@@ -13,6 +13,7 @@ import {
   View,
 } from 'react-native';
 import { connectWithDevice } from '@/connection';
+import { maybeRegisterPush } from '@/notifications';
 import { PairingParseError, PairingPayload, pairingHost, parsePairingPayload } from '@/lib/pairing';
 import { useTheme } from '@/theme';
 
@@ -56,6 +57,9 @@ export default function PairScreen() {
     try {
       await connectWithDevice(pending.url, pending.rt, pending.deviceId);
       router.replace('/sessions');
+      // Fresh pairing is the one moment we soft-ask for notification
+      // permission; fire-and-forget so navigation never waits on it.
+      void maybeRegisterPush({ softAsk: true });
     } catch (e) {
       setError(
         e instanceof Error && e.message
