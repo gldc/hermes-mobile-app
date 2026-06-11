@@ -54,6 +54,13 @@ describe('RestClient', () => {
     const f = fakeFetch(200, { sessions: [], total: 0, limit: 40, offset: 0 });
     const c = new RestClient('http://h', new CookieJar(), f as any);
     await c.listSessions();
-    expect(f.calls[0].url).toBe('http://h/api/sessions?limit=40&order=recent');
+    expect(f.calls[0].url).toBe('http://h/api/sessions?limit=40&offset=0&order=recent');
+  });
+
+  it('listSessions paginates via offset', async () => {
+    const f = fakeFetch(200, { sessions: [], total: 90, limit: 40, offset: 40 });
+    const c = new RestClient('http://h', new CookieJar(), f as any);
+    await c.listSessions(40);
+    expect(f.calls[0].url).toBe('http://h/api/sessions?limit=40&offset=40&order=recent');
   });
 });

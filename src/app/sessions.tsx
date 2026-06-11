@@ -4,30 +4,60 @@ import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 import type { SessionSummary } from '@/api/types';
 import { SessionRow } from '@/components/session-row';
-import { getRest } from '@/connection';
+import { AuthError } from '@/api/restClient';
+import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
 
 export default function SessionsScreen() {
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [total, setTotal] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+
+  const handleLoadError = useCallback((e: unknown) => {
+    if (e instanceof AuthError) {
+      // Silent re-login already failed inside withAuthRetry — credentials are dead.
+      router.replace('/');
+      return;
+    }
+    setError('Gateway unreachable — check your VPN or Wi-Fi, then pull to retry.');
+  }, []);
 
   const load = useCallback(async () => {
     setRefreshing(true);
     setError(null);
     try {
-      const res = await getRest().listSessions();
+      const res = await withAuthRetry((r) => r.listSessions());
       setSessions(res.sessions);
-    } catch {
-      setError('Gateway unreachable — check your VPN or Wi-Fi, then pull to retry.');
+      setTotal(res.total);
+    } catch (e) {
+      handleLoadError(e);
     } finally {
       setRefreshing(false);
       setLoaded(true);
     }
-  }, []);
+  }, [handleLoadError]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMore || refreshing || query || sessions.length >= total) return;
+    setLoadingMore(true);
+    try {
+      const res = await withAuthRetry((r) => r.listSessions(sessions.length));
+      setTotal(res.total);
+      setSessions((prev) => {
+        const seen = new Set(prev.map((s) => s.id));
+        return [...prev, ...res.sessions.filter((s) => !seen.has(s.id))];
+      });
+    } catch (e) {
+      handleLoadError(e);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [loadingMore, refreshing, query, sessions, total, handleLoadError]);
 
   useFocusEffect(
     useCallback(() => {
@@ -94,6 +124,11 @@ export default function SessionsScreen() {
         renderItem={({ item }) => (
           <SessionRow session={item} onPress={() => router.push(`/chat/${item.id}`)} />
         )}
+        onEndReached={loadMore}
+        onEndReachedThreshold={0.4}
+        ListFooterComponent={
+          loadingMore ? <Text style={{ color: colors.textFaint, fontSize: 13, textAlign: 'center', padding: 14 }}>Loading…</Text> : null
+        }
         ListEmptyComponent={
           loaded && !refreshing ? (
             <View style={{ alignItems: 'center', gap: 14, paddingTop: 96, paddingHorizontal: 32 }}>

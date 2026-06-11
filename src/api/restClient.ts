@@ -47,8 +47,8 @@ export class RestClient {
     return this.request<WsTicketResponse>('/api/auth/ws-ticket', { method: 'POST', body: '{}' });
   }
 
-  listSessions(): Promise<SessionListResponse> {
-    return this.request<SessionListResponse>('/api/sessions?limit=40&order=recent');
+  listSessions(offset = 0): Promise<SessionListResponse> {
+    return this.request<SessionListResponse>(`/api/sessions?limit=40&offset=${offset}&order=recent`);
   }
 
   getMessages(sessionId: string): Promise<MessagesResponse> {
