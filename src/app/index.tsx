@@ -65,7 +65,7 @@ export default function ConnectScreen() {
   if (restoring && !error) {
     return (
       <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: colors.bg }}>
-        <ActivityIndicator color={colors.accent} />
+        <ActivityIndicator color={colors.textDim} />
       </View>
     );
   }
@@ -110,8 +110,8 @@ export default function ConnectScreen() {
           onPress={() => router.push('/pair')}
           disabled={busy}
           style={({ pressed }) => ({
-            backgroundColor: pressed ? colors.accentPressed : colors.accent,
-            opacity: busy ? 0.6 : 1,
+            backgroundColor: colors.inverseSurface,
+            opacity: busy ? 0.6 : pressed ? 0.85 : 1,
             borderRadius: 999,
             minHeight: 52,
             flexDirection: 'row',
@@ -120,8 +120,8 @@ export default function ConnectScreen() {
             justifyContent: 'center',
           })}
         >
-          <Image source="sf:qrcode.viewfinder" style={{ width: 20, height: 20 }} tintColor={colors.onAccent} />
-          <Text style={{ color: colors.onAccent, fontSize: 16.5, fontWeight: '600' }}>Pair with QR code</Text>
+          <Image source="sf:qrcode.viewfinder" style={{ width: 20, height: 20 }} tintColor={colors.onInverse} />
+          <Text style={{ color: colors.onInverse, fontSize: 16.5, fontWeight: '600' }}>Pair with QR code</Text>
         </Pressable>
 
         {showPasswordForm ? (
@@ -177,8 +177,7 @@ export default function ConnectScreen() {
               disabled={busy}
               style={({ pressed }) => ({
                 borderRadius: 999,
-                borderWidth: 1,
-                borderColor: pressed ? colors.accentPressed : colors.accent,
+                backgroundColor: pressed ? colors.userBubble : colors.raised,
                 opacity: busy ? 0.6 : 1,
                 minHeight: 50,
                 alignItems: 'center',
@@ -186,9 +185,9 @@ export default function ConnectScreen() {
               })}
             >
               {busy ? (
-                <ActivityIndicator color={colors.accent} />
+                <ActivityIndicator color={colors.textDim} />
               ) : (
-                <Text style={{ color: colors.accent, fontSize: 16, fontWeight: '600' }}>Connect</Text>
+                <Text style={{ color: colors.text, fontSize: 16, fontWeight: '600' }}>Connect</Text>
               )}
             </Pressable>
           </View>
