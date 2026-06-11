@@ -130,7 +130,7 @@ describe('memory api', () => {
 
     it('writeMemoryFile surfaces 413 over the size cap', async () => {
       const f = fakeFetch(413, { detail: 'content exceeds 262144 bytes' });
-      await expect(writeMemoryFile(client(f), 'MEMORY.md', 'x')).rejects.toThrow('HTTP 413');
+      await expect(writeMemoryFile(client(f), 'MEMORY.md', 'x')).rejects.toThrow('content exceeds 262144 bytes');
     });
   });
 

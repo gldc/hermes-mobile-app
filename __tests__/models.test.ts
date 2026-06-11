@@ -109,7 +109,7 @@ describe('models api', () => {
 
   it('setMainModel surfaces server errors', async () => {
     const f = fakeFetch(500, { detail: 'Failed to save model assignment' });
-    await expect(setMainModel(client(f), 'x', 'y')).rejects.toThrow('HTTP 500');
+    await expect(setMainModel(client(f), 'x', 'y')).rejects.toThrow('Failed to save model assignment');
   });
 });
 

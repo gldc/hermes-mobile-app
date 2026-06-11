@@ -54,7 +54,7 @@ describe('skills api', () => {
 
   it('toggleSkill surfaces server errors', async () => {
     const f = fakeFetch(404, { detail: 'unknown skill' });
-    await expect(toggleSkill(client(f), 'nope', true)).rejects.toThrow('HTTP 404');
+    await expect(toggleSkill(client(f), 'nope', true)).rejects.toThrow('unknown skill');
   });
 
   describe('summaryLine', () => {

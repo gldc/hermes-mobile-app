@@ -55,9 +55,53 @@ function Row({ label, value }: { label: string; value: string }) {
   );
 }
 
+function SectionLabel({ children }: { children: string }) {
+  const { colors } = useTheme();
+  return (
+    <Text
+      style={{
+        color: colors.textFaint,
+        fontSize: 13,
+        fontWeight: '600',
+        textTransform: 'uppercase',
+        letterSpacing: 0.6,
+        paddingHorizontal: 4,
+        marginBottom: -10,
+      }}
+    >
+      {children}
+    </Text>
+  );
+}
+
+function Card({ children }: { children: React.ReactNode }) {
+  const { colors } = useTheme();
+  return (
+    <View
+      style={{
+        backgroundColor: colors.surface,
+        borderRadius: 16,
+        borderCurve: 'continuous',
+        borderWidth: 1,
+        borderColor: colors.border,
+        overflow: 'hidden',
+      }}
+    >
+      {children}
+    </View>
+  );
+}
+
+function Divider() {
+  const { colors } = useTheme();
+  return <View style={{ height: 1, backgroundColor: colors.border }} />;
+}
+
+type Info = Awaited<ReturnType<typeof connectionInfo>>;
+
 export default function SettingsScreen() {
   const { colors } = useTheme();
-  const [info, setInfo] = useState<{ baseUrl: string; username: string } | null>(null);
+  const [info, setInfo] = useState<Info>(null);
   // Snapshot of the in-memory push state (set by maybeRegisterPush at
   // connect/app-start time) — read once per open, not live.
   const [push] = useState<PushStatus>(() => getPushStatus());
@@ -72,6 +116,8 @@ export default function SettingsScreen() {
     router.replace('/');
   }
 
+  const deviceMode = info?.mode === 'device';
+
   return (
     <ScrollView
       contentInsetAdjustmentBehavior="automatic"
@@ -80,46 +126,44 @@ export default function SettingsScreen() {
     >
       <Text style={{ color: colors.text, fontSize: 22, fontWeight: '700' }}>Settings</Text>
 
-      <View
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: 16,
-          borderCurve: 'continuous',
-          borderWidth: 1,
-          borderColor: colors.border,
-          overflow: 'hidden',
-        }}
-      >
+      <SectionLabel>Connection</SectionLabel>
+      <Card>
         <Row label="Gateway" value={info?.baseUrl ?? '—'} />
-        <View style={{ height: 1, backgroundColor: colors.border }} />
-        <Row label="User" value={info?.username ?? '—'} />
-        <View style={{ height: 1, backgroundColor: colors.border }} />
-        <Row label="Notifications" value={pushLabel(push)} />
-        <View style={{ height: 1, backgroundColor: colors.border }} />
+        {deviceMode ? (
+          <>
+            <Divider />
+            <Row label="Device" value={info?.deviceId ?? '—'} />
+            <Divider />
+            <Row label="Notifications" value={pushLabel(push)} />
+          </>
+        ) : (
+          <>
+            <Divider />
+            <Row label="User" value={info?.username || '—'} />
+          </>
+        )}
+        <Divider />
         <Row label="Version" value={Constants.expoConfig?.version ?? 'dev'} />
-      </View>
+      </Card>
 
-      {push.note ? (
+      {deviceMode && push.note ? (
         <Text style={{ color: colors.textFaint, fontSize: 13, paddingHorizontal: 4, marginTop: -12 }}>
           {push.note}
         </Text>
       ) : null}
 
-      <View
-        style={{
-          backgroundColor: colors.surface,
-          borderRadius: 16,
-          borderCurve: 'continuous',
-          borderWidth: 1,
-          borderColor: colors.border,
-          overflow: 'hidden',
-        }}
-      >
+      <SectionLabel>Control</SectionLabel>
+      <Card>
         <NavRow icon="sf:clock.arrow.circlepath" label="Cron Jobs" href="/cron" />
-        <View style={{ height: 1, backgroundColor: colors.border }} />
+        <Divider />
         <NavRow icon="sf:brain" label="Memory" href="/memory" />
-      </View>
+        <Divider />
+        <NavRow icon="sf:sparkles" label="Skills" href="/skills" />
+        <Divider />
+        <NavRow icon="sf:cpu" label="Model" href="/models" />
+      </Card>
 
+      <SectionLabel>Danger</SectionLabel>
       <Pressable
         onPress={onDisconnect}
         style={({ pressed }) => ({
