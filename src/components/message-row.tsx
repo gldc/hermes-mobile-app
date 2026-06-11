@@ -1,8 +1,23 @@
-import { memo } from 'react';
-import { Text, View } from 'react-native';
+import { memo, useState } from 'react';
+import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Image } from 'expo-image';
 import { MarkdownView } from '@/components/markdown-view';
 import { useTheme } from '@/theme';
+
+export interface ToolInfo {
+  id: string;
+  name: string;
+  /** Human context from the gateway, e.g. the command or file involved. */
+  context?: string;
+  running: boolean;
+  durationS?: number;
+  /** One-line human outcome ("Extracted 3 pages"). */
+  summary?: string;
+  /** Expanded detail: result text / JSON, truncated by the chat screen. */
+  detail?: string;
+  /** Inline diff for edit tools, when the gateway provides one. */
+  diff?: string;
+}
 
 export interface ChatItem {
   key: string;
@@ -10,11 +25,82 @@ export interface ChatItem {
   text: string;
   /** Assistant messages render plain text while streaming, markdown once complete. */
   complete?: boolean;
+  tool?: ToolInfo;
+}
+
+function ToolCallCard({ tool }: { tool: ToolInfo }) {
+  const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const hasDetail = Boolean(tool.detail || tool.diff);
+
+  return (
+    <Pressable
+      onPress={hasDetail ? () => setExpanded((e) => !e) : undefined}
+      style={{
+        backgroundColor: colors.raised,
+        borderRadius: 14,
+        borderCurve: 'continuous',
+        paddingHorizontal: 12,
+        paddingVertical: 9,
+        gap: 6,
+        alignSelf: 'stretch',
+      }}
+    >
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+        <Image source="sf:hammer.fill" style={{ width: 12, height: 12 }} tintColor={colors.accent} />
+        <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '600' }}>{tool.name}</Text>
+        {tool.context ? (
+          <Text numberOfLines={1} style={{ color: colors.textDim, fontSize: 13, flexShrink: 1 }}>
+            {tool.context}
+          </Text>
+        ) : null}
+        <View style={{ flex: 1 }} />
+        {tool.running ? (
+          <ActivityIndicator size="small" color={colors.textDim} />
+        ) : (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+            {tool.durationS !== undefined ? (
+              <Text style={{ color: colors.textFaint, fontSize: 12, fontVariant: ['tabular-nums'] }}>
+                {tool.durationS < 10 ? tool.durationS.toFixed(1) : Math.round(tool.durationS)}s
+              </Text>
+            ) : null}
+            <Image source="sf:checkmark.circle.fill" style={{ width: 13, height: 13 }} tintColor={colors.success} />
+            {hasDetail ? (
+              <Image
+                source={expanded ? 'sf:chevron.up' : 'sf:chevron.down'}
+                style={{ width: 11, height: 11 }}
+                tintColor={colors.textFaint}
+              />
+            ) : null}
+          </View>
+        )}
+      </View>
+
+      {tool.summary && !tool.running ? (
+        <Text style={{ color: colors.textDim, fontSize: 12.5 }}>{tool.summary}</Text>
+      ) : null}
+
+      {expanded && hasDetail ? (
+        <View
+          style={{
+            backgroundColor: colors.surface,
+            borderRadius: 10,
+            borderCurve: 'continuous',
+            padding: 10,
+          }}
+        >
+          <Text selectable style={{ color: colors.textDim, fontFamily: 'Menlo', fontSize: 11.5, lineHeight: 17 }}>
+            {tool.diff ? tool.diff : tool.detail}
+          </Text>
+        </View>
+      ) : null}
+    </Pressable>
+  );
 }
 
 /**
  * Claude/ChatGPT-style layout: user messages in a soft right-aligned bubble,
- * assistant replies as full-width prose, tools and statuses as quiet chips.
+ * assistant replies as full-width prose, tools as expandable cards.
  */
 export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem }) {
   const { colors } = useTheme();
@@ -55,27 +141,10 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
     );
   }
 
-  if (item.role === 'tool') {
+  if (item.role === 'tool' && item.tool) {
     return (
-      <View style={{ alignItems: 'flex-start', paddingVertical: 4 }}>
-        <View
-          style={{
-            flexDirection: 'row',
-            alignItems: 'center',
-            gap: 6,
-            backgroundColor: colors.raised,
-            borderRadius: 999,
-            paddingHorizontal: 10,
-            paddingVertical: 5,
-          }}
-        >
-          <Image
-            source="sf:hammer.fill"
-            style={{ width: 11, height: 11 }}
-            tintColor={colors.textDim}
-          />
-          <Text style={{ color: colors.textDim, fontSize: 12.5, fontWeight: '500' }}>{item.text}</Text>
-        </View>
+      <View style={{ paddingVertical: 4 }}>
+        <ToolCallCard tool={item.tool} />
       </View>
     );
   }

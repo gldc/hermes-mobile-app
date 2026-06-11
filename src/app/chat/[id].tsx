@@ -6,7 +6,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
 import type { SessionCreateResult } from '@/api/types';
 import { Composer } from '@/components/composer';
-import { MessageRow, type ChatItem } from '@/components/message-row';
+import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { getRest, openGateway } from '@/connection';
 import { messageText } from '@/lib/message-text';
@@ -47,13 +47,63 @@ export default function ChatScreen() {
     });
   }
 
+  /** Close the trailing streaming segment: complete it, or drop it if it
+   * holds only whitespace (prevents stranded carets around tool calls). */
   function finishAssistant() {
     setItems((prev) => {
       const last = prev[prev.length - 1];
       if (last?.role === 'assistant' && !last.complete) {
+        if (!last.text.trim()) return prev.slice(0, -1);
         return [...prev.slice(0, -1), { ...last, complete: true }];
       }
       return prev;
+    });
+  }
+
+  function startTool(payload: any) {
+    const tool: ToolInfo = {
+      id: String(payload?.tool_id ?? `t${keyCounter.current}`),
+      name: String(payload?.name ?? 'tool'),
+      ...(payload?.context ? { context: String(payload.context) } : {}),
+      running: true,
+    };
+    setItems((prev) => [...prev, { key: nextKey(), role: 'tool', text: tool.name, tool }]);
+  }
+
+  function completeTool(payload: any) {
+    const id = String(payload?.tool_id ?? '');
+    setItems((prev) => {
+      // Find the matching running tool (by id, else last running with same name).
+      let idx = prev.findIndex((it) => it.tool?.running && it.tool.id === id);
+      if (idx < 0) {
+        for (let i = prev.length - 1; i >= 0; i--) {
+          if (prev[i].tool?.running && prev[i].tool!.name === String(payload?.name ?? '')) {
+            idx = i;
+            break;
+          }
+        }
+      }
+      if (idx < 0) return prev;
+      const result = payload?.result;
+      const rawDetail =
+        typeof payload?.result_text === 'string' && payload.result_text
+          ? payload.result_text
+          : typeof result === 'string'
+            ? result
+            : result !== undefined && result !== null
+              ? JSON.stringify(result, null, 2)
+              : '';
+      const tool: ToolInfo = {
+        ...prev[idx].tool!,
+        running: false,
+        ...(typeof payload?.duration_s === 'number' ? { durationS: payload.duration_s } : {}),
+        ...(payload?.summary ? { summary: String(payload.summary) } : {}),
+        ...(rawDetail ? { detail: rawDetail.slice(0, 4000) } : {}),
+        ...(payload?.inline_diff ? { diff: String(payload.inline_diff).slice(0, 4000) } : {}),
+      };
+      const next = [...prev];
+      next[idx] = { ...prev[idx], tool };
+      return next;
     });
   }
 
@@ -95,7 +145,11 @@ export default function ChatScreen() {
               break;
             case 'tool.start':
               setWaiting(false);
-              append('tool', e.payload?.tool_name ?? 'tool');
+              finishAssistant();
+              startTool(e.payload);
+              break;
+            case 'tool.complete':
+              completeTool(e.payload);
               break;
             case 'status.update':
               if (e.payload?.text) append('status', e.payload.text);
