@@ -26,6 +26,19 @@ export function renameSession(
   );
 }
 
+/** Archive or unarchive a session (soft-hide; PATCH {archived} per contract). */
+export function setSessionArchived(
+  client: Pick<RestClient, 'patch'>,
+  sessionId: string,
+  archived: boolean,
+  profile?: string | null,
+): Promise<{ ok: boolean; archived?: boolean }> {
+  return client.patch<{ ok: boolean; archived?: boolean }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}`,
+    profile ? { archived, profile } : { archived },
+  );
+}
+
 /** Permanently delete a session (children are orphaned, not cascaded). */
 export function deleteSession(
   client: Pick<RestClient, 'del'>,

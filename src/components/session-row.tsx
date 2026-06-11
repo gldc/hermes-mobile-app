@@ -48,19 +48,24 @@ export const SessionRow = memo(function SessionRow({
   session,
   onPress,
   onRename,
+  onArchive,
+  archiveLabel = 'Archive',
   onDelete,
 }: {
   session: SessionSummary;
   onPress: () => void;
   /** When provided, swiping left reveals a Rename action. */
   onRename?: () => void;
+  /** When provided, swiping left reveals an Archive/Unarchive action. */
+  onArchive?: () => void;
+  archiveLabel?: 'Archive' | 'Unarchive';
   /** When provided, swiping left reveals a destructive Delete action. */
   onDelete?: () => void;
 }) {
   const { colors } = useTheme();
   const title = session.title?.trim() || session.preview?.trim() || 'Untitled conversation';
   const preview = session.title?.trim() ? session.preview?.trim() : undefined;
-  const swipeable = Boolean(onRename || onDelete);
+  const swipeable = Boolean(onRename || onArchive || onDelete);
 
   const row = (
     <Pressable
@@ -116,6 +121,19 @@ export const SessionRow = memo(function SessionRow({
               onPress={() => {
                 methods.close();
                 onRename();
+              }}
+            />
+          ) : null}
+          {onArchive ? (
+            <SwipeAction
+              icon={archiveLabel === 'Archive' ? 'sf:archivebox.fill' : 'sf:tray.and.arrow.up.fill'}
+              label={archiveLabel}
+              background={colors.accent}
+              tint={colors.onAccent}
+              accessibilityLabel={`${archiveLabel} conversation: ${title}`}
+              onPress={() => {
+                methods.close();
+                onArchive();
               }}
             />
           ) : null}

@@ -5,7 +5,7 @@ import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 
 import { ActionSheetIOS, Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 import { getActiveProfile, listProfiles, listSessionsForProfile } from '@/api/profiles';
 import { searchSessions, type SearchResult } from '@/api/search';
-import { deleteSession, renameSession } from '@/api/sessions';
+import { deleteSession, renameSession, setSessionArchived } from '@/api/sessions';
 import type { SessionSummary } from '@/api/types';
 import { SearchResultRow } from '@/components/search-result-row';
 import { SessionRow } from '@/components/session-row';
@@ -40,6 +40,7 @@ export default function SessionsScreen() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
   // Server FTS hits, tagged with the query they answer so stale results
   // never render while a newer request is still in flight.
   const [hits, setHits] = useState<{ q: string; results: SearchResult[] } | null>(null);
@@ -62,7 +63,7 @@ export default function SessionsScreen() {
     try {
       await hydrateProfileStore();
       const res = await withAuthRetry((r) =>
-        listSessionsForProfile(r, getProfileState().selected),
+        listSessionsForProfile(r, getProfileState().selected, 0, showArchived ? 'only' : 'exclude'),
       );
       setSessions(res.sessions);
       setTotal(res.total);
@@ -72,14 +73,14 @@ export default function SessionsScreen() {
       setRefreshing(false);
       setLoaded(true);
     }
-  }, [handleLoadError, activeProfile]);
+  }, [handleLoadError, activeProfile, showArchived]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || refreshing || query || sessions.length >= total) return;
     setLoadingMore(true);
     try {
       const res = await withAuthRetry((r) =>
-        listSessionsForProfile(r, activeProfile, sessions.length),
+        listSessionsForProfile(r, activeProfile, sessions.length, showArchived ? 'only' : 'exclude'),
       );
       setTotal(res.total);
       setSessions((prev) => {
@@ -91,7 +92,7 @@ export default function SessionsScreen() {
     } finally {
       setLoadingMore(false);
     }
-  }, [loadingMore, refreshing, query, sessions, total, handleLoadError, activeProfile]);
+  }, [loadingMore, refreshing, query, sessions, total, handleLoadError, activeProfile, showArchived]);
 
   useFocusEffect(
     useCallback(() => {
@@ -186,6 +187,22 @@ export default function SessionsScreen() {
     Alert.alert(`${what} failed`, e instanceof Error ? e.message : 'Gateway unreachable.');
   }, []);
 
+  const toggleArchived = useCallback(
+    async (session: SessionSummary) => {
+      try {
+        await withAuthRetry((r) => setSessionArchived(r, session.id, !showArchived, activeProfile));
+        // The session leaves the current view either way (archived from active,
+        // restored from archived).
+        setSessions((prev) => prev.filter((s) => s.id !== session.id));
+        setTotal((t) => Math.max(0, t - 1));
+        if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+      } catch (e) {
+        handleActionError(e, showArchived ? 'Unarchive' : 'Archive');
+      }
+    },
+    [handleActionError, activeProfile, showArchived],
+  );
+
   const confirmDelete = useCallback(
     (session: SessionSummary) => {
       const title = session.title?.trim() || session.preview?.trim() || 'this conversation';
@@ -277,7 +294,7 @@ export default function SessionsScreen() {
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
       <Stack.Screen
         options={{
-          title: 'Hermes',
+          title: showArchived ? 'Archived' : 'Hermes',
           headerLargeTitle: true,
           headerLargeTitleStyle: { color: colors.text },
           headerLargeStyle: { backgroundColor: colors.bg },
@@ -320,6 +337,26 @@ export default function SessionsScreen() {
                   </Text>
                 </Pressable>
               ) : null}
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={showArchived ? 'Show active conversations' : 'Show archived conversations'}
+                accessibilityState={{ selected: showArchived }}
+                hitSlop={4}
+                onPress={() => {
+                  if (isIOS) Haptics.selectionAsync();
+                  setSessions([]);
+                  setTotal(0);
+                  setLoaded(false);
+                  setShowArchived((v) => !v);
+                }}
+                style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
+              >
+                <Image
+                  source={showArchived ? 'sf:archivebox.fill' : 'sf:archivebox'}
+                  style={{ width: 24, height: 24 }}
+                  tintColor={showArchived ? colors.accent : colors.textDim}
+                />
+              </Pressable>
               <Pressable
                 accessibilityRole="button"
                 accessibilityLabel="Settings"
@@ -370,7 +407,9 @@ export default function SessionsScreen() {
             <SessionRow
               session={item.session}
               onPress={() => router.push(`/chat/${item.session.id}`)}
-              onRename={isIOS ? () => promptRename(item.session) : undefined}
+              onRename={isIOS && !showArchived ? () => promptRename(item.session) : undefined}
+              onArchive={() => toggleArchived(item.session)}
+              archiveLabel={showArchived ? 'Unarchive' : 'Archive'}
               onDelete={() => confirmDelete(item.session)}
             />
           )
@@ -393,9 +432,15 @@ export default function SessionsScreen() {
                 tintColor={colors.textFaint}
               />
               <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>
-                {query ? (searchPending ? 'Searching…' : 'No matches') : 'No conversations yet'}
+                {query
+                  ? searchPending
+                    ? 'Searching…'
+                    : 'No matches'
+                  : showArchived
+                    ? 'No archived conversations'
+                    : 'No conversations yet'}
               </Text>
-              {!query && (
+              {!query && !showArchived && (
                 <Pressable
                   onPress={() => router.push('/chat/new')}
                   style={({ pressed }) => ({
