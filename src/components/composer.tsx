@@ -1,4 +1,5 @@
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { Keyboard, Pressable, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { useTheme } from '@/theme';
@@ -41,12 +42,26 @@ export function Composer({
   const insets = useSafeAreaInsets();
   const canSend = !disabled && !streaming && (value.trim().length > 0 || Boolean(stagedImageUri));
 
+  // With the keyboard up the home-indicator inset is irrelevant — hug the
+  // keyboard like the big chat apps instead of floating 34pt above it.
+  const [keyboardUp, setKeyboardUp] = useState(false);
+  useEffect(() => {
+    const showEvent = process.env.EXPO_OS === 'ios' ? 'keyboardWillShow' : 'keyboardDidShow';
+    const hideEvent = process.env.EXPO_OS === 'ios' ? 'keyboardWillHide' : 'keyboardDidHide';
+    const show = Keyboard.addListener(showEvent, () => setKeyboardUp(true));
+    const hide = Keyboard.addListener(hideEvent, () => setKeyboardUp(false));
+    return () => {
+      show.remove();
+      hide.remove();
+    };
+  }, []);
+
   return (
     <View
       style={{
         paddingHorizontal: 10,
         paddingTop: 6,
-        paddingBottom: Math.max(insets.bottom, 10),
+        paddingBottom: keyboardUp ? 8 : Math.max(insets.bottom, 10),
       }}
     >
       <View

@@ -516,7 +516,18 @@ export default function ChatScreen() {
       behavior={isIOS ? 'padding' : undefined}
     >
       {showGreeting ? (
-        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 18 }}>
+        <View
+          style={{
+            flex: 1,
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 32,
+            gap: 18,
+            // Center between the floating header and the composer, not the
+            // full screen — matches where the Claude app parks its greeting.
+            paddingTop: insets.top + 52 + 32,
+          }}
+        >
           <Image
             // Pre-rasterized at 3× from the lobehub HermesAgent.Text SVG —
             // expo-image's SVG coder mangles its evenodd paths.
