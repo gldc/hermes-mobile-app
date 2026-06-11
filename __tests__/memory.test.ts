@@ -60,7 +60,7 @@ describe('memory api', () => {
 
   it('setMemoryProvider surfaces 400 for unknown providers', async () => {
     const f = fakeFetch(400, { detail: 'unknown provider' });
-    await expect(setMemoryProvider(client(f), 'nope')).rejects.toThrow('HTTP 400');
+    await expect(setMemoryProvider(client(f), 'nope')).rejects.toThrow('unknown provider');
   });
 
   it('resetMemory POSTs the target', async () => {

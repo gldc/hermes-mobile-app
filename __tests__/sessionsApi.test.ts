@@ -59,7 +59,7 @@ describe('renameSession', () => {
   it('surfaces HTTP errors (400 invalid title)', async () => {
     const f = fakeFetch(400, { detail: 'Title already in use' });
     const c = new RestClient('http://h', new CookieJar(), f as any);
-    await expect(renameSession(c, 'abc', 'dupe')).rejects.toThrow('HTTP 400');
+    await expect(renameSession(c, 'abc', 'dupe')).rejects.toThrow('Title already in use');
   });
 });
 
@@ -76,6 +76,6 @@ describe('deleteSession', () => {
   it('surfaces a 404 for unknown sessions', async () => {
     const f = fakeFetch(404, { detail: 'Not found' });
     const c = new RestClient('http://h', new CookieJar(), f as any);
-    await expect(deleteSession(c, 'missing')).rejects.toThrow('HTTP 404');
+    await expect(deleteSession(c, 'missing')).rejects.toThrow('Not found');
   });
 });

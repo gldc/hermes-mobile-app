@@ -40,6 +40,7 @@ function JobCard({
   output,
   onToggle,
   onRunNow,
+  onEdit,
   onToggleOutput,
 }: {
   job: CronJob;
@@ -48,6 +49,7 @@ function JobCard({
   output: OutputState | undefined;
   onToggle: (job: CronJob) => void;
   onRunNow: (job: CronJob) => void;
+  onEdit: (job: CronJob) => void;
   onToggleOutput: (job: CronJob) => void;
 }) {
   const { colors } = useTheme();
@@ -135,6 +137,23 @@ function JobCard({
           <Text style={{ color: queued ? colors.success : colors.accent, fontSize: 15, fontWeight: '600' }}>
             {queued ? 'Queued' : 'Run now'}
           </Text>
+        </Pressable>
+
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={`Edit ${job.name || 'job'}`}
+          onPress={() => onEdit(job)}
+          style={({ pressed }) => ({
+            flexDirection: 'row',
+            alignItems: 'center',
+            gap: 5,
+            minHeight: 44,
+            paddingHorizontal: 12,
+            opacity: pressed ? 0.5 : 1,
+          })}
+        >
+          <Image source="sf:pencil" style={{ width: 16, height: 16 }} tintColor={colors.textDim} />
+          <Text style={{ color: colors.textDim, fontSize: 14 }}>Edit</Text>
         </Pressable>
 
         {job.last_run_at ? (
@@ -283,6 +302,10 @@ export default function CronScreen() {
     [replaceJob, handleError],
   );
 
+  const edit = useCallback((job: CronJob) => {
+    router.push({ pathname: '/cron-edit', params: { id: job.id, profile: job.profile } });
+  }, []);
+
   const toggleOutput = useCallback(
     async (job: CronJob) => {
       const key = jobKey(job);
@@ -313,7 +336,22 @@ export default function CronScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Stack.Screen options={{ title: 'Cron Jobs' }} />
+      <Stack.Screen
+        options={{
+          title: 'Cron Jobs',
+          headerRight: () => (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="New cron job"
+              hitSlop={4}
+              onPress={() => router.push('/cron-edit')}
+              style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
+            >
+              <Image source="sf:plus" style={{ width: 22, height: 22 }} tintColor={colors.accent} />
+            </Pressable>
+          ),
+        }}
+      />
 
       {error ? (
         <Text selectable style={{ color: colors.danger, fontSize: 14, paddingHorizontal: 16, paddingTop: 8 }}>
@@ -335,6 +373,7 @@ export default function CronScreen() {
             output={outputs[jobKey(item)]}
             onToggle={toggle}
             onRunNow={runNow}
+            onEdit={edit}
             onToggleOutput={toggleOutput}
           />
         )}
@@ -348,7 +387,7 @@ export default function CronScreen() {
               />
               <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>No cron jobs</Text>
               <Text style={{ color: colors.textDim, fontSize: 14, textAlign: 'center' }}>
-                Schedule recurring agent runs with “hermes cron add” on your gateway — they’ll show up here.
+                Schedule recurring agent runs — tap + to create one, or use “hermes cron add” on your gateway.
               </Text>
             </View>
           ) : null
