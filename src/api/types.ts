@@ -1,0 +1,59 @@
+// src/api/types.ts
+export interface SessionSummary {
+  id: string;
+  title: string | null;
+  preview: string | null;
+  started_at: number;
+  last_active: number;
+  message_count: number;
+  model?: string | null;
+  source?: string;
+  is_active?: boolean;
+}
+
+export interface SessionListResponse {
+  sessions: SessionSummary[];
+  total: number;
+  limit: number;
+  offset: number;
+}
+
+export interface SessionMessage {
+  role: 'user' | 'assistant' | 'system' | 'tool';
+  text: string | null;
+  timestamp: number;
+  tool_name?: string | null;
+}
+
+export interface MessagesResponse {
+  session_id: string;
+  messages: SessionMessage[];
+}
+
+export interface WsTicketResponse {
+  ticket: string;
+  ttl_seconds: number;
+}
+
+export interface SessionCreateResult {
+  session_id: string;
+  stored_session_id?: string;
+  info: { model?: string; profile_name?: string; lazy?: boolean };
+}
+
+export type GatewayEventType =
+  | 'gateway.ready'
+  | 'message.start'
+  | 'message.delta'
+  | 'message.complete'
+  | 'tool.start'
+  | 'tool.complete'
+  | 'status.update'
+  | 'error'
+  | (string & {}); // forward-compatible
+
+export interface GatewayEvent {
+  type: GatewayEventType;
+  session_id?: string;
+  payload?: any;
+}
