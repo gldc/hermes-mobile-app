@@ -1,14 +1,19 @@
-// app/sessions.tsx
-import { router, useFocusEffect } from 'expo-router';
-import { useCallback, useState } from 'react';
-import { Button, FlatList, Pressable, RefreshControl, StyleSheet, Text, View } from 'react-native';
-import type { SessionSummary } from '../api/types';
-import { disconnect, getRest } from '../connection';
+import { Stack, router, useFocusEffect } from 'expo-router';
+import { Image } from 'expo-image';
+import { useCallback, useMemo, useState } from 'react';
+import { FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
+import type { SessionSummary } from '@/api/types';
+import { SessionRow } from '@/components/session-row';
+import { getRest } from '@/connection';
+import { useTheme } from '@/theme';
 
 export default function SessionsScreen() {
+  const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [refreshing, setRefreshing] = useState(false);
+  const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
 
   const load = useCallback(async () => {
     setRefreshing(true);
@@ -17,44 +22,98 @@ export default function SessionsScreen() {
       const res = await getRest().listSessions();
       setSessions(res.sessions);
     } catch {
-      setError('Could not load sessions. Check your VPN connection.');
+      setError('Gateway unreachable — check your VPN or Wi-Fi, then pull to retry.');
     } finally {
       setRefreshing(false);
+      setLoaded(true);
     }
   }, []);
 
-  useFocusEffect(useCallback(() => { load(); }, [load]));
+  useFocusEffect(
+    useCallback(() => {
+      load();
+    }, [load]),
+  );
 
-  async function onDisconnect() {
-    await disconnect();
-    router.replace('/');
-  }
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    if (!q) return sessions;
+    return sessions.filter(
+      (s) => (s.title ?? '').toLowerCase().includes(q) || (s.preview ?? '').toLowerCase().includes(q),
+    );
+  }, [sessions, query]);
 
   return (
-    <View style={styles.container}>
-      {error && <Text style={styles.error}>{error}</Text>}
-      <FlatList
-        data={sessions}
-        keyExtractor={(s) => s.id}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} />}
-        renderItem={({ item }) => (
-          <Pressable style={styles.row} onPress={() => router.push(`/chat/${item.id}`)}>
-            <Text style={styles.title} numberOfLines={1}>{item.title || item.preview || item.id}</Text>
-            <Text style={styles.meta}>{item.message_count} messages · {new Date(item.last_active * 1000).toLocaleString()}</Text>
-          </Pressable>
-        )}
-        ListEmptyComponent={!refreshing ? <Text style={styles.meta}>No sessions yet.</Text> : null}
+    <View style={{ flex: 1, backgroundColor: colors.bg }}>
+      <Stack.Screen
+        options={{
+          title: 'Hermes',
+          headerLargeTitle: true,
+          headerLargeTitleStyle: { color: colors.text },
+          headerLargeStyle: { backgroundColor: colors.bg },
+          headerSearchBarOptions: {
+            placeholder: 'Search conversations',
+            onChangeText: (e) => setQuery(e.nativeEvent.text),
+            hideWhenScrolling: true,
+          },
+          headerRight: () => (
+            <View style={{ flexDirection: 'row', gap: 18 }}>
+              <Pressable hitSlop={8} onPress={() => router.push('/settings')}>
+                <Image source="sf:gearshape" style={{ width: 21, height: 21 }} tintColor={colors.textDim} />
+              </Pressable>
+              <Pressable hitSlop={8} onPress={() => router.push('/chat/new')}>
+                <Image source="sf:square.and.pencil" style={{ width: 21, height: 21 }} tintColor={colors.accent} />
+              </Pressable>
+            </View>
+          ),
+        }}
       />
-      <Button title="New chat" onPress={() => router.push('/chat/new')} />
-      <Button title="Disconnect" color="#c00" onPress={onDisconnect} />
+
+      {error ? (
+        <Text selectable style={{ color: colors.danger, fontSize: 14, paddingHorizontal: 16, paddingTop: 8 }}>
+          {error}
+        </Text>
+      ) : null}
+
+      <FlatList
+        data={visible}
+        keyExtractor={(s) => s.id}
+        contentInsetAdjustmentBehavior="automatic"
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.textDim} />}
+        ItemSeparatorComponent={() => (
+          <View style={{ height: 1, backgroundColor: colors.border, marginLeft: 16 }} />
+        )}
+        renderItem={({ item }) => (
+          <SessionRow session={item} onPress={() => router.push(`/chat/${item.id}`)} />
+        )}
+        ListEmptyComponent={
+          loaded && !refreshing ? (
+            <View style={{ alignItems: 'center', gap: 14, paddingTop: 96, paddingHorizontal: 32 }}>
+              <Image
+                source="sf:bubble.left.and.bubble.right"
+                style={{ width: 44, height: 44 }}
+                tintColor={colors.textFaint}
+              />
+              <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>
+                {query ? 'No matches' : 'No conversations yet'}
+              </Text>
+              {!query && (
+                <Pressable
+                  onPress={() => router.push('/chat/new')}
+                  style={({ pressed }) => ({
+                    backgroundColor: pressed ? colors.accentPressed : colors.accent,
+                    borderRadius: 999,
+                    paddingHorizontal: 22,
+                    paddingVertical: 12,
+                  })}
+                >
+                  <Text style={{ color: colors.onAccent, fontSize: 15.5, fontWeight: '600' }}>Start chatting</Text>
+                </Pressable>
+              )}
+            </View>
+          ) : null
+        }
+      />
     </View>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 12, gap: 8 },
-  row: { paddingVertical: 10, borderBottomWidth: StyleSheet.hairlineWidth, borderColor: '#ccc' },
-  title: { fontSize: 16, fontWeight: '600' },
-  meta: { color: '#666', fontSize: 12, marginTop: 2 },
-  error: { color: '#c00' },
-});

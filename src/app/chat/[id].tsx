@@ -1,25 +1,26 @@
-// app/chat/[id].tsx
-import { useLocalSearchParams } from 'expo-router';
+import { useHeaderHeight } from '@react-navigation/elements';
+import * as Haptics from 'expo-haptics';
+import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useRef, useState } from 'react';
-import {
-  ActivityIndicator, Button, FlatList, KeyboardAvoidingView,
-  Platform, StyleSheet, Text, TextInput, View,
-} from 'react-native';
-import type { GatewayClient } from '../../api/gatewayClient';
-import type { SessionCreateResult } from '../../api/types';
-import { getRest, openGateway } from '../../connection';
+import { ActivityIndicator, FlatList, KeyboardAvoidingView, Text, View } from 'react-native';
+import type { GatewayClient } from '@/api/gatewayClient';
+import type { SessionCreateResult } from '@/api/types';
+import { Composer } from '@/components/composer';
+import { MessageRow, type ChatItem } from '@/components/message-row';
+import { ThinkingDots } from '@/components/thinking-dots';
+import { getRest, openGateway } from '@/connection';
+import { useTheme } from '@/theme';
 
-interface ChatItem {
-  key: string;
-  role: 'user' | 'assistant' | 'tool' | 'status';
-  text: string;
-}
+const isIOS = process.env.EXPO_OS === 'ios';
 
 export default function ChatScreen() {
+  const { colors } = useTheme();
+  const headerHeight = useHeaderHeight();
   const { id } = useLocalSearchParams<{ id: string }>();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [streaming, setStreaming] = useState(false);
+  const [waiting, setWaiting] = useState(false); // sent, no tokens yet
   const [error, setError] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const gwRef = useRef<GatewayClient | null>(null);
@@ -29,18 +30,29 @@ export default function ChatScreen() {
 
   const nextKey = () => `i${keyCounter.current++}`;
 
-  function append(role: ChatItem['role'], text: string) {
-    setItems((prev) => [...prev, { key: nextKey(), role, text }]);
+  function append(role: ChatItem['role'], text: string, complete = true) {
+    setItems((prev) => [...prev, { key: nextKey(), role, text, complete }]);
   }
 
-  /** Append streamed text to the trailing assistant bubble (create if absent). */
+  /** Append streamed text to the trailing assistant message (create if absent). */
   function appendDelta(text: string) {
+    setWaiting(false);
     setItems((prev) => {
       const last = prev[prev.length - 1];
-      if (last?.role === 'assistant') {
+      if (last?.role === 'assistant' && !last.complete) {
         return [...prev.slice(0, -1), { ...last, text: last.text + text }];
       }
-      return [...prev, { key: nextKey(), role: 'assistant', text }];
+      return [...prev, { key: nextKey(), role: 'assistant', text, complete: false }];
+    });
+  }
+
+  function finishAssistant() {
+    setItems((prev) => {
+      const last = prev[prev.length - 1];
+      if (last?.role === 'assistant' && !last.complete) {
+        return [...prev.slice(0, -1), { ...last, complete: true }];
+      }
+      return prev;
     });
   }
 
@@ -54,22 +66,49 @@ export default function ChatScreen() {
           setItems(
             history.messages
               .filter((m) => m.role === 'user' || m.role === 'assistant')
-              .map((m) => ({ key: nextKey(), role: m.role as 'user' | 'assistant', text: m.text ?? '' })),
+              .map((m) => ({
+                key: nextKey(),
+                role: m.role as 'user' | 'assistant',
+                text: m.text ?? '',
+                complete: true,
+              })),
           );
         }
         const gw = await openGateway();
-        if (cancelled) { gw.close(); return; }
+        if (cancelled) {
+          gw.close();
+          return;
+        }
         gwRef.current = gw;
         gw.onEvent((e) => {
           switch (e.type) {
-            case 'message.delta': appendDelta(e.payload?.text ?? ''); break;
-            case 'message.complete': setStreaming(false); break;
-            case 'tool.start': append('status', `⚙ ${e.payload?.tool_name ?? 'tool'}…`); break;
-            case 'status.update': append('status', e.payload?.text ?? ''); break;
-            case 'error': setStreaming(false); setError(e.payload?.message ?? 'agent error'); break;
+            case 'message.delta':
+              appendDelta(e.payload?.text ?? '');
+              break;
+            case 'message.complete':
+              finishAssistant();
+              setStreaming(false);
+              setWaiting(false);
+              if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+              break;
+            case 'tool.start':
+              setWaiting(false);
+              append('tool', e.payload?.tool_name ?? 'tool');
+              break;
+            case 'status.update':
+              if (e.payload?.text) append('status', e.payload.text);
+              break;
+            case 'error':
+              setStreaming(false);
+              setWaiting(false);
+              setError(e.payload?.message ?? 'agent error');
+              break;
           }
         });
-        gw.onClose(() => { setReady(false); setError('Connection lost. Go back and reopen the chat.'); });
+        gw.onClose(() => {
+          setReady(false);
+          setError('Connection lost — go back and reopen the chat.');
+        });
         const created = await gw.call<SessionCreateResult>('session.create', {
           title: id === 'new' ? '' : `Continued from ${id.slice(0, 8)}`,
         });
@@ -77,10 +116,14 @@ export default function ChatScreen() {
         sessionIdRef.current = created.session_id;
         setReady(true);
       } catch {
-        if (!cancelled) setError('Could not open a live session. Check your VPN connection.');
+        if (!cancelled) setError('Could not open a live session. Check your VPN or Wi-Fi.');
       }
     })();
-    return () => { cancelled = true; gwRef.current?.close(); };
+    return () => {
+      cancelled = true;
+      gwRef.current?.close();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   async function send() {
@@ -88,57 +131,63 @@ export default function ChatScreen() {
     const gw = gwRef.current;
     const sid = sessionIdRef.current;
     if (!text || !gw || !sid || streaming) return;
+    if (isIOS) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setInput('');
     setError(null);
     append('user', text);
     setStreaming(true);
+    setWaiting(true);
     try {
       await gw.call('prompt.submit', { session_id: sid, text });
     } catch (e) {
       setStreaming(false);
+      setWaiting(false);
       setError(e instanceof Error ? e.message : 'send failed');
     }
   }
 
+  const showGreeting = ready && items.length === 0 && !error;
+
   return (
-    <KeyboardAvoidingView style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined} keyboardVerticalOffset={90}>
-      <FlatList
-        ref={listRef}
-        data={items}
-        keyExtractor={(i) => i.key}
-        onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
-        renderItem={({ item }) => (
-          <View style={[styles.bubble, bubbleStyle[item.role]]}>
-            <Text style={item.role === 'status' ? styles.statusText : styles.bubbleText}>{item.text}</Text>
-          </View>
-        )}
-      />
-      {error && <Text style={styles.error}>{error}</Text>}
-      {!ready && !error && <ActivityIndicator />}
-      <View style={styles.inputRow}>
-        <TextInput style={styles.input} value={input} onChangeText={setInput}
-          placeholder={streaming ? 'Hermes is responding…' : 'Message'}
-          editable={ready && !streaming} multiline />
-        <Button title="Send" onPress={send} disabled={!ready || streaming || !input.trim()} />
-      </View>
+    <KeyboardAvoidingView
+      style={{ flex: 1, backgroundColor: colors.bg }}
+      behavior={isIOS ? 'padding' : undefined}
+      keyboardVerticalOffset={headerHeight}
+    >
+      <Stack.Screen options={{ title: id === 'new' ? 'New chat' : 'Chat' }} />
+
+      {showGreeting ? (
+        <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', padding: 32, gap: 8 }}>
+          <Text style={{ color: colors.text, fontSize: 24, fontWeight: '700', letterSpacing: -0.4 }}>
+            What can I help with?
+          </Text>
+          <Text style={{ color: colors.textFaint, fontSize: 14.5 }}>Messages run on your own gateway.</Text>
+        </View>
+      ) : (
+        <FlatList
+          ref={listRef}
+          data={items}
+          keyExtractor={(i) => i.key}
+          contentInsetAdjustmentBehavior="automatic"
+          contentContainerStyle={{ paddingHorizontal: 16, paddingVertical: 12 }}
+          onContentSizeChange={() => listRef.current?.scrollToEnd({ animated: true })}
+          renderItem={({ item }) => <MessageRow item={item} />}
+          ListFooterComponent={waiting ? <ThinkingDots /> : null}
+        />
+      )}
+
+      {error ? (
+        <Text selectable style={{ color: colors.danger, fontSize: 14, paddingHorizontal: 16, paddingBottom: 6 }}>
+          {error}
+        </Text>
+      ) : null}
+      {!ready && !error && !showGreeting && items.length === 0 ? (
+        <View style={{ paddingBottom: 10 }}>
+          <ActivityIndicator color={colors.accent} />
+        </View>
+      ) : null}
+
+      <Composer value={input} onChangeText={setInput} onSend={send} disabled={!ready} streaming={streaming} />
     </KeyboardAvoidingView>
   );
 }
-
-const styles = StyleSheet.create({
-  container: { flex: 1, padding: 8 },
-  bubble: { marginVertical: 4, padding: 10, borderRadius: 12, maxWidth: '85%' },
-  bubbleText: { fontSize: 15 },
-  statusText: { fontSize: 12, color: '#666', fontStyle: 'italic' },
-  inputRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8, paddingTop: 8 },
-  input: { flex: 1, borderWidth: 1, borderColor: '#ccc', borderRadius: 8, padding: 10, maxHeight: 120 },
-  error: { color: '#c00', padding: 4 },
-});
-
-const bubbleStyle = StyleSheet.create({
-  user: { alignSelf: 'flex-end', backgroundColor: '#d0e8ff' },
-  assistant: { alignSelf: 'flex-start', backgroundColor: '#f0f0f0' },
-  tool: { alignSelf: 'flex-start', backgroundColor: '#fff7d6' },
-  status: { alignSelf: 'center', backgroundColor: 'transparent' },
-});
