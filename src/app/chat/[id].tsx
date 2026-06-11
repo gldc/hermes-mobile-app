@@ -12,6 +12,8 @@ import { openGateway, withAuthRetry } from '@/connection';
 import { messageText } from '@/lib/message-text';
 import { useTheme } from '@/theme';
 
+export { RouteError as ErrorBoundary } from '@/components/route-error';
+
 const isIOS = process.env.EXPO_OS === 'ios';
 const MAX_RECONNECT_ATTEMPTS = 5;
 

@@ -8,6 +8,8 @@ import { AuthError } from '@/api/restClient';
 import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
 
+export { RouteError as ErrorBoundary } from '@/components/route-error';
+
 export default function SessionsScreen() {
   const { colors } = useTheme();
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
@@ -89,6 +91,8 @@ export default function SessionsScreen() {
           headerRight: () => (
             <View style={{ flexDirection: 'row', gap: 8 }}>
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Settings"
                 hitSlop={4}
                 onPress={() => router.push('/settings')}
                 style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
@@ -96,6 +100,8 @@ export default function SessionsScreen() {
                 <Image source="sf:gearshape" style={{ width: 24, height: 24 }} tintColor={colors.textDim} />
               </Pressable>
               <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="New chat"
                 hitSlop={4}
                 onPress={() => router.push('/chat/new')}
                 style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}

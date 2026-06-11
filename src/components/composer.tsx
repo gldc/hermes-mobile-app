@@ -56,6 +56,8 @@ export function Composer({ value, onChangeText, onSend, disabled, streaming }: C
         />
       </View>
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel="Send message"
         onPress={onSend}
         disabled={!canSend}
         hitSlop={6}

@@ -17,6 +17,8 @@ export const SessionRow = memo(function SessionRow({
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Conversation: ${title}`}
       onPress={onPress}
       style={({ pressed }) => ({
         paddingHorizontal: 16,

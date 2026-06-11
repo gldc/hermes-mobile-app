@@ -1,5 +1,6 @@
 import { memo, useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Pressable, Share, Text, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { MarkdownView } from '@/components/markdown-view';
 import { useTheme } from '@/theme';
@@ -35,6 +36,8 @@ function ToolCallCard({ tool }: { tool: ToolInfo }) {
 
   return (
     <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Tool ${tool.name}${tool.running ? ', running' : ', finished'}${hasDetail ? ', tap for details' : ''}`}
       onPress={hasDetail ? () => setExpanded((e) => !e) : undefined}
       style={{
         backgroundColor: colors.raised,
@@ -127,8 +130,21 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
   }
 
   if (item.role === 'assistant') {
+    // Markdown isn't selectable, so long-press opens the share sheet
+    // (which includes Copy on iOS).
     return (
-      <View style={{ paddingVertical: 6 }}>
+      <Pressable
+        accessibilityLabel="Assistant message, long-press to share"
+        onLongPress={
+          item.complete
+            ? () => {
+                if (process.env.EXPO_OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                Share.share({ message: item.text });
+              }
+            : undefined
+        }
+        style={{ paddingVertical: 6 }}
+      >
         {item.complete ? (
           <MarkdownView text={item.text} />
         ) : (
@@ -137,7 +153,7 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
             <Text style={{ color: colors.accent }}>▍</Text>
           </Text>
         )}
-      </View>
+      </Pressable>
     );
   }
 

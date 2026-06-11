@@ -14,6 +14,8 @@ import { AuthError } from '@/api/restClient';
 import { connect, restore } from '@/connection';
 import { useTheme } from '@/theme';
 
+export { RouteError as ErrorBoundary } from '@/components/route-error';
+
 export default function ConnectScreen() {
   const { colors } = useTheme();
   const [url, setUrl] = useState('http://');

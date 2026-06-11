@@ -5,6 +5,8 @@ import { Pressable, ScrollView, Text, View } from 'react-native';
 import { connectionInfo, disconnect } from '@/connection';
 import { useTheme } from '@/theme';
 
+export { RouteError as ErrorBoundary } from '@/components/route-error';
+
 function Row({ label, value }: { label: string; value: string }) {
   const { colors } = useTheme();
   return (
