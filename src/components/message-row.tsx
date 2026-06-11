@@ -3,6 +3,7 @@ import { ActivityIndicator, Pressable, Share, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { MarkdownView } from '@/components/markdown-view';
+import { bubbleImageSize } from '@/lib/image-attach';
 import { useTheme } from '@/theme';
 
 export interface ToolInfo {
@@ -27,6 +28,11 @@ export interface ChatItem {
   /** Assistant messages render plain text while streaming, markdown once complete. */
   complete?: boolean;
   tool?: ToolInfo;
+  /** Local uri of a photo sent with this (user) message. */
+  imageUri?: string;
+  /** Natural dimensions of the attached photo, for aspect-correct layout. */
+  imageWidth?: number;
+  imageHeight?: number;
 }
 
 function ToolCallCard({ tool }: { tool: ToolInfo }) {
@@ -109,22 +115,39 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
   const { colors } = useTheme();
 
   if (item.role === 'user') {
+    const imageSize = item.imageUri ? bubbleImageSize(item.imageWidth, item.imageHeight) : null;
     return (
       <View style={{ alignItems: 'flex-end', paddingVertical: 6 }}>
-        <View
-          style={{
-            maxWidth: '82%',
-            backgroundColor: colors.userBubble,
-            borderRadius: 20,
-            borderCurve: 'continuous',
-            paddingHorizontal: 16,
-            paddingVertical: 11,
-          }}
-        >
-          <Text selectable style={{ color: colors.text, fontSize: 16, lineHeight: 23 }}>
-            {item.text}
-          </Text>
-        </View>
+        {item.imageUri && imageSize ? (
+          <Image
+            source={{ uri: item.imageUri }}
+            accessibilityLabel="Photo you sent"
+            contentFit="cover"
+            style={{
+              width: imageSize.width,
+              height: imageSize.height,
+              borderRadius: 16,
+              backgroundColor: colors.raised,
+              marginBottom: item.text ? 5 : 0,
+            }}
+          />
+        ) : null}
+        {item.text ? (
+          <View
+            style={{
+              maxWidth: '82%',
+              backgroundColor: colors.userBubble,
+              borderRadius: 20,
+              borderCurve: 'continuous',
+              paddingHorizontal: 16,
+              paddingVertical: 11,
+            }}
+          >
+            <Text selectable style={{ color: colors.text, fontSize: 16, lineHeight: 23 }}>
+              {item.text}
+            </Text>
+          </View>
+        ) : null}
       </View>
     );
   }

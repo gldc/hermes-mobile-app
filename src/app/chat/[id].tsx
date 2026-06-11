@@ -1,7 +1,8 @@
 import * as Haptics from 'expo-haptics';
+import * as ImagePicker from 'expo-image-picker';
 import { Stack, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, KeyboardAvoidingView, Text, View } from 'react-native';
+import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, KeyboardAvoidingView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
 import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
@@ -9,6 +10,7 @@ import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { openGateway, withAuthRetry } from '@/connection';
+import { MAX_ATTACH_BYTES, base64ByteLength, buildAttachParams, type PickedImage } from '@/lib/image-attach';
 import { messageText } from '@/lib/message-text';
 import { useTheme } from '@/theme';
 
@@ -24,6 +26,7 @@ export default function ChatScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
+  const [stagedImage, setStagedImage] = useState<PickedImage | null>(null);
   const [streaming, setStreaming] = useState(false);
   const [waiting, setWaiting] = useState(false); // sent, no tokens yet
   const [error, setError] = useState<string | null>(null);
@@ -231,14 +234,89 @@ export default function ChatScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
+  /** Photo picking — staged locally, uploaded via image.attach_bytes on send. */
+  async function pickImage(source: 'camera' | 'library') {
+    try {
+      if (source === 'camera') {
+        const perm = await ImagePicker.requestCameraPermissionsAsync();
+        if (!perm.granted) {
+          setError('Camera access is off. Enable it in Settings to take photos.');
+          return;
+        }
+      }
+      const options: ImagePicker.ImagePickerOptions = {
+        mediaTypes: ['images'],
+        base64: true,
+        quality: 0.7,
+        exif: false,
+      };
+      const result =
+        source === 'camera'
+          ? await ImagePicker.launchCameraAsync(options)
+          : await ImagePicker.launchImageLibraryAsync(options);
+      if (result.canceled) return;
+      const asset = result.assets[0];
+      if (!asset?.base64) {
+        setError('Could not read that image — try a different one.');
+        return;
+      }
+      if (base64ByteLength(asset.base64) > MAX_ATTACH_BYTES) {
+        setError('That image is over 25 MB — the gateway cannot accept it.');
+        return;
+      }
+      setStagedImage({
+        uri: asset.uri,
+        base64: asset.base64,
+        fileName: asset.fileName,
+        mimeType: asset.mimeType,
+        width: asset.width,
+        height: asset.height,
+      });
+      setError(null);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not open the image picker.');
+    }
+  }
+
+  function showAttachSheet() {
+    if (isIOS) {
+      ActionSheetIOS.showActionSheetWithOptions(
+        { options: ['Take Photo', 'Choose from Library', 'Cancel'], cancelButtonIndex: 2 },
+        (index) => {
+          if (index === 0) void pickImage('camera');
+          else if (index === 1) void pickImage('library');
+        },
+      );
+    } else {
+      Alert.alert('Add photo', undefined, [
+        { text: 'Take Photo', onPress: () => void pickImage('camera') },
+        { text: 'Choose from Library', onPress: () => void pickImage('library') },
+        { text: 'Cancel', style: 'cancel' },
+      ]);
+    }
+  }
+
   async function send() {
     const text = input.trim();
+    const image = stagedImage;
     const gw = gwRef.current;
-    if (!text || !gw || streaming) return;
+    if ((!text && !image) || !gw || streaming) return;
     if (isIOS) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setInput('');
+    setStagedImage(null);
     setError(null);
-    append('user', text);
+    setItems((prev) => [
+      ...prev,
+      {
+        key: nextKey(),
+        role: 'user',
+        text,
+        complete: true,
+        ...(image
+          ? { imageUri: image.uri, imageWidth: image.width, imageHeight: image.height }
+          : {}),
+      },
+    ]);
     setStreaming(true);
     setWaiting(true);
     try {
@@ -248,6 +326,11 @@ export default function ChatScreen() {
         const created = await gw.call<SessionCreateResult>('session.create', {});
         liveIdRef.current = created.session_id;
         if (created.stored_session_id) storedIdRef.current = created.stored_session_id;
+      }
+      // prompt.submit has no image params — stage the photo server-side first;
+      // the next submit drains the attached-images queue (docs/contracts/attachments.md).
+      if (image) {
+        await gw.call('image.attach_bytes', buildAttachParams(liveIdRef.current, image));
       }
       await gw.call('prompt.submit', { session_id: liveIdRef.current, text });
     } catch (e) {
@@ -304,7 +387,16 @@ export default function ChatScreen() {
         </View>
       ) : null}
 
-      <Composer value={input} onChangeText={setInput} onSend={send} disabled={!ready} streaming={streaming} />
+      <Composer
+        value={input}
+        onChangeText={setInput}
+        onSend={send}
+        disabled={!ready}
+        streaming={streaming}
+        stagedImageUri={stagedImage?.uri ?? null}
+        onAttachPress={showAttachSheet}
+        onRemoveImage={() => setStagedImage(null)}
+      />
     </KeyboardAvoidingView>
   );
 }
