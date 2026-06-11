@@ -13,6 +13,7 @@ export interface ThemeColors {
   onAccent: string;
   userBubble: string;
   danger: string;
+  onDanger: string;
   success: string;
 }
 
@@ -31,6 +32,7 @@ export const palettes: Record<'dark' | 'light', ThemeColors> = {
     onAccent: '#1A1408',
     userBubble: '#2A2620',
     danger: '#E5685C',
+    onDanger: '#FFF6F4',
     success: '#7FB069',
   },
   light: {
@@ -46,6 +48,7 @@ export const palettes: Record<'dark' | 'light', ThemeColors> = {
     onAccent: '#FFF9EE',
     userBubble: '#EFEAE0',
     danger: '#C94F43',
+    onDanger: '#FFF6F4',
     success: '#4E7A3A',
   },
 };
