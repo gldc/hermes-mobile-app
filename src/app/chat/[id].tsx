@@ -52,15 +52,15 @@ function HeaderButton({
 
   if (hasLiquidGlass) {
     return (
-      <GlassView isInteractive style={{ borderRadius: 20, overflow: 'hidden' }}>
+      <GlassView isInteractive style={{ borderRadius: 23, overflow: 'hidden' }}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel={label}
           hitSlop={4}
           onPress={onPress}
-          style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
+          style={{ width: 46, height: 46, alignItems: 'center', justifyContent: 'center' }}
         >
-          <Image source={icon} style={{ width: 17, height: 17 }} tintColor={colors.text} />
+          <Image source={icon} style={{ width: 19.5, height: 19.5 }} tintColor={colors.text} />
         </Pressable>
       </GlassView>
     );
@@ -73,16 +73,16 @@ function HeaderButton({
       hitSlop={4}
       onPress={onPress}
       style={({ pressed }) => ({
-        width: 40,
-        height: 40,
-        borderRadius: 20,
+        width: 46,
+        height: 46,
+        borderRadius: 23,
         alignItems: 'center',
         justifyContent: 'center',
         backgroundColor: pressed ? colors.raised : colors.surface,
         boxShadow: dark ? '0 2px 10px rgba(0, 0, 0, 0.35)' : '0 2px 10px rgba(31, 30, 26, 0.10)',
       })}
     >
-      <Image source={icon} style={{ width: 17, height: 17 }} tintColor={colors.text} />
+      <Image source={icon} style={{ width: 19.5, height: 19.5 }} tintColor={colors.text} />
     </Pressable>
   );
 }
