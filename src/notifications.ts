@@ -109,6 +109,15 @@ export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<voi
       }
     }
 
+    if (process.env.EXPO_OS === 'android') {
+      // Android 8+ shows nothing without a channel — create it before any token work.
+      await Notifications.setNotificationChannelAsync('default', {
+        name: 'Hermes',
+        importance: Notifications.AndroidImportance.HIGH,
+        vibrationPattern: [0, 250],
+      });
+    }
+
     const token = (await Notifications.getExpoPushTokenAsync({ projectId })).data;
     const stored = parsePushRegistration(await SecureStore.getItemAsync(REG_STORE_KEY));
     if (isRegistrationFresh(stored, token, deviceId, Date.now())) {
@@ -123,6 +132,9 @@ export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<voi
     status = { state: 'registered' };
   } catch (e) {
     // Best-effort by design (mailbox is the source of truth) — log and move on.
+    // On Android, getExpoPushTokenAsync throws here until FCM is configured
+    // (google-services.json + EAS FCM V1 credentials — see READY.md "Android
+    // push setup"), so Android push stays off without breaking login.
     console.warn('push registration skipped:', e instanceof Error ? e.message : e);
     status = { state: 'error', note: 'Push registration failed — will retry next launch' };
   }
