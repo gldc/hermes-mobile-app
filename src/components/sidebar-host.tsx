@@ -3,7 +3,7 @@
  * thread); the compiler-backed rule misreads these as render mutations. */
 import { usePathname } from 'expo-router';
 import { useEffect, useMemo, useSyncExternalStore, type ReactNode } from 'react';
-import { Keyboard, Pressable, useWindowDimensions, View } from 'react-native';
+import { BackHandler, Keyboard, Pressable, useWindowDimensions, View } from 'react-native';
 import { Gesture, GestureDetector } from 'react-native-gesture-handler';
 import Animated, {
   runOnJS,
@@ -48,6 +48,17 @@ export function SidebarHost({ children }: { children: ReactNode }) {
     if (open) Keyboard.dismiss();
     progress.value = withSpring(open ? 1 : 0, SPRING);
   }, [open, progress]);
+
+  // Android hardware/gesture back closes the drawer instead of popping the
+  // chat route. BackHandler never fires on iOS, but gate anyway for symmetry.
+  useEffect(() => {
+    if (process.env.EXPO_OS === 'ios' || !open) return;
+    const sub = BackHandler.addEventListener('hardwareBackPress', () => {
+      setSidebarOpen(false);
+      return true; // consume: do not pop the chat route
+    });
+    return () => sub.remove();
+  }, [open]);
 
   const settle = (shouldOpen: boolean, velocityX: number) => {
     'worklet';
