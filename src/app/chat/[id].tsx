@@ -523,7 +523,13 @@ export default function ChatScreen() {
   // Per-frame keyboard tracking (UI thread) — the composer rides the keyboard
   // instead of jumping when it appears. One continuous function: home-indicator
   // padding at rest, an 8pt gap above the keyboard once it's up.
-  const keyboard = useAnimatedKeyboard();
+  // Android (SDK 56) renders edge-to-edge; without the translucency flags
+  // Reanimated reports keyboard heights offset by the system bar heights.
+  // Both options are ignored on iOS.
+  const keyboard = useAnimatedKeyboard({
+    isStatusBarTranslucentAndroid: true,
+    isNavigationBarTranslucentAndroid: true,
+  });
   const containerStyle = useAnimatedStyle(() => ({
     paddingBottom: Math.max(insets.bottom, 10, keyboard.height.value + 8),
   }));
@@ -564,7 +570,8 @@ export default function ChatScreen() {
           data={reversedItems}
           inverted
           keyExtractor={(i) => i.key}
-          keyboardDismissMode="interactive"
+          // 'interactive' is iOS-only; Android ignores it, so fall back to on-drag.
+          keyboardDismissMode={process.env.EXPO_OS === 'ios' ? 'interactive' : 'on-drag'}
           // Inverted list: contentContainer paddingBottom is the visual top —
           // clearance for the floating header buttons.
           contentContainerStyle={{
