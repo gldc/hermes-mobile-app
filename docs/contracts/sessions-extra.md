@@ -1,6 +1,6 @@
 # Wire contracts: sessions (search, rename, delete/archive, raw tool messages)
 
-Verified against hermes source at `~/hermes-agent` on 2026-06-11.
+Verified against a local hermes-agent checkout on 2026-06-11.
 REST server: `hermes_cli/web_server.py` (FastAPI). DB layer: `hermes_state.py` (SQLite + FTS5).
 
 ---

@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-11
 **Status:** Approved (brainstorming phase complete)
-**Owner:** gldc@users.noreply.github.com
+**Owner:** [@gldc](https://github.com/gldc)
 
 ## Goal
 

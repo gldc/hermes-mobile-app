@@ -1,6 +1,6 @@
 # Wire contracts: gateway approvals (and clarify)
 
-Verified against hermes source at `~/hermes-agent` on 2026-06-11.
+Verified against a local hermes-agent checkout on 2026-06-11.
 Gateway: `tui_gateway/server.py` (JSON-RPC 2.0 over WS/stdio). Approval engine: `tools/approval.py`.
 Client reference: `apps/desktop/src/components/assistant-ui/tool-approval.tsx`,
 `apps/desktop/src/store/prompts.ts`, `apps/desktop/src/app/session/hooks/use-message-stream.ts`.

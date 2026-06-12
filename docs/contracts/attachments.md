@@ -1,6 +1,6 @@
 # Wire contracts: sending images (and files) with a prompt
 
-Verified against hermes source at `~/hermes-agent` on 2026-06-11.
+Verified against a local hermes-agent checkout on 2026-06-11.
 Gateway: `tui_gateway/server.py` (JSON-RPC). Client reference:
 `apps/desktop/src/app/session/hooks/use-prompt-actions.ts`.
 
