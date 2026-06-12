@@ -1,3 +1,4 @@
+import { GlassView, isLiquidGlassAvailable } from 'expo-glass-effect';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
@@ -34,7 +35,10 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 // quietly on every mount (the picker can change it between visits).
 let cachedModelName: string | null = null;
 
-/** Floating circular header button — the header bar itself is hidden. */
+const hasLiquidGlass = isLiquidGlassAvailable();
+
+/** Floating circular header button — the header bar itself is hidden.
+ * Native liquid glass on iOS 26+, a solid surface circle elsewhere. */
 function HeaderButton({
   icon,
   label,
@@ -45,6 +49,23 @@ function HeaderButton({
   onPress: () => void;
 }) {
   const { colors, dark } = useTheme();
+
+  if (hasLiquidGlass) {
+    return (
+      <GlassView isInteractive style={{ borderRadius: 20, overflow: 'hidden' }}>
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={label}
+          hitSlop={4}
+          onPress={onPress}
+          style={{ width: 40, height: 40, alignItems: 'center', justifyContent: 'center' }}
+        >
+          <Image source={icon} style={{ width: 17, height: 17 }} tintColor={colors.text} />
+        </Pressable>
+      </GlassView>
+    );
+  }
+
   return (
     <Pressable
       accessibilityRole="button"
