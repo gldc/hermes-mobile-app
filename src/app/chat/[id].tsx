@@ -575,6 +575,22 @@ export default function ChatScreen() {
         />
       )}
 
+      {/* Top fade: keeps the status bar and floating buttons readable while
+          messages scroll beneath. CSS gradient — no native module needed. */}
+      <View
+        pointerEvents="none"
+        style={{
+          position: 'absolute',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: insets.top + 78,
+          // Fade to bg-at-zero-alpha (#RRGGBBAA), not `transparent` — black-alpha
+          // interpolation leaves a gray smudge mid-fade.
+          experimental_backgroundImage: `linear-gradient(to bottom, ${colors.bg} 0%, ${colors.bg} 35%, ${colors.bg}00 100%)`,
+        }}
+      />
+
       {/* Floating header — the native bar is hidden on chat routes. */}
       <View
         pointerEvents="box-none"
