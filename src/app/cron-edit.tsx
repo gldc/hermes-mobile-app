@@ -2,7 +2,6 @@
 // No params → create (POST). ?id=&profile= → edit (PUT updates / DELETE).
 // Schedules are natural-language strings parsed by the gateway; 400 details
 // from the parser are surfaced inline.
-import { Image } from 'expo-image';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, ScrollView, Switch, Text, TextInput, View } from 'react-native';
@@ -18,6 +17,7 @@ import {
   type DeliveryTarget,
 } from '@/api/cron';
 import { AuthError, HttpError } from '@/api/restClient';
+import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
 import {
   SCHEDULE_PRESETS,
@@ -384,7 +384,7 @@ export default function CronEditScreen() {
                       ) : null}
                     </View>
                     {selected ? (
-                      <Image source="sf:checkmark" style={{ width: 17, height: 17 }} tintColor={colors.accent} />
+                      <Icon sf="checkmark" size={17} color={colors.accent} />
                     ) : null}
                   </Pressable>
                 </View>

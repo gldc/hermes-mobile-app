@@ -2,7 +2,7 @@ import Constants from 'expo-constants';
 import { router } from 'expo-router';
 import { useEffect, useState } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
-import { Image } from 'expo-image';
+import { Icon } from '@/components/icon';
 import { connectionInfo, disconnect } from '@/connection';
 import { getPushStatus, type PushStatus } from '@/notifications';
 import { useTheme } from '@/theme';
@@ -36,9 +36,9 @@ function NavRow({ icon, label, href }: { icon: string; label: string; href: stri
         backgroundColor: pressed ? colors.raised : 'transparent',
       })}
     >
-      <Image source={icon} style={{ width: 20, height: 20 }} tintColor={colors.accent} />
+      <Icon sf={icon} size={20} color={colors.accent} />
       <Text style={{ color: colors.text, fontSize: 15.5, flex: 1 }}>{label}</Text>
-      <Image source="sf:chevron.right" style={{ width: 13, height: 13 }} tintColor={colors.textFaint} />
+      <Icon sf="chevron.right" size={13} color={colors.textFaint} />
     </Pressable>
   );
 }
@@ -154,13 +154,13 @@ export default function SettingsScreen() {
 
       <SectionLabel>Control</SectionLabel>
       <Card>
-        <NavRow icon="sf:clock.arrow.circlepath" label="Cron Jobs" href="/cron" />
+        <NavRow icon="clock.arrow.circlepath" label="Cron Jobs" href="/cron" />
         <Divider />
-        <NavRow icon="sf:brain" label="Memory" href="/memory" />
+        <NavRow icon="brain" label="Memory" href="/memory" />
         <Divider />
-        <NavRow icon="sf:sparkles" label="Skills" href="/skills" />
+        <NavRow icon="sparkles" label="Skills" href="/skills" />
         <Divider />
-        <NavRow icon="sf:cpu" label="Model" href="/models" />
+        <NavRow icon="cpu" label="Model" href="/models" />
       </Card>
 
       <SectionLabel>Danger</SectionLabel>

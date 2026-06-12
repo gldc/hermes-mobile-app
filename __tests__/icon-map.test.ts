@@ -11,7 +11,10 @@ test('every mapped material icon exists in the MCI glyphmap', () => {
   }
 });
 
-/** Every sf: symbol used anywhere in src/ must have an Android mapping. */
+/** Every SF symbol used anywhere in src/ must have an Android mapping.
+ * Call sites go through <Icon sf="..."> (or wrapper components taking an
+ * `icon` prop / map entry), so collect string literals from `sf=`/`icon=`
+ * JSX attributes — including ternaries — and `icon:` object properties. */
 test('every sf: symbol used in the app has a mapping', () => {
   const root = path.join(__dirname, '..', 'src');
   const used = new Set<string>();
@@ -20,8 +23,11 @@ test('every sf: symbol used in the app has a mapping', () => {
       const p = path.join(dir, entry.name);
       if (entry.isDirectory()) walk(p);
       else if (/\.(ts|tsx)$/.test(entry.name) && !p.includes('__tests__')) {
-        for (const m of fs.readFileSync(p, 'utf8').matchAll(/['"`]sf:([a-z0-9._]+)['"`]/g)) {
-          used.add(m[1]);
+        const src = fs.readFileSync(p, 'utf8');
+        for (const m of src.matchAll(/\b(?:sf|icon)\s*[=:]\s*("[a-z0-9._]+"|'[a-z0-9._]+'|\{[^}]*\})/g)) {
+          for (const lit of m[1].matchAll(/['"]([a-z0-9._]+)['"]/g)) {
+            used.add(lit[1]);
+          }
         }
       }
     }

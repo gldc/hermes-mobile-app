@@ -1,6 +1,6 @@
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { Icon } from '@/components/icon';
 import type { ApprovalChoice, ApprovalRequest } from '@/lib/approval';
 import { useTheme, type ThemeColors } from '@/theme';
 
@@ -20,9 +20,9 @@ export interface ApprovalInfo {
 
 function ResolvedRow({ status, colors }: { status: ApprovalStatus; colors: ThemeColors }) {
   const map = {
-    approved: { icon: 'sf:checkmark.circle.fill', tint: colors.success, label: 'Approved' },
-    denied: { icon: 'sf:xmark.circle.fill', tint: colors.danger, label: 'Denied' },
-    cancelled: { icon: 'sf:slash.circle', tint: colors.textFaint, label: 'No longer pending' },
+    approved: { icon: 'checkmark.circle.fill', tint: colors.success, label: 'Approved' },
+    denied: { icon: 'xmark.circle.fill', tint: colors.danger, label: 'Denied' },
+    cancelled: { icon: 'slash.circle', tint: colors.textFaint, label: 'No longer pending' },
   } as const;
   const m = map[status as 'approved' | 'denied' | 'cancelled'];
   return (
@@ -30,7 +30,7 @@ function ResolvedRow({ status, colors }: { status: ApprovalStatus; colors: Theme
       accessibilityLabel={`Approval ${m.label}`}
       style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 2 }}
     >
-      <Image source={m.icon} style={{ width: 14, height: 14 }} tintColor={m.tint} />
+      <Icon sf={m.icon} size={14} color={m.tint} />
       <Text style={{ color: m.tint, fontSize: 13.5, fontWeight: '600' }}>{m.label}</Text>
     </View>
   );
@@ -77,11 +77,7 @@ export function ApprovalCard({
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-        <Image
-          source="sf:exclamationmark.shield.fill"
-          style={{ width: 15, height: 15 }}
-          tintColor={pending ? colors.accent : colors.textFaint}
-        />
+        <Icon sf="exclamationmark.shield.fill" size={15} color={pending ? colors.accent : colors.textFaint} />
         <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>
           Approval required
         </Text>

@@ -8,7 +8,6 @@
 // View mode renders the markdown; Edit switches to a monospace multiline
 // input. Leaving with unsaved changes (Cancel, back swipe, header back) asks
 // for confirmation before discarding.
-import { Image } from 'expo-image';
 import { Stack, router, useLocalSearchParams, useNavigation } from 'expo-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -34,6 +33,7 @@ import {
   type MemoryFileName,
 } from '@/api/memory';
 import { AuthError } from '@/api/restClient';
+import { Icon } from '@/components/icon';
 import { MarkdownView } from '@/components/markdown-view';
 import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
@@ -197,7 +197,7 @@ export default function MemoryFileScreen() {
 
       {!name ? (
         <View style={{ alignItems: 'center', gap: 14, paddingTop: 96, paddingHorizontal: 32 }}>
-          <Image source="sf:questionmark.folder" style={{ width: 44, height: 44 }} tintColor={colors.textFaint} />
+          <Icon sf="questionmark.folder" size={44} color={colors.textFaint} />
           <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>Unknown file</Text>
           <Text style={{ color: colors.textDim, fontSize: 14, textAlign: 'center' }}>
             Only MEMORY.md and USER.md can be opened here.
@@ -265,7 +265,7 @@ export default function MemoryFileScreen() {
             ) : null
           ) : content.trim() === '' ? (
             <View style={{ alignItems: 'center', gap: 14, paddingTop: 72, paddingHorizontal: 16 }}>
-              <Image source="sf:doc.text" style={{ width: 40, height: 40 }} tintColor={colors.textFaint} />
+              <Icon sf="doc.text" size={40} color={colors.textFaint} />
               <Text style={{ color: colors.text, fontSize: 17, fontWeight: '600' }}>Empty</Text>
               <Text style={{ color: colors.textDim, fontSize: 14, textAlign: 'center' }}>
                 The agent fills this in as you chat — or tap Edit to write it yourself.

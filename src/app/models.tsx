@@ -6,7 +6,6 @@
 // process's own profile (the default profile) and applies to NEW sessions
 // only — running chats keep their model.
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
 import { Stack, router } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
@@ -25,6 +24,7 @@ import {
   type ProviderRow,
 } from '@/api/models';
 import { AuthError } from '@/api/restClient';
+import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
 
@@ -103,7 +103,7 @@ function CurrentModelCard({ info, current }: { info: ModelInfo | null; current: 
             justifyContent: 'center',
           }}
         >
-          <Image source="sf:cpu" style={{ width: 20, height: 20 }} tintColor={colors.accent} />
+          <Icon sf="cpu" size={20} color={colors.accent} />
         </View>
         <View style={{ flex: 1, gap: 3 }}>
           <Text numberOfLines={1} style={{ color: colors.text, fontSize: 16.5, fontWeight: '600' }}>
@@ -180,7 +180,7 @@ function ModelRow({
         ) : null}
       </View>
       {selected ? (
-        <Image source="sf:checkmark" style={{ width: 17, height: 17 }} tintColor={colors.accent} />
+        <Icon sf="checkmark" size={17} color={colors.accent} />
       ) : null}
     </Pressable>
   );
@@ -200,7 +200,7 @@ function UnconfiguredRow({ row }: { row: ProviderRow }) {
           {hint}
         </Text>
       </View>
-      <Image source="sf:key" style={{ width: 15, height: 15 }} tintColor={colors.textFaint} />
+      <Icon sf="key" size={15} color={colors.textFaint} />
     </View>
   );
 }
@@ -386,7 +386,7 @@ export default function ModelsScreen() {
         </>
       ) : !error ? (
         <View style={{ alignItems: 'center', gap: 14, paddingTop: 96, paddingHorizontal: 32 }}>
-          <Image source="sf:cpu" style={{ width: 44, height: 44 }} tintColor={colors.textFaint} />
+          <Icon sf="cpu" size={44} color={colors.textFaint} />
           <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>Models unavailable</Text>
           <Text style={{ color: colors.textDim, fontSize: 14, textAlign: 'center' }}>
             The gateway did not return any model options. Pull to retry.

@@ -13,6 +13,7 @@ import { withProfile } from '@/api/profiles';
 import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
 import { setAttachHandler } from '@/attach-bus';
 import { ApprovalCard } from '@/components/approval-card';
+import { Icon } from '@/components/icon';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { ThinkingDots } from '@/components/thinking-dots';
@@ -60,7 +61,7 @@ function HeaderButton({
           onPress={onPress}
           style={{ width: 46, height: 46, alignItems: 'center', justifyContent: 'center' }}
         >
-          <Image source={icon} style={{ width: 19.5, height: 19.5 }} tintColor={colors.text} />
+          <Icon sf={icon} size={19.5} color={colors.text} />
         </Pressable>
       </GlassView>
     );
@@ -82,7 +83,7 @@ function HeaderButton({
         boxShadow: dark ? '0 2px 10px rgba(0, 0, 0, 0.35)' : '0 2px 10px rgba(31, 30, 26, 0.10)',
       })}
     >
-      <Image source={icon} style={{ width: 19.5, height: 19.5 }} tintColor={colors.text} />
+      <Icon sf={icon} size={19.5} color={colors.text} />
     </Pressable>
   );
 }
@@ -625,21 +626,21 @@ export default function ChatScreen() {
           gap: 10,
         }}
       >
-        <HeaderButton icon="sf:line.3.horizontal" label="Open menu" onPress={openSidebar} />
+        <HeaderButton icon="line.3.horizontal" label="Open menu" onPress={openSidebar} />
         <View style={{ flex: 1 }} />
         {items.length > 0 ? (
           <Animated.View entering={FadeIn.duration(200)}>
-            <HeaderButton icon="sf:square.and.arrow.up" label="Export conversation" onPress={showExportSheet} />
+            <HeaderButton icon="square.and.arrow.up" label="Export conversation" onPress={showExportSheet} />
           </Animated.View>
         ) : null}
         {id !== 'new' ? (
           <HeaderButton
-            icon="sf:square.and.pencil"
+            icon="square.and.pencil"
             label="New chat"
             onPress={() => router.replace('/chat/new')}
           />
         ) : (
-          <HeaderButton icon="sf:gearshape" label="Settings" onPress={() => router.push('/settings')} />
+          <HeaderButton icon="gearshape" label="Settings" onPress={() => router.push('/settings')} />
         )}
       </View>
 

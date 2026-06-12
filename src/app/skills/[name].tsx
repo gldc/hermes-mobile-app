@@ -5,12 +5,12 @@
 // /api/files/read is locked down for remote clients), so this renders the
 // skill's frontmatter metadata — description (markdown), category, state —
 // and offers the supported enable/disable toggle.
-import { Image } from 'expo-image';
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { RefreshControl, ScrollView, Switch, Text, View } from 'react-native';
 import { listSkills, toggleSkill, type SkillInfo } from '@/api/skills';
 import { AuthError } from '@/api/restClient';
+import { Icon } from '@/components/icon';
 import { MarkdownView } from '@/components/markdown-view';
 import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
@@ -170,7 +170,7 @@ export default function SkillDetailScreen() {
         </>
       ) : !error ? (
         <View style={{ alignItems: 'center', gap: 14, paddingTop: 96, paddingHorizontal: 32 }}>
-          <Image source="sf:questionmark.circle" style={{ width: 44, height: 44 }} tintColor={colors.textFaint} />
+          <Icon sf="questionmark.circle" size={44} color={colors.textFaint} />
           <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>Skill not found</Text>
           <Text style={{ color: colors.textDim, fontSize: 14, textAlign: 'center' }}>
             “{name}” is no longer installed on the gateway. Pull to refresh.

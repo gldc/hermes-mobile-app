@@ -5,7 +5,6 @@
 // rides on the hermes-mobile plugin's /api/plugins/mobile/memory routes.
 // When those routes 404 (plugin missing or too old) the file list degrades
 // to read-only sizes with an update hint.
-import { Image } from 'expo-image';
 import { Stack, router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
@@ -26,6 +25,7 @@ import {
 } from '@/api/memory';
 import { timeAgo } from '@/lib/format';
 import { AuthError } from '@/api/restClient';
+import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
 
@@ -103,7 +103,7 @@ function ProviderRow({
         ) : null}
       </View>
       {selected ? (
-        <Image source="sf:checkmark" style={{ width: 17, height: 17 }} tintColor={colors.accent} />
+        <Icon sf="checkmark" size={17} color={colors.accent} />
       ) : null}
     </Pressable>
   );
@@ -132,7 +132,7 @@ function EditableFileRow({ file }: { file: MemoryFileInfo }) {
         <Text style={{ color: colors.textFaint, fontSize: 13 }}>{file.name}</Text>
       </View>
       <Text style={{ color: file.exists ? colors.textDim : colors.textFaint, fontSize: 14 }}>{detail}</Text>
-      <Image source="sf:chevron.right" style={{ width: 12, height: 12 }} tintColor={colors.textFaint} />
+      <Icon sf="chevron.right" size={12} color={colors.textFaint} />
     </Pressable>
   );
 }
@@ -345,7 +345,7 @@ export default function MemoryScreen() {
               {filesState.kind === 'missing' ? (
                 <Card>
                   <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12, padding: 16, minHeight: 44 }}>
-                    <Image source="sf:arrow.down.circle" style={{ width: 22, height: 22 }} tintColor={colors.textDim} />
+                    <Icon sf="arrow.down.circle" size={22} color={colors.textDim} />
                     <Text style={{ flex: 1, color: colors.textDim, fontSize: 14, lineHeight: 19 }}>
                       Update the hermes-mobile plugin to edit memory.
                     </Text>
@@ -374,7 +374,7 @@ export default function MemoryScreen() {
         </>
       ) : !error ? (
         <View style={{ alignItems: 'center', gap: 14, paddingTop: 96, paddingHorizontal: 32 }}>
-          <Image source="sf:brain" style={{ width: 44, height: 44 }} tintColor={colors.textFaint} />
+          <Icon sf="brain" size={44} color={colors.textFaint} />
           <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>Memory unavailable</Text>
           <Text style={{ color: colors.textDim, fontSize: 14, textAlign: 'center' }}>
             The gateway did not return a memory status. Pull to retry.

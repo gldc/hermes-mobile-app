@@ -1,9 +1,9 @@
 import { memo } from 'react';
 import { Pressable, Text, View } from 'react-native';
-import { Image } from 'expo-image';
 import ReanimatedSwipeable from 'react-native-gesture-handler/ReanimatedSwipeable';
 import type { SwipeableMethods } from 'react-native-gesture-handler/ReanimatedSwipeable';
 import type { SessionSummary } from '@/api/types';
+import { Icon } from '@/components/icon';
 import { timeAgo } from '@/lib/format';
 import { useTheme } from '@/theme';
 
@@ -42,7 +42,7 @@ function SwipeAction({
         opacity: pressed ? 0.7 : 1,
       })}
     >
-      <Image source={icon} style={{ width: 20, height: 20 }} tintColor={tint} />
+      <Icon sf={icon} size={20} color={tint} />
       {compact ? null : <Text style={{ color: tint, fontSize: 12, fontWeight: '600' }}>{label}</Text>}
     </Pressable>
   );
@@ -138,7 +138,7 @@ export const SessionRow = memo(function SessionRow({
         <View style={{ flexDirection: 'row' }}>
           {onRename ? (
             <SwipeAction
-              icon="sf:pencil"
+              icon="pencil"
               label="Rename"
               compact={compact}
               background={colors.raised}
@@ -152,7 +152,7 @@ export const SessionRow = memo(function SessionRow({
           ) : null}
           {onArchive ? (
             <SwipeAction
-              icon={archiveLabel === 'Archive' ? 'sf:archivebox.fill' : 'sf:tray.and.arrow.up.fill'}
+              icon={archiveLabel === 'Archive' ? 'archivebox.fill' : 'tray.and.arrow.up.fill'}
               label={archiveLabel}
               compact={compact}
               background={colors.accent}
@@ -166,7 +166,7 @@ export const SessionRow = memo(function SessionRow({
           ) : null}
           {onDelete ? (
             <SwipeAction
-              icon="sf:trash.fill"
+              icon="trash.fill"
               label="Delete"
               compact={compact}
               background={colors.danger}
