@@ -4,8 +4,6 @@ import { Icon } from '@/components/icon';
 import type { ApprovalChoice, ApprovalRequest } from '@/lib/approval';
 import { useTheme, type ThemeColors } from '@/theme';
 
-const isIOS = process.env.EXPO_OS === 'ios';
-
 export type ApprovalStatus =
   | 'pending' // waiting for the user
   | 'answering' // approval.respond in flight
@@ -57,7 +55,7 @@ export function ApprovalCard({
   const actionable = status === 'pending' && active;
 
   function respond(choice: ApprovalChoice) {
-    if (isIOS) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     onRespond(choice);
   }
 

@@ -218,7 +218,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
         // restored from archived).
         setSessions((prev) => prev.filter((s) => s.id !== session.id));
         setTotal((t) => Math.max(0, t - 1));
-        if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (e) {
         handleActionError(e, showArchived ? 'Unarchive' : 'Archive');
       }
@@ -242,7 +242,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
                 await withAuthRetry((r) => deleteSession(r, session.id, activeProfile));
                 setSessions((prev) => prev.filter((s) => s.id !== session.id));
                 setTotal((t) => Math.max(0, t - 1));
-                if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               } catch (e) {
                 handleActionError(e, 'Delete');
               }
@@ -299,7 +299,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   );
 
   const newChat = useCallback(() => {
-    if (isIOS) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     closeSidebar();
     if (pathname !== '/chat/new') router.replace('/chat/new');
   }, [pathname]);
@@ -455,7 +455,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           accessibilityState={{ selected: showArchived }}
           hitSlop={8}
           onPress={() => {
-            if (isIOS) Haptics.selectionAsync();
+            Haptics.selectionAsync();
             setSessions([]);
             setTotal(0);
             setLoaded(false);

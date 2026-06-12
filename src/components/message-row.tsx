@@ -169,7 +169,7 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
         onLongPress={
           item.complete
             ? () => {
-                if (process.env.EXPO_OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 Share.share({ message: item.text });
               }
             : undefined

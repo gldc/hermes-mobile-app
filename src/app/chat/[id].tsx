@@ -30,7 +30,6 @@ import { serif, useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
 
-const isIOS = process.env.EXPO_OS === 'ios';
 const MAX_RECONNECT_ATTEMPTS = 5;
 
 // Module-level so the pill shows instantly on later chat mounts; refreshed
@@ -264,7 +263,7 @@ export default function ChatScreen() {
           cancelPendingApprovals(); // gateway force-denies leftovers on turn end
           setStreaming(false);
           setWaiting(false);
-          if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           break;
         case 'tool.start':
           setWaiting(false);
@@ -280,7 +279,7 @@ export default function ChatScreen() {
         case 'approval.request':
           setWaiting(false);
           finishAssistant();
-          if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           appendApproval(e.payload);
           break;
         case 'error':
@@ -457,7 +456,7 @@ export default function ChatScreen() {
     const image = stagedImage;
     const gw = gwRef.current;
     if ((!text && !image) || !gw || streaming) return;
-    if (isIOS) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setInput('');
     setStagedImage(null);
     setError(null);

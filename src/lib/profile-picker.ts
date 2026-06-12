@@ -4,14 +4,12 @@ import * as Haptics from 'expo-haptics';
 import { showActionSheet } from '@/lib/action-sheet';
 import { getProfileState, setSelectedProfile } from '@/profile-store';
 
-const isIOS = process.env.EXPO_OS === 'ios';
-
 export function showProfilePicker(): void {
   const { names, selected, serverCurrent } = getProfileState();
   const current = selected ?? serverCurrent;
   const pick = (name: string) => {
     if (name === current) return;
-    if (isIOS) Haptics.selectionAsync();
+    Haptics.selectionAsync();
     void setSelectedProfile(name);
   };
   showActionSheet(
