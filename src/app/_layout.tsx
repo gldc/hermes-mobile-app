@@ -38,6 +38,15 @@ export default function Layout() {
             options={{ headerShown: false, gestureEnabled: false, animation: 'fade' }}
           />
           <Stack.Screen
+            name="attach"
+            options={{
+              presentation: 'formSheet',
+              sheetGrabberVisible: true,
+              sheetAllowedDetents: [0.6, 0.95],
+              headerShown: false,
+            }}
+          />
+          <Stack.Screen
             name="settings"
             options={{
               title: 'Settings',

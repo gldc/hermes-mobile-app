@@ -3,7 +3,6 @@ import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
-  ActionSheetIOS,
   Alert,
   Pressable,
   RefreshControl,
@@ -26,10 +25,10 @@ import {
   canServerSearch,
   getProfileState,
   hydrateProfileStore,
-  setSelectedProfile,
   setServerProfiles,
   subscribeProfiles,
 } from '@/profile-store';
+import { showProfilePicker } from '@/lib/profile-picker';
 import { closeSidebar } from '@/sidebar-store';
 import { serif, useTheme } from '@/theme';
 
@@ -160,28 +159,6 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
       }
     })();
   }, [open]);
-
-  const showProfilePicker = useCallback(() => {
-    const { names, selected, serverCurrent } = getProfileState();
-    const current = selected ?? serverCurrent;
-    const labels = names.map((n) => (n === current ? `${n} ✓` : n));
-    const pick = (index: number) => {
-      if (index < 0 || index >= names.length || names[index] === current) return;
-      if (isIOS) Haptics.selectionAsync();
-      void setSelectedProfile(names[index]);
-    };
-    if (isIOS) {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { title: 'Switch profile', options: [...labels, 'Cancel'], cancelButtonIndex: names.length },
-        (index) => pick(index === names.length ? -1 : index),
-      );
-    } else {
-      Alert.alert('Switch profile', undefined, [
-        ...names.map((n, i) => ({ text: labels[i], onPress: () => pick(i) })),
-        { text: 'Cancel', style: 'cancel' as const },
-      ]);
-    }
-  }, []);
 
   // Debounced server-side full-text search. While a request is in flight the
   // list keeps showing the instant client-side filter below.

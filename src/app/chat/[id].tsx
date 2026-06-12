@@ -10,6 +10,7 @@ import type { GatewayClient } from '@/api/gatewayClient';
 import { getModelInfo, modelDisplayName } from '@/api/models';
 import { withProfile } from '@/api/profiles';
 import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
+import { setAttachHandler } from '@/attach-bus';
 import { ApprovalCard } from '@/components/approval-card';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
@@ -405,23 +406,9 @@ export default function ChatScreen() {
     }
   }
 
-  function showAttachSheet() {
-    if (isIOS) {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { options: ['Take Photo', 'Choose from Library', 'Cancel'], cancelButtonIndex: 2 },
-        (index) => {
-          if (index === 0) void pickImage('camera');
-          else if (index === 1) void pickImage('library');
-        },
-      );
-    } else {
-      Alert.alert('Add photo', undefined, [
-        { text: 'Take Photo', onPress: () => void pickImage('camera') },
-        { text: 'Choose from Library', onPress: () => void pickImage('library') },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
-    }
-  }
+  // The add-to-chat sheet (its own formSheet route) fires camera/library
+  // requests over the attach bus once it has dismissed itself.
+  useEffect(() => setAttachHandler((action) => void pickImage(action)), []);
 
   /** Share the current conversation via the system share sheet. */
   async function shareExport(format: 'text' | 'jsonl') {
@@ -649,7 +636,7 @@ export default function ChatScreen() {
         disabled={!ready}
         streaming={streaming}
         stagedImageUri={stagedImage?.uri ?? null}
-        onAttachPress={showAttachSheet}
+        onAttachPress={() => router.push('/attach')}
         onRemoveImage={() => setStagedImage(null)}
         modelName={modelName}
         onModelPress={() => router.push('/models')}
