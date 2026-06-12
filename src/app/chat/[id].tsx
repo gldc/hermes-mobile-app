@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, Pressable, Share, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, Share, Text, View } from 'react-native';
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
@@ -20,6 +20,7 @@ import { ThinkingDots } from '@/components/thinking-dots';
 import { openGateway, withAuthRetry } from '@/connection';
 import { getProfileState, hydrateProfileStore } from '@/profile-store';
 import { openSidebar } from '@/sidebar-store';
+import { showActionSheet } from '@/lib/action-sheet';
 import { parseApprovalRequest, resolvedCount, type ApprovalChoice } from '@/lib/approval';
 import { exportAsJsonl, exportAsText } from '@/lib/export';
 import { greetingForHour } from '@/lib/greeting';
@@ -445,21 +446,10 @@ export default function ChatScreen() {
 
   function showExportSheet() {
     if (items.length === 0) return;
-    if (isIOS) {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { title: 'Export conversation', options: ['Text', 'JSONL', 'Cancel'], cancelButtonIndex: 2 },
-        (index) => {
-          if (index === 0) void shareExport('text');
-          else if (index === 1) void shareExport('jsonl');
-        },
-      );
-    } else {
-      Alert.alert('Export conversation', undefined, [
-        { text: 'Text', onPress: () => void shareExport('text') },
-        { text: 'JSONL', onPress: () => void shareExport('jsonl') },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
-    }
+    showActionSheet('Export conversation', [
+      { label: 'Text', onPress: () => void shareExport('text') },
+      { label: 'JSONL', onPress: () => void shareExport('jsonl') },
+    ]);
   }
 
   async function send() {

@@ -16,6 +16,7 @@ import { searchSessions, type SearchResult } from '@/api/search';
 import { deleteSession, renameSession, setSessionArchived } from '@/api/sessions';
 import type { SessionSummary } from '@/api/types';
 import { Icon } from '@/components/icon';
+import { PromptDialog } from '@/components/prompt-dialog';
 import { SearchResultRow } from '@/components/search-result-row';
 import { SessionRow } from '@/components/session-row';
 import { AuthError } from '@/api/restClient';
@@ -84,6 +85,8 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   // never render while a newer request is still in flight.
   const [hits, setHits] = useState<{ q: string; results: SearchResult[] } | null>(null);
   const [searchPending, setSearchPending] = useState(false);
+  // Android rename dialog target (iOS uses Alert.prompt instead).
+  const [renameTarget, setRenameTarget] = useState<SessionSummary | null>(null);
   const profiles = useSyncExternalStore(subscribeProfiles, getProfileState);
   const activeProfile = profiles.selected; // null = server default (no param sent)
 
@@ -251,39 +254,40 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
     [handleActionError, activeProfile],
   );
 
-  const promptRename = useCallback(
-    (session: SessionSummary) => {
-      // Alert.prompt is iOS-only; this app ships iOS-first (see AGENTS.md).
-      if (!isIOS) return;
-      Alert.prompt(
-        'Rename conversation',
-        'Leave empty to clear the title.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Save',
-            onPress: async (value?: string) => {
-              const title = (value ?? '').trim();
-              try {
-                const res = await withAuthRetry((r) =>
-                  renameSession(r, session.id, title, activeProfile),
-                );
-                setSessions((prev) =>
-                  prev.map((s) =>
-                    s.id === session.id ? { ...s, title: res.title?.trim() || null } : s,
-                  ),
-                );
-              } catch (e) {
-                handleActionError(e, 'Rename');
-              }
-            },
-          },
-        ],
-        'plain-text',
-        session.title ?? '',
-      );
+  const applyRename = useCallback(
+    async (session: SessionSummary, value: string) => {
+      const title = value.trim();
+      try {
+        const res = await withAuthRetry((r) => renameSession(r, session.id, title, activeProfile));
+        setSessions((prev) =>
+          prev.map((s) => (s.id === session.id ? { ...s, title: res.title?.trim() || null } : s)),
+        );
+      } catch (e) {
+        handleActionError(e, 'Rename');
+      }
     },
     [handleActionError, activeProfile],
+  );
+
+  const promptRename = useCallback(
+    (session: SessionSummary) => {
+      if (isIOS) {
+        // Alert.prompt is iOS-only; Android renders the PromptDialog below.
+        Alert.prompt(
+          'Rename conversation',
+          'Leave empty to clear the title.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Save', onPress: (value?: string) => void applyRename(session, value ?? '') },
+          ],
+          'plain-text',
+          session.title ?? '',
+        );
+        return;
+      }
+      setRenameTarget(session);
+    },
+    [applyRename],
   );
 
   const openChat = useCallback(
@@ -496,7 +500,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
               compact
               session={item.session}
               onPress={() => openChat(item.session.id)}
-              onRename={isIOS && !showArchived ? () => promptRename(item.session) : undefined}
+              onRename={!showArchived ? () => promptRename(item.session) : undefined}
               onArchive={() => toggleArchived(item.session)}
               archiveLabel={showArchived ? 'Unarchive' : 'Archive'}
               onDelete={() => confirmDelete(item.session)}
@@ -558,6 +562,22 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           <Text style={{ color: colors.onInverse, fontSize: 16, fontWeight: '600' }}>New chat</Text>
         </Pressable>
       </View>
+
+      {/* Android rename dialog — mounted fresh per target so the input
+          re-seeds from the session title. Dead-code-eliminated on iOS. */}
+      {!isIOS && renameTarget ? (
+        <PromptDialog
+          visible
+          title="Rename conversation"
+          initialValue={renameTarget.title ?? ''}
+          onSubmit={(value) => {
+            const target = renameTarget;
+            setRenameTarget(null);
+            void applyRename(target, value);
+          }}
+          onCancel={() => setRenameTarget(null)}
+        />
+      ) : null}
     </View>
   );
 }
