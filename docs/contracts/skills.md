@@ -1,6 +1,6 @@
 # Wire contracts: skills (list, toggle, content read, hub, profile scoping)
 
-Verified against hermes source at `~/hermes-agent` on 2026-06-11.
+Verified against a local hermes-agent checkout on 2026-06-11.
 REST server: `hermes_cli/web_server.py` (FastAPI). Reference clients:
 `web/src/lib/api.ts` (dashboard) and `apps/desktop/src/hermes.ts` (desktop).
 

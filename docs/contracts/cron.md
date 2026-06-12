@@ -1,6 +1,6 @@
 # Wire contracts: cron jobs REST
 
-Verified against hermes source at `~/hermes-agent` on 2026-06-11.
+Verified against a local hermes-agent checkout on 2026-06-11.
 REST server: `hermes_cli/web_server.py`. Job store: `cron/jobs.py` (JSON file per profile,
 `~/.hermes/cron/jobs.json`).
 
