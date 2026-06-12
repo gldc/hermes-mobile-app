@@ -3,6 +3,12 @@
 An **unofficial, open-source iOS client** for [hermes-agent](https://github.com/NousResearch/hermes-agent) —
 chat with your self-hosted Hermes from your phone, over your own private network.
 
+<p align="center">
+  <img src="docs/screenshots/light.png" alt="Hermes Mobile — light mode" width="44%" />
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/dark.png" alt="Hermes Mobile — dark mode" width="44%" />
+</p>
+
 - 🔒 **Private by construction** — the app talks only to *your* gateway over Tailscale/VPN/LAN.
   No third-party backend, no telemetry, nothing leaves your network.
 - 💬 **Real chat experience** — streaming responses, rendered markdown, expandable tool-call
