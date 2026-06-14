@@ -1,5 +1,4 @@
 import * as Haptics from 'expo-haptics';
-import { Image } from 'expo-image';
 import { Stack, router, useFocusEffect } from 'expo-router';
 import { useCallback, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, Switch, Text, View } from 'react-native';
@@ -15,6 +14,7 @@ import {
   type CronJob,
 } from '@/api/cron';
 import { AuthError } from '@/api/restClient';
+import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
 import { isoToUnix, timeAgo, timeUntil } from '@/lib/format';
 import { useTheme } from '@/theme';
@@ -129,10 +129,10 @@ function JobCard({
             opacity: pressed ? 0.5 : 1,
           })}
         >
-          <Image
-            source={queued ? 'sf:checkmark.circle.fill' : 'sf:play.circle.fill'}
-            style={{ width: 22, height: 22 }}
-            tintColor={queued ? colors.success : colors.accent}
+          <Icon
+            sf={queued ? 'checkmark.circle.fill' : 'play.circle.fill'}
+            size={22}
+            color={queued ? colors.success : colors.accent}
           />
           <Text style={{ color: queued ? colors.success : colors.accent, fontSize: 15, fontWeight: '600' }}>
             {queued ? 'Queued' : 'Run now'}
@@ -152,7 +152,7 @@ function JobCard({
             opacity: pressed ? 0.5 : 1,
           })}
         >
-          <Image source="sf:pencil" style={{ width: 16, height: 16 }} tintColor={colors.textDim} />
+          <Icon sf="pencil" size={16} color={colors.textDim} />
           <Text style={{ color: colors.textDim, fontSize: 14 }}>Edit</Text>
         </Pressable>
 
@@ -171,11 +171,7 @@ function JobCard({
             })}
           >
             <Text style={{ color: colors.textDim, fontSize: 14 }}>Last output</Text>
-            <Image
-              source={expanded ? 'sf:chevron.up' : 'sf:chevron.down'}
-              style={{ width: 13, height: 13 }}
-              tintColor={colors.textDim}
-            />
+            <Icon sf={expanded ? 'chevron.up' : 'chevron.down'} size={13} color={colors.textDim} />
           </Pressable>
         ) : null}
       </View>
@@ -347,7 +343,7 @@ export default function CronScreen() {
               onPress={() => router.push('/cron-edit')}
               style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
             >
-              <Image source="sf:plus" style={{ width: 22, height: 22 }} tintColor={colors.accent} />
+              <Icon sf="plus" size={22} color={colors.accent} />
             </Pressable>
           ),
         }}
@@ -380,11 +376,7 @@ export default function CronScreen() {
         ListEmptyComponent={
           loaded && !refreshing && !error ? (
             <View style={{ alignItems: 'center', gap: 14, paddingTop: 96, paddingHorizontal: 32 }}>
-              <Image
-                source="sf:clock.arrow.2.circlepath"
-                style={{ width: 44, height: 44 }}
-                tintColor={colors.textFaint}
-              />
+              <Icon sf="clock.arrow.2.circlepath" size={44} color={colors.textFaint} />
               <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>No cron jobs</Text>
               <Text style={{ color: colors.textDim, fontSize: 14, textAlign: 'center' }}>
                 Schedule recurring agent runs — tap + to create one, or use “hermes cron add” on your gateway.

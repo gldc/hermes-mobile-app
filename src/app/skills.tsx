@@ -3,12 +3,12 @@
 // Skills browser. Per docs/contracts/skills.md the gateway exposes list +
 // enable/disable toggle over REST; pin/unpin is CLI-only and the list payload
 // carries no source/pinned fields, so the badges here are category + state.
-import { Image } from 'expo-image';
 import { Stack, router, useFocusEffect } from 'expo-router';
 import { useCallback, useMemo, useState } from 'react';
 import { FlatList, Pressable, RefreshControl, Switch, Text, View } from 'react-native';
 import { filterSkills, listSkills, sortSkills, summaryLine, toggleSkill, type SkillInfo } from '@/api/skills';
 import { AuthError } from '@/api/restClient';
+import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
 
@@ -187,7 +187,7 @@ export default function SkillsScreen() {
         ListEmptyComponent={
           loaded && !refreshing && !error ? (
             <View style={{ alignItems: 'center', gap: 14, paddingTop: 96, paddingHorizontal: 32 }}>
-              <Image source="sf:sparkles" style={{ width: 44, height: 44 }} tintColor={colors.textFaint} />
+              <Icon sf="sparkles" size={44} color={colors.textFaint} />
               <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>
                 {query ? 'No matches' : 'No skills installed'}
               </Text>

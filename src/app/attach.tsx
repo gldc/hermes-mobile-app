@@ -1,9 +1,9 @@
-import { Image } from 'expo-image';
 import { router } from 'expo-router';
 import { useEffect, useState, useSyncExternalStore } from 'react';
 import { Pressable, ScrollView, Text, View } from 'react-native';
 import { getModelInfo, modelDisplayName } from '@/api/models';
 import { requestAttach, type AttachAction } from '@/attach-bus';
+import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
 import { showProfilePicker } from '@/lib/profile-picker';
 import { activeProfileLabel, getProfileState, subscribeProfiles } from '@/profile-store';
@@ -33,7 +33,7 @@ function Tile({ icon, label, onPress }: { icon: string; label: string; onPress: 
         backgroundColor: pressed ? colors.userBubble : colors.raised,
       })}
     >
-      <Image source={icon} style={{ width: 26, height: 26 }} tintColor={colors.text} />
+      <Icon sf={icon} size={26} color={colors.text} />
       <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '500' }}>{label}</Text>
     </Pressable>
   );
@@ -61,14 +61,14 @@ function Row({
       style={({ pressed }) => ({ backgroundColor: pressed ? colors.raised : 'transparent' })}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 13, paddingHorizontal: 16, height: 52 }}>
-        <Image source={icon} style={{ width: 20, height: 20 }} tintColor={colors.text} />
+        <Icon sf={icon} size={20} color={colors.text} />
         <Text style={{ flex: 1, color: colors.text, fontSize: 16.5 }}>{label}</Text>
         {value ? (
           <Text numberOfLines={1} style={{ color: colors.textFaint, fontSize: 15.5, maxWidth: 150 }}>
             {value}
           </Text>
         ) : null}
-        <Image source="sf:chevron.right" style={{ width: 12, height: 12 }} tintColor={colors.textFaint} />
+        <Icon sf="chevron.right" size={12} color={colors.textFaint} />
       </View>
       {!last ? <View style={{ height: 1, marginLeft: 49, backgroundColor: colors.border }} /> : null}
     </Pressable>
@@ -126,7 +126,7 @@ export default function AttachSheet() {
             borderColor: colors.border,
           })}
         >
-          <Image source="sf:xmark" style={{ width: 13, height: 13 }} tintColor={colors.text} />
+          <Icon sf="xmark" size={13} color={colors.text} />
         </Pressable>
         <Text style={{ flex: 1, textAlign: 'center', color: colors.text, fontSize: 17, fontWeight: '600' }}>
           Add to chat
@@ -137,8 +137,8 @@ export default function AttachSheet() {
 
       <ScrollView contentContainerStyle={{ padding: 14, gap: 14 }} alwaysBounceVertical={false}>
         <View style={{ flexDirection: 'row', gap: 10 }}>
-          <Tile icon="sf:camera.fill" label="Camera" onPress={() => attach('camera')} />
-          <Tile icon="sf:photo.on.rectangle" label="Photos" onPress={() => attach('library')} />
+          <Tile icon="camera.fill" label="Camera" onPress={() => attach('camera')} />
+          <Tile icon="photo.on.rectangle" label="Photos" onPress={() => attach('library')} />
         </View>
 
         <View
@@ -152,13 +152,13 @@ export default function AttachSheet() {
           }}
         >
           <Row
-            icon="sf:cpu"
+            icon="cpu"
             label="Model"
             value={modelName}
             onPress={() => go(() => router.push('/models'))}
           />
           <Row
-            icon="sf:person.crop.circle"
+            icon="person.crop.circle"
             label="Profile"
             value={activeProfileLabel(profiles)}
             last
@@ -177,13 +177,13 @@ export default function AttachSheet() {
           }}
         >
           <Row
-            icon="sf:calendar.badge.plus"
+            icon="calendar.badge.plus"
             label="Schedule a task"
             onPress={() => go(() => router.push('/cron-edit'))}
           />
-          <Row icon="sf:sparkles" label="Skills" onPress={() => go(() => router.push('/skills'))} />
+          <Row icon="sparkles" label="Skills" onPress={() => go(() => router.push('/skills'))} />
           <Row
-            icon="sf:books.vertical"
+            icon="books.vertical"
             label="Memory"
             last
             onPress={() => go(() => router.push('/memory'))}

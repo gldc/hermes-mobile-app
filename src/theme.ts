@@ -24,8 +24,9 @@ export interface ThemeColors {
   success: string;
 }
 
-/** Display face for the wordmark and greetings — warm serif, built into iOS. */
-export const serif = 'Georgia';
+/** Display face for the wordmark and greetings — warm serif. Georgia is built into
+ * iOS; Android maps 'serif' to Noto Serif. */
+export const serif = process.env.EXPO_OS === 'ios' ? 'Georgia' : 'serif';
 
 /** Color-matched to the Claude iOS app (values sampled from screenshots):
  * near-neutral paper surfaces, #181818 ink, terracotta accent. The main chat

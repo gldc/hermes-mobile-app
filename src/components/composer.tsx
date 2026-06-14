@@ -1,6 +1,7 @@
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import Animated, { FadeIn } from 'react-native-reanimated';
+import { Icon } from '@/components/icon';
 import { useTheme } from '@/theme';
 
 interface ComposerProps {
@@ -91,7 +92,7 @@ export function Composer({
                   borderColor: colors.border,
                 })}
               >
-                <Image source="sf:xmark" style={{ width: 10, height: 10 }} tintColor={colors.text} />
+                <Icon sf="xmark" size={10} color={colors.text} />
               </Pressable>
             </View>
           </Animated.View>
@@ -125,11 +126,7 @@ export function Composer({
               backgroundColor: pressed ? colors.raised : 'transparent',
             })}
           >
-            <Image
-              source="sf:plus"
-              style={{ width: 15, height: 15 }}
-              tintColor={disabled ? colors.textFaint : colors.text}
-            />
+            <Icon sf="plus" size={15} color={disabled ? colors.textFaint : colors.text} />
           </Pressable>
 
           {modelName ? (
@@ -170,11 +167,7 @@ export function Composer({
               backgroundColor: canSend ? (pressed ? colors.accentPressed : colors.accent) : colors.raised,
             })}
           >
-            <Image
-              source="sf:arrow.up"
-              style={{ width: 16, height: 16 }}
-              tintColor={canSend ? colors.onAccent : colors.textFaint}
-            />
+            <Icon sf="arrow.up" size={16} color={canSend ? colors.onAccent : colors.textFaint} />
           </Pressable>
         </View>
       </View>

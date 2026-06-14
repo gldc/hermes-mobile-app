@@ -1,5 +1,4 @@
 import { router, usePathname, type Href } from 'expo-router';
-import { Image } from 'expo-image';
 import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
@@ -16,6 +15,8 @@ import { getActiveProfile, listProfiles, listSessionsForProfile } from '@/api/pr
 import { searchSessions, type SearchResult } from '@/api/search';
 import { deleteSession, renameSession, setSessionArchived } from '@/api/sessions';
 import type { SessionSummary } from '@/api/types';
+import { Icon } from '@/components/icon';
+import { PromptDialog } from '@/components/prompt-dialog';
 import { SearchResultRow } from '@/components/search-result-row';
 import { SessionRow } from '@/components/session-row';
 import { AuthError } from '@/api/restClient';
@@ -57,7 +58,7 @@ function NavItem({ icon, label, onPress }: { icon: string; label: string; onPres
         backgroundColor: pressed ? colors.raised : 'transparent',
       })}
     >
-      <Image source={icon} style={{ width: 20, height: 20 }} tintColor={colors.text} />
+      <Icon sf={icon} size={20} color={colors.text} />
       <Text style={{ color: colors.text, fontSize: 16.5 }}>{label}</Text>
     </Pressable>
   );
@@ -84,6 +85,8 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   // never render while a newer request is still in flight.
   const [hits, setHits] = useState<{ q: string; results: SearchResult[] } | null>(null);
   const [searchPending, setSearchPending] = useState(false);
+  // Android rename dialog target (iOS uses Alert.prompt instead).
+  const [renameTarget, setRenameTarget] = useState<SessionSummary | null>(null);
   const profiles = useSyncExternalStore(subscribeProfiles, getProfileState);
   const activeProfile = profiles.selected; // null = server default (no param sent)
 
@@ -215,7 +218,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
         // restored from archived).
         setSessions((prev) => prev.filter((s) => s.id !== session.id));
         setTotal((t) => Math.max(0, t - 1));
-        if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       } catch (e) {
         handleActionError(e, showArchived ? 'Unarchive' : 'Archive');
       }
@@ -239,7 +242,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
                 await withAuthRetry((r) => deleteSession(r, session.id, activeProfile));
                 setSessions((prev) => prev.filter((s) => s.id !== session.id));
                 setTotal((t) => Math.max(0, t - 1));
-                if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+                Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
               } catch (e) {
                 handleActionError(e, 'Delete');
               }
@@ -251,39 +254,40 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
     [handleActionError, activeProfile],
   );
 
-  const promptRename = useCallback(
-    (session: SessionSummary) => {
-      // Alert.prompt is iOS-only; this app ships iOS-first (see AGENTS.md).
-      if (!isIOS) return;
-      Alert.prompt(
-        'Rename conversation',
-        'Leave empty to clear the title.',
-        [
-          { text: 'Cancel', style: 'cancel' },
-          {
-            text: 'Save',
-            onPress: async (value?: string) => {
-              const title = (value ?? '').trim();
-              try {
-                const res = await withAuthRetry((r) =>
-                  renameSession(r, session.id, title, activeProfile),
-                );
-                setSessions((prev) =>
-                  prev.map((s) =>
-                    s.id === session.id ? { ...s, title: res.title?.trim() || null } : s,
-                  ),
-                );
-              } catch (e) {
-                handleActionError(e, 'Rename');
-              }
-            },
-          },
-        ],
-        'plain-text',
-        session.title ?? '',
-      );
+  const applyRename = useCallback(
+    async (session: SessionSummary, value: string) => {
+      const title = value.trim();
+      try {
+        const res = await withAuthRetry((r) => renameSession(r, session.id, title, activeProfile));
+        setSessions((prev) =>
+          prev.map((s) => (s.id === session.id ? { ...s, title: res.title?.trim() || null } : s)),
+        );
+      } catch (e) {
+        handleActionError(e, 'Rename');
+      }
     },
     [handleActionError, activeProfile],
+  );
+
+  const promptRename = useCallback(
+    (session: SessionSummary) => {
+      if (isIOS) {
+        // Alert.prompt is iOS-only; Android renders the PromptDialog below.
+        Alert.prompt(
+          'Rename conversation',
+          'Leave empty to clear the title.',
+          [
+            { text: 'Cancel', style: 'cancel' },
+            { text: 'Save', onPress: (value?: string) => void applyRename(session, value ?? '') },
+          ],
+          'plain-text',
+          session.title ?? '',
+        );
+        return;
+      }
+      setRenameTarget(session);
+    },
+    [applyRename],
   );
 
   const openChat = useCallback(
@@ -295,7 +299,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   );
 
   const newChat = useCallback(() => {
-    if (isIOS) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     closeSidebar();
     if (pathname !== '/chat/new') router.replace('/chat/new');
   }, [pathname]);
@@ -382,7 +386,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           backgroundColor: colors.raised,
         }}
       >
-        <Image source="sf:magnifyingglass" style={{ width: 16, height: 16 }} tintColor={colors.textFaint} />
+        <Icon sf="magnifyingglass" size={16} color={colors.textFaint} />
         <TextInput
           value={query}
           onChangeText={setQuery}
@@ -398,11 +402,11 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
       {/* Destinations (hidden while searching to give results room) */}
       {!searching ? (
         <View style={{ paddingHorizontal: 8, paddingBottom: 4 }}>
-          <NavItem icon="sf:bubble.left.and.bubble.right" label="Chats" onPress={newChat} />
-          <NavItem icon="sf:clock.arrow.circlepath" label="Cron jobs" onPress={() => pushRoute('/cron')} />
-          <NavItem icon="sf:books.vertical" label="Memory" onPress={() => pushRoute('/memory')} />
-          <NavItem icon="sf:sparkles" label="Skills" onPress={() => pushRoute('/skills')} />
-          <NavItem icon="sf:cpu" label="Models" onPress={() => pushRoute('/models')} />
+          <NavItem icon="bubble.left.and.bubble.right" label="Chats" onPress={newChat} />
+          <NavItem icon="clock.arrow.circlepath" label="Cron jobs" onPress={() => pushRoute('/cron')} />
+          <NavItem icon="books.vertical" label="Memory" onPress={() => pushRoute('/memory')} />
+          <NavItem icon="sparkles" label="Skills" onPress={() => pushRoute('/skills')} />
+          <NavItem icon="cpu" label="Models" onPress={() => pushRoute('/models')} />
         </View>
       ) : null}
 
@@ -439,7 +443,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
               opacity: pressed ? 0.5 : 1,
             })}
           >
-            <Image source="sf:person.crop.circle" style={{ width: 13, height: 13 }} tintColor={colors.accent} />
+            <Icon sf="person.crop.circle" size={13} color={colors.accent} />
             <Text numberOfLines={1} style={{ color: colors.text, fontSize: 12, fontWeight: '600' }}>
               {activeProfileLabel(profiles)}
             </Text>
@@ -451,7 +455,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           accessibilityState={{ selected: showArchived }}
           hitSlop={8}
           onPress={() => {
-            if (isIOS) Haptics.selectionAsync();
+            Haptics.selectionAsync();
             setSessions([]);
             setTotal(0);
             setLoaded(false);
@@ -459,10 +463,10 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           }}
           style={({ pressed }) => ({ padding: 6, opacity: pressed ? 0.5 : 1 })}
         >
-          <Image
-            source={showArchived ? 'sf:archivebox.fill' : 'sf:archivebox'}
-            style={{ width: 17, height: 17 }}
-            tintColor={showArchived ? colors.accent : colors.textFaint}
+          <Icon
+            sf={showArchived ? 'archivebox.fill' : 'archivebox'}
+            size={17}
+            color={showArchived ? colors.accent : colors.textFaint}
           />
         </Pressable>
       </View>
@@ -496,7 +500,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
               compact
               session={item.session}
               onPress={() => openChat(item.session.id)}
-              onRename={isIOS && !showArchived ? () => promptRename(item.session) : undefined}
+              onRename={!showArchived ? () => promptRename(item.session) : undefined}
               onArchive={() => toggleArchived(item.session)}
               archiveLabel={showArchived ? 'Unarchive' : 'Archive'}
               onDelete={() => confirmDelete(item.session)}
@@ -554,10 +558,26 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
             boxShadow: dark ? '0 6px 22px rgba(0, 0, 0, 0.5)' : '0 6px 22px rgba(24, 24, 23, 0.3)',
           })}
         >
-          <Image source="sf:plus" style={{ width: 16, height: 16 }} tintColor={colors.onInverse} />
+          <Icon sf="plus" size={16} color={colors.onInverse} />
           <Text style={{ color: colors.onInverse, fontSize: 16, fontWeight: '600' }}>New chat</Text>
         </Pressable>
       </View>
+
+      {/* Android rename dialog — mounted fresh per target so the input
+          re-seeds from the session title. Dead-code-eliminated on iOS. */}
+      {!isIOS && renameTarget ? (
+        <PromptDialog
+          visible
+          title="Rename conversation"
+          initialValue={renameTarget.title ?? ''}
+          onSubmit={(value) => {
+            const target = renameTarget;
+            setRenameTarget(null);
+            void applyRename(target, value);
+          }}
+          onCancel={() => setRenameTarget(null)}
+        />
+      ) : null}
     </View>
   );
 }

@@ -3,6 +3,7 @@ import { ActivityIndicator, LayoutAnimation, Pressable, Share, Text, View } from
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import type { ApprovalInfo } from '@/components/approval-card';
+import { Icon } from '@/components/icon';
 import { MarkdownView } from '@/components/markdown-view';
 import { bubbleImageSize } from '@/lib/image-attach';
 import { useTheme } from '@/theme';
@@ -67,7 +68,7 @@ function ToolCallCard({ tool }: { tool: ToolInfo }) {
       }}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
-        <Image source="sf:hammer.fill" style={{ width: 12, height: 12 }} tintColor={colors.accent} />
+        <Icon sf="hammer.fill" size={12} color={colors.accent} />
         <Text style={{ color: colors.text, fontSize: 13.5, fontWeight: '600' }}>{tool.name}</Text>
         {tool.context ? (
           <Text numberOfLines={1} style={{ color: colors.textDim, fontSize: 13, flexShrink: 1 }}>
@@ -84,13 +85,9 @@ function ToolCallCard({ tool }: { tool: ToolInfo }) {
                 {tool.durationS < 10 ? tool.durationS.toFixed(1) : Math.round(tool.durationS)}s
               </Text>
             ) : null}
-            <Image source="sf:checkmark.circle.fill" style={{ width: 13, height: 13 }} tintColor={colors.success} />
+            <Icon sf="checkmark.circle.fill" size={13} color={colors.success} />
             {hasDetail ? (
-              <Image
-                source={expanded ? 'sf:chevron.up' : 'sf:chevron.down'}
-                style={{ width: 11, height: 11 }}
-                tintColor={colors.textFaint}
-              />
+              <Icon sf={expanded ? 'chevron.up' : 'chevron.down'} size={11} color={colors.textFaint} />
             ) : null}
           </View>
         )}
@@ -172,7 +169,7 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
         onLongPress={
           item.complete
             ? () => {
-                if (process.env.EXPO_OS === 'ios') Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 Share.share({ message: item.text });
               }
             : undefined

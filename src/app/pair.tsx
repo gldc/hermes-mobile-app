@@ -1,6 +1,5 @@
 // src/app/pair.tsx — QR device pairing (docs/contracts/pairing.md)
 import { CameraView, useCameraPermissions } from 'expo-camera';
-import { Image } from 'expo-image';
 import { Stack, router } from 'expo-router';
 import { useRef, useState } from 'react';
 import {
@@ -12,6 +11,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { Icon } from '@/components/icon';
 import { connectWithDevice } from '@/connection';
 import { maybeRegisterPush } from '@/notifications';
 import { PairingParseError, PairingPayload, pairingHost, parsePairingPayload } from '@/lib/pairing';
@@ -115,7 +115,7 @@ export default function PairScreen() {
                   justifyContent: 'center',
                 }}
               >
-                <Image source="sf:checkmark.seal.fill" style={{ width: 26, height: 26 }} tintColor={colors.onAccent} />
+                <Icon sf="checkmark.seal.fill" size={26} color={colors.onAccent} />
               </View>
               <View style={{ alignItems: 'center', gap: 4 }}>
                 <Text style={{ color: colors.text, fontSize: 17, fontWeight: '600' }}>Pair with this gateway?</Text>
@@ -166,7 +166,7 @@ export default function PairScreen() {
             />
           ) : (
             <View style={{ padding: 24, gap: 14, alignItems: 'center' }}>
-              <Image source="sf:qrcode.viewfinder" style={{ width: 44, height: 44 }} tintColor={colors.textFaint} />
+              <Icon sf="qrcode.viewfinder" size={44} color={colors.textFaint} />
               <Text style={{ color: colors.textDim, fontSize: 15, textAlign: 'center' }}>
                 {permission?.canAskAgain === false
                   ? 'Camera access is off. Enable it in Settings, or paste the pairing code below.'

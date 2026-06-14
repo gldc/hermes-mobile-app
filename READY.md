@@ -47,7 +47,21 @@ Tap Connect. You should land on the sessions list; open a session to chat.
 Credentials are stored in the device keychain (SecureStore), so the app
 reconnects automatically next launch.
 
-## 4. Known limitations (this milestone)
+## 4. Android push setup
+
+Push on Android needs a Firebase project (Expo push routes through FCM); until
+it exists, token registration fails silently and Android push simply stays off.
+To enable it:
+
+1. Create a Firebase project at https://console.firebase.google.com and add an
+   Android app with package name `com.dintinoconte.hermesmobile`.
+2. Download `google-services.json` into the repo root.
+3. Set `"googleServicesFile": "./google-services.json"` under `android` in
+   `app.json`.
+4. Run `eas credentials` (Android → Push Notifications) to upload the FCM V1
+   service account key to EAS.
+
+## 5. Known limitations (this milestone)
 
 - **No push notifications yet** — push lands in the next milestone.
 - **No QR pairing yet** — you must type the URL and credentials manually; QR

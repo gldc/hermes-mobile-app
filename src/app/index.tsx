@@ -11,6 +11,7 @@ import {
   View,
 } from 'react-native';
 import { AuthError } from '@/api/restClient';
+import { Icon } from '@/components/icon';
 import { connect, restore } from '@/connection';
 import { maybeRegisterPush } from '@/notifications';
 import { useTheme } from '@/theme';
@@ -120,7 +121,7 @@ export default function ConnectScreen() {
             justifyContent: 'center',
           })}
         >
-          <Image source="sf:qrcode.viewfinder" style={{ width: 20, height: 20 }} tintColor={colors.onInverse} />
+          <Icon sf="qrcode.viewfinder" size={20} color={colors.onInverse} />
           <Text style={{ color: colors.onInverse, fontSize: 16.5, fontWeight: '600' }}>Pair with QR code</Text>
         </Pressable>
 

@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActionSheetIOS, ActivityIndicator, Alert, FlatList, Pressable, Share, Text, View } from 'react-native';
+import { ActivityIndicator, FlatList, Pressable, Share, Text, View } from 'react-native';
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
@@ -13,12 +13,14 @@ import { withProfile } from '@/api/profiles';
 import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
 import { setAttachHandler } from '@/attach-bus';
 import { ApprovalCard } from '@/components/approval-card';
+import { Icon } from '@/components/icon';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { openGateway, withAuthRetry } from '@/connection';
 import { getProfileState, hydrateProfileStore } from '@/profile-store';
 import { openSidebar } from '@/sidebar-store';
+import { showActionSheet } from '@/lib/action-sheet';
 import { parseApprovalRequest, resolvedCount, type ApprovalChoice } from '@/lib/approval';
 import { exportAsJsonl, exportAsText } from '@/lib/export';
 import { greetingForHour } from '@/lib/greeting';
@@ -28,7 +30,6 @@ import { serif, useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
 
-const isIOS = process.env.EXPO_OS === 'ios';
 const MAX_RECONNECT_ATTEMPTS = 5;
 
 // Module-level so the pill shows instantly on later chat mounts; refreshed
@@ -60,7 +61,7 @@ function HeaderButton({
           onPress={onPress}
           style={{ width: 46, height: 46, alignItems: 'center', justifyContent: 'center' }}
         >
-          <Image source={icon} style={{ width: 19.5, height: 19.5 }} tintColor={colors.text} />
+          <Icon sf={icon} size={19.5} color={colors.text} />
         </Pressable>
       </GlassView>
     );
@@ -82,7 +83,7 @@ function HeaderButton({
         boxShadow: dark ? '0 2px 10px rgba(0, 0, 0, 0.35)' : '0 2px 10px rgba(31, 30, 26, 0.10)',
       })}
     >
-      <Image source={icon} style={{ width: 19.5, height: 19.5 }} tintColor={colors.text} />
+      <Icon sf={icon} size={19.5} color={colors.text} />
     </Pressable>
   );
 }
@@ -262,7 +263,7 @@ export default function ChatScreen() {
           cancelPendingApprovals(); // gateway force-denies leftovers on turn end
           setStreaming(false);
           setWaiting(false);
-          if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
           break;
         case 'tool.start':
           setWaiting(false);
@@ -278,7 +279,7 @@ export default function ChatScreen() {
         case 'approval.request':
           setWaiting(false);
           finishAssistant();
-          if (isIOS) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           appendApproval(e.payload);
           break;
         case 'error':
@@ -444,21 +445,10 @@ export default function ChatScreen() {
 
   function showExportSheet() {
     if (items.length === 0) return;
-    if (isIOS) {
-      ActionSheetIOS.showActionSheetWithOptions(
-        { title: 'Export conversation', options: ['Text', 'JSONL', 'Cancel'], cancelButtonIndex: 2 },
-        (index) => {
-          if (index === 0) void shareExport('text');
-          else if (index === 1) void shareExport('jsonl');
-        },
-      );
-    } else {
-      Alert.alert('Export conversation', undefined, [
-        { text: 'Text', onPress: () => void shareExport('text') },
-        { text: 'JSONL', onPress: () => void shareExport('jsonl') },
-        { text: 'Cancel', style: 'cancel' },
-      ]);
-    }
+    showActionSheet('Export conversation', [
+      { label: 'Text', onPress: () => void shareExport('text') },
+      { label: 'JSONL', onPress: () => void shareExport('jsonl') },
+    ]);
   }
 
   async function send() {
@@ -466,7 +456,7 @@ export default function ChatScreen() {
     const image = stagedImage;
     const gw = gwRef.current;
     if ((!text && !image) || !gw || streaming) return;
-    if (isIOS) Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setInput('');
     setStagedImage(null);
     setError(null);
@@ -522,7 +512,13 @@ export default function ChatScreen() {
   // Per-frame keyboard tracking (UI thread) — the composer rides the keyboard
   // instead of jumping when it appears. One continuous function: home-indicator
   // padding at rest, an 8pt gap above the keyboard once it's up.
-  const keyboard = useAnimatedKeyboard();
+  // Android (SDK 56) renders edge-to-edge; without the translucency flags
+  // Reanimated reports keyboard heights offset by the system bar heights.
+  // Both options are ignored on iOS.
+  const keyboard = useAnimatedKeyboard({
+    isStatusBarTranslucentAndroid: true,
+    isNavigationBarTranslucentAndroid: true,
+  });
   const containerStyle = useAnimatedStyle(() => ({
     paddingBottom: Math.max(insets.bottom, 10, keyboard.height.value + 8),
   }));
@@ -563,7 +559,8 @@ export default function ChatScreen() {
           data={reversedItems}
           inverted
           keyExtractor={(i) => i.key}
-          keyboardDismissMode="interactive"
+          // 'interactive' is iOS-only; Android ignores it, so fall back to on-drag.
+          keyboardDismissMode={process.env.EXPO_OS === 'ios' ? 'interactive' : 'on-drag'}
           // Inverted list: contentContainer paddingBottom is the visual top —
           // clearance for the floating header buttons.
           contentContainerStyle={{
@@ -625,21 +622,21 @@ export default function ChatScreen() {
           gap: 10,
         }}
       >
-        <HeaderButton icon="sf:line.3.horizontal" label="Open menu" onPress={openSidebar} />
+        <HeaderButton icon="line.3.horizontal" label="Open menu" onPress={openSidebar} />
         <View style={{ flex: 1 }} />
         {items.length > 0 ? (
           <Animated.View entering={FadeIn.duration(200)}>
-            <HeaderButton icon="sf:square.and.arrow.up" label="Export conversation" onPress={showExportSheet} />
+            <HeaderButton icon="square.and.arrow.up" label="Export conversation" onPress={showExportSheet} />
           </Animated.View>
         ) : null}
         {id !== 'new' ? (
           <HeaderButton
-            icon="sf:square.and.pencil"
+            icon="square.and.pencil"
             label="New chat"
             onPress={() => router.replace('/chat/new')}
           />
         ) : (
-          <HeaderButton icon="sf:gearshape" label="Settings" onPress={() => router.push('/settings')} />
+          <HeaderButton icon="gearshape" label="Settings" onPress={() => router.push('/settings')} />
         )}
       </View>
 
