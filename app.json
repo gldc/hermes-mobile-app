@@ -68,6 +68,14 @@
           "photosPermission": "Hermes attaches photos you choose to your messages.",
           "cameraPermission": "Hermes lets you photograph something and send it to your agent."
         }
+      ],
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
       ]
     ],
     "experiments": {
