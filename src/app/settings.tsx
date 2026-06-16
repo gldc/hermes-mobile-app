@@ -1,10 +1,12 @@
 import Constants from 'expo-constants';
 import { router } from 'expo-router';
-import { useEffect, useState } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import * as Haptics from 'expo-haptics';
+import * as Notifications from 'expo-notifications';
+import { useEffect, useRef, useState } from 'react';
+import { ActivityIndicator, AppState, Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { Icon } from '@/components/icon';
 import { connectionInfo, disconnect } from '@/connection';
-import { getPushStatus, type PushStatus } from '@/notifications';
+import { getPushStatus, requestPushPermission, type PushStatus } from '@/notifications';
 import { useTheme } from '@/theme';
 
 function pushLabel(s: PushStatus): string {
@@ -97,23 +99,133 @@ function Divider() {
   return <View style={{ height: 1, backgroundColor: colors.border }} />;
 }
 
+function PushRow({
+  push,
+  registering,
+  onTap,
+}: {
+  push: PushStatus;
+  registering: boolean;
+  onTap: () => void;
+}) {
+  const { colors } = useTheme();
+  const tappable = push.state !== 'registered'
+    && push.state !== 'no-project-id'
+    && push.state !== 'unavailable';
+  const label = pushLabel(push);
+
+  const content = (
+    <View style={{ flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 16, gap: 16 }}>
+      <Text style={{ color: colors.textDim, fontSize: 15 }}>Notifications</Text>
+      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 6, flexShrink: 1 }}>
+        {registering ? (
+          <ActivityIndicator size="small" color={colors.accent} />
+        ) : (
+          <Text
+            selectable={!tappable}
+            numberOfLines={1}
+            style={{ color: tappable ? colors.accent : colors.text, fontSize: 15, flexShrink: 1 }}
+          >
+            {label}
+          </Text>
+        )}
+        {tappable && !registering ? (
+          <Icon sf="chevron.right" size={13} color={colors.textFaint} />
+        ) : null}
+      </View>
+    </View>
+  );
+
+  if (!tappable) return content;
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityLabel={`Notifications: ${label}. Tap to ${push.state === 'denied' && push.canAskAgain === false ? 'open system settings' : 'enable'}`}
+      onPress={onTap}
+      disabled={registering}
+      style={({ pressed }) => ({
+        backgroundColor: pressed ? colors.raised : 'transparent',
+      })}
+    >
+      {content}
+    </Pressable>
+  );
+}
+
 type Info = Awaited<ReturnType<typeof connectionInfo>>;
 
 export default function SettingsScreen() {
   const { colors } = useTheme();
   const [info, setInfo] = useState<Info>(null);
-  // Snapshot of the in-memory push state (set by maybeRegisterPush at
-  // connect/app-start time) — read once per open, not live.
-  const [push] = useState<PushStatus>(() => getPushStatus());
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
+  const [push, setPush] = useState<PushStatus>(() => getPushStatus());
+  const [registering, setRegistering] = useState(false);
 
   useEffect(() => {
     connectionInfo().then(setInfo);
   }, []);
 
+  // When permission was denied at the OS level, the only recovery is the system
+  // Settings app — so re-check on foreground. Linking.openSettings() resolves
+  // when iOS *switches* apps, not when the user returns, so a synchronous
+  // re-check after it would read the pre-toggle (still-denied) value; the
+  // AppState 'active' edge is the real "user came back" signal.
+  useEffect(() => {
+    if (push.state !== 'denied') return;
+    const sub = AppState.addEventListener('change', async (next) => {
+      if (next !== 'active') return;
+      let started = false;
+      try {
+        const perms = await Notifications.getPermissionsAsync();
+        if (!perms.granted || !mounted.current) return;
+        started = true;
+        setRegistering(true);
+        const result = await requestPushPermission();
+        if (mounted.current) setPush(result);
+      } catch {
+        if (mounted.current) setPush(getPushStatus());
+      } finally {
+        if (started && mounted.current) setRegistering(false);
+      }
+    });
+    return () => sub.remove();
+  }, [push.state]);
+
   async function onDisconnect() {
     await disconnect();
     router.dismissAll();
     router.replace('/');
+  }
+
+  async function onNotificationsTap() {
+    if (push.state === 'denied' && push.canAskAgain === false) {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      // Hand off to iOS Settings; the AppState 'active' listener above
+      // re-registers if the user flips the toggle and returns.
+      try {
+        await Linking.openSettings();
+      } catch {
+        // openSettings can reject if no settings deep-link is available; the
+        // listener still covers the return path, so there is nothing to do.
+      }
+      return;
+    }
+    void Haptics.selectionAsync().catch(() => {});
+    setRegistering(true);
+    try {
+      const result = await requestPushPermission();
+      if (mounted.current) {
+        setPush(result);
+        if (result.state === 'registered') {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        } else if (result.state === 'error') {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        }
+      }
+    } finally {
+      if (mounted.current) setRegistering(false);
+    }
   }
 
   const deviceMode = info?.mode === 'device';
@@ -134,7 +246,7 @@ export default function SettingsScreen() {
             <Divider />
             <Row label="Device" value={info?.deviceId ?? '—'} />
             <Divider />
-            <Row label="Notifications" value={pushLabel(push)} />
+            <PushRow push={push} registering={registering} onTap={onNotificationsTap} />
           </>
         ) : (
           <>
@@ -146,7 +258,7 @@ export default function SettingsScreen() {
         <Row label="Version" value={Constants.expoConfig?.version ?? 'dev'} />
       </Card>
 
-      {deviceMode && push.note ? (
+      {deviceMode && push.note && !registering ? (
         <Text style={{ color: colors.textFaint, fontSize: 13, paddingHorizontal: 4, marginTop: -12 }}>
           {push.note}
         </Text>
