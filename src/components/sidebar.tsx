@@ -112,7 +112,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
       const res = await withAuthRetry((r) =>
         listSessionsForProfile(r, getProfileState().selected, 0, showArchived ? 'only' : 'exclude'),
       );
-      const pinIds = new Set(pinState.ids);
+      const pinIds = new Set(getPinState().ids);
       setSessions((prev) => {
         if (prev.length === 0 || pinIds.size === 0) return res.sessions;
         const incomingIds = new Set(res.sessions.map((s) => s.id));
@@ -254,6 +254,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
             onPress: async () => {
               try {
                 await withAuthRetry((r) => deleteSession(r, session.id, activeProfile));
+                unpinSession(sessionPinId(session));
                 setSessions((prev) => prev.filter((s) => s.id !== session.id));
                 setTotal((t) => Math.max(0, t - 1));
                 Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
@@ -461,6 +462,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           <Pressable
             accessibilityRole="button"
             accessibilityLabel={pinState.collapsed ? 'Expand pinned conversations' : 'Collapse pinned conversations'}
+            accessibilityState={{ expanded: !pinState.collapsed }}
             onPress={() => setPinsCollapsed(!pinState.collapsed)}
             style={({ pressed }) => ({
               flexDirection: 'row',
