@@ -1,4 +1,5 @@
 // src/api/restClient.ts
+import { SESSION_CLAIM_ROUTE } from '@/lib/push';
 import { CookieJar } from './cookieJar';
 import type { MessagesResponse, SessionListResponse, WsTicketResponse } from './types';
 
@@ -83,6 +84,15 @@ export class RestClient {
   listSessions(offset = 0, archived: 'exclude' | 'only' = 'exclude'): Promise<SessionListResponse> {
     const arch = archived === 'only' ? '&archived=only' : '';
     return this.request<SessionListResponse>(`/api/sessions?limit=40&offset=${offset}&order=recent${arch}`);
+  }
+
+  /** Bind this device to a session so session-stop push hooks can target it.
+   * Best-effort: callers fire-and-forget after session.create/resume. */
+  async claimSession(sessionId: string, sessionKey: string): Promise<void> {
+    await this.post(SESSION_CLAIM_ROUTE, {
+      session_id: sessionId,
+      session_key: sessionKey,
+    });
   }
 
   getMessages(sessionId: string, profile?: string): Promise<MessagesResponse> {
