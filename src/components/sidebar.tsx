@@ -31,6 +31,8 @@ import {
 } from '@/profile-store';
 import { showProfilePicker } from '@/lib/profile-picker';
 import { closeSidebar } from '@/sidebar-store';
+import { getPinState, hydratePinStore, pinSession, setPinsCollapsed, subscribePins, unpinSession } from '@/pin-store';
+import { sessionPinId } from '@/lib/session-utils';
 import { serif, useTheme } from '@/theme';
 
 const isIOS = process.env.EXPO_OS === 'ios';
@@ -88,6 +90,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   // Android rename dialog target (iOS uses Alert.prompt instead).
   const [renameTarget, setRenameTarget] = useState<SessionSummary | null>(null);
   const profiles = useSyncExternalStore(subscribeProfiles, getProfileState);
+  const pinState = useSyncExternalStore(subscribePins, getPinState);
   const activeProfile = profiles.selected; // null = server default (no param sent)
 
   const handleLoadError = useCallback((e: unknown) => {
@@ -105,10 +108,20 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
     setError(null);
     try {
       await hydrateProfileStore();
+      await hydratePinStore();
       const res = await withAuthRetry((r) =>
         listSessionsForProfile(r, getProfileState().selected, 0, showArchived ? 'only' : 'exclude'),
       );
-      setSessions(res.sessions);
+      const pinIds = new Set(pinState.ids);
+      setSessions((prev) => {
+        if (prev.length === 0 || pinIds.size === 0) return res.sessions;
+        const incomingIds = new Set(res.sessions.map((s) => s.id));
+        const survivors = prev.filter(
+          (s) => !incomingIds.has(s.id) &&
+            (pinIds.has(s.id) || (s._lineage_root_id && pinIds.has(s._lineage_root_id))),
+        );
+        return [...res.sessions, ...survivors];
+      });
       setTotal(res.total);
     } catch (e) {
       handleLoadError(e);
@@ -214,6 +227,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
     async (session: SessionSummary) => {
       try {
         await withAuthRetry((r) => setSessionArchived(r, session.id, !showArchived, activeProfile));
+        unpinSession(sessionPinId(session));
         // The session leaves the current view either way (archived from active,
         // restored from archived).
         setSessions((prev) => prev.filter((s) => s.id !== session.id));
@@ -309,6 +323,35 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
     router.push(route);
   }, []);
 
+  const sessionByAnyId = useMemo(() => {
+    const map = new Map<string, SessionSummary>();
+    for (const s of sessions) {
+      map.set(s.id, s);
+      if (s._lineage_root_id && !map.has(s._lineage_root_id)) {
+        map.set(s._lineage_root_id, s);
+      }
+    }
+    return map;
+  }, [sessions]);
+
+  const pinnedSessions = useMemo(() => {
+    const seen = new Set<string>();
+    const out: SessionSummary[] = [];
+    for (const pinId of pinState.ids) {
+      const session = sessionByAnyId.get(pinId);
+      if (session && !seen.has(session.id)) {
+        seen.add(session.id);
+        out.push(session);
+      }
+    }
+    return out;
+  }, [pinState.ids, sessionByAnyId]);
+
+  const pinnedLiveIdSet = useMemo(
+    () => new Set(pinnedSessions.map((s) => s.id)),
+    [pinnedSessions],
+  );
+
   const titleById = useMemo(() => {
     const map = new Map<string, string | null>();
     for (const s of sessions) map.set(s.id, s.title?.trim() || s.preview?.trim() || null);
@@ -330,8 +373,10 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
             (s.title ?? '').toLowerCase().includes(lower) ||
             (s.preview ?? '').toLowerCase().includes(lower),
         );
-    return list.map((session) => ({ kind: 'session' as const, session }));
-  }, [sessions, query, hits]);
+    return list
+      .filter((s) => !pinnedLiveIdSet.has(s.id))
+      .map((session) => ({ kind: 'session' as const, session }));
+  }, [sessions, query, hits, pinnedLiveIdSet]);
 
   const searching = query.trim().length > 0;
   const profileInitial = (activeProfileLabel(profiles) || 'H')[0]?.toUpperCase() ?? 'H';
@@ -407,6 +452,45 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           <NavItem icon="books.vertical" label="Memory" onPress={() => pushRoute('/memory')} />
           <NavItem icon="sparkles" label="Skills" onPress={() => pushRoute('/skills')} />
           <NavItem icon="cpu" label="Models" onPress={() => pushRoute('/models')} />
+        </View>
+      ) : null}
+
+      {/* Pinned section — hidden when searching or in archived view */}
+      {!searching && !showArchived && pinnedSessions.length > 0 ? (
+        <View>
+          <Pressable
+            accessibilityRole="button"
+            accessibilityLabel={pinState.collapsed ? 'Expand pinned conversations' : 'Collapse pinned conversations'}
+            onPress={() => setPinsCollapsed(!pinState.collapsed)}
+            style={({ pressed }) => ({
+              flexDirection: 'row',
+              alignItems: 'center',
+              paddingLeft: 20,
+              paddingRight: 10,
+              paddingTop: 8,
+              paddingBottom: 2,
+              gap: 8,
+              opacity: pressed ? 0.5 : 1,
+            })}
+          >
+            <Icon sf={pinState.collapsed ? 'chevron.right' : 'chevron.down'} size={12} color={colors.textFaint} />
+            <Text style={{ flex: 1, color: colors.textFaint, fontSize: 13.5, fontWeight: '500' }}>
+              Pinned
+            </Text>
+          </Pressable>
+          {!pinState.collapsed ? pinnedSessions.map((session) => (
+            <SessionRow
+              key={session.id}
+              compact
+              session={session}
+              pinned
+              onPress={() => openChat(session.id)}
+              onPin={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); unpinSession(sessionPinId(session)); }}
+              onRename={() => promptRename(session)}
+              onArchive={() => toggleArchived(session)}
+              onDelete={() => confirmDelete(session)}
+            />
+          )) : null}
         </View>
       ) : null}
 
@@ -499,6 +583,8 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
             <SessionRow
               compact
               session={item.session}
+              onPin={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium); pinSession(sessionPinId(item.session)); }}
+              pinned={false}
               onPress={() => openChat(item.session.id)}
               onRename={!showArchived ? () => promptRename(item.session) : undefined}
               onArchive={() => toggleArchived(item.session)}
