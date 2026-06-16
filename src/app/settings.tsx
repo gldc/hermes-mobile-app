@@ -3,7 +3,7 @@ import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import * as Notifications from 'expo-notifications';
 import { useEffect, useRef, useState } from 'react';
-import { ActivityIndicator, Linking, Pressable, ScrollView, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, Linking, Pressable, ScrollView, Text, View } from 'react-native';
 import { Icon } from '@/components/icon';
 import { connectionInfo, disconnect } from '@/connection';
 import { getPushStatus, requestPushPermission, type PushStatus } from '@/notifications';
@@ -166,6 +166,32 @@ export default function SettingsScreen() {
     connectionInfo().then(setInfo);
   }, []);
 
+  // When permission was denied at the OS level, the only recovery is the system
+  // Settings app — so re-check on foreground. Linking.openSettings() resolves
+  // when iOS *switches* apps, not when the user returns, so a synchronous
+  // re-check after it would read the pre-toggle (still-denied) value; the
+  // AppState 'active' edge is the real "user came back" signal.
+  useEffect(() => {
+    if (push.state !== 'denied') return;
+    const sub = AppState.addEventListener('change', async (next) => {
+      if (next !== 'active') return;
+      let started = false;
+      try {
+        const perms = await Notifications.getPermissionsAsync();
+        if (!perms.granted || !mounted.current) return;
+        started = true;
+        setRegistering(true);
+        const result = await requestPushPermission();
+        if (mounted.current) setPush(result);
+      } catch {
+        if (mounted.current) setPush(getPushStatus());
+      } finally {
+        if (started && mounted.current) setRegistering(false);
+      }
+    });
+    return () => sub.remove();
+  }, [push.state]);
+
   async function onDisconnect() {
     await disconnect();
     router.dismissAll();
@@ -174,33 +200,31 @@ export default function SettingsScreen() {
 
   async function onNotificationsTap() {
     if (push.state === 'denied' && push.canAskAgain === false) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+      // Hand off to iOS Settings; the AppState 'active' listener above
+      // re-registers if the user flips the toggle and returns.
       try {
         await Linking.openSettings();
-        const perms = await Notifications.getPermissionsAsync();
-        if (perms.granted) {
-          setRegistering(true);
-          const result = await requestPushPermission();
-          if (mounted.current) { setPush(result); setRegistering(false); }
-        } else if (mounted.current) {
-          setPush(getPushStatus());
-        }
       } catch {
-        if (mounted.current) setPush(getPushStatus());
+        // openSettings can reject if no settings deep-link is available; the
+        // listener still covers the return path, so there is nothing to do.
       }
       return;
     }
-    Haptics.selectionAsync();
+    void Haptics.selectionAsync().catch(() => {});
     setRegistering(true);
-    const result = await requestPushPermission();
-    if (mounted.current) {
-      setPush(result);
-      setRegistering(false);
-      if (result.state === 'registered') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-      } else if (result.state === 'error') {
-        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    try {
+      const result = await requestPushPermission();
+      if (mounted.current) {
+        setPush(result);
+        if (result.state === 'registered') {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        } else if (result.state === 'error') {
+          void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+        }
       }
+    } finally {
+      if (mounted.current) setRegistering(false);
     }
   }
 

@@ -9,6 +9,7 @@ import { Alert, Platform } from 'react-native';
 import { getConnectionMode, getDeviceId, withAuthRetry } from '@/connection';
 import {
   PUSH_TOKEN_ROUTE,
+  canJoinInFlight,
   isRegistrationFresh,
   parsePushRegistration,
 } from '@/lib/push';
@@ -37,8 +38,9 @@ export function getPushStatus(): PushStatus {
 /** Re-attempt push registration with permission prompt. Returns a copy of
  *  the resulting status (callers get a snapshot, not a mutable reference). */
 export async function requestPushPermission(): Promise<PushStatus> {
-  await maybeRegisterPush({ softAsk: true });
-  return { ...status };
+  // Return the status produced by THIS run (maybeRegisterPush resolves with it),
+  // not a re-read of the module-level `status`, which a coalesced run could own.
+  return { ...(await maybeRegisterPush({ softAsk: true })) };
 }
 
 /** EAS project id, required by getExpoPushTokenAsync in dev-client builds.
@@ -74,12 +76,12 @@ function softAskPermission(): Promise<boolean> {
  * >7 days, different token, or different pairing). No-ops in password mode,
  * on web/simulators, and when no EAS projectId is configured (in that case
  * settings shows "Run eas init to enable push"; we never run eas ourselves).
- * Failures are swallowed: push is best-effort, the next launch retries. */
-let inFlight: Promise<void> | null = null;
-
-export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<void> {
-  if (inFlight) return inFlight;
-  inFlight = (async () => {
+ * Failures are swallowed: push is best-effort, the next launch retries.
+ *
+ * The work itself lives in registerPushImpl and mutates the module-level
+ * `status`; it always runs through maybeRegisterPush below, which serializes
+ * concurrent callers and resolves with the status the run produced. */
+async function registerPushImpl(opts: { softAsk: boolean }): Promise<void> {
   try {
     if (Platform.OS === 'web' || !Device.isDevice) {
       status = { state: 'unavailable', note: 'Push needs a physical device' };
@@ -154,8 +156,31 @@ export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<voi
     console.warn('push registration skipped:', e instanceof Error ? e.message : e);
     status = { state: 'error', note: 'Push registration failed — will retry next launch', canAskAgain: true };
   }
+}
+
+let inFlight: Promise<PushStatus> | null = null;
+let inFlightSoftAsk = false;
+
+export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<PushStatus> {
+  // Serialize concurrent callers, but coalesce only when the in-flight run is at
+  // least as strong as this request (canJoinInFlight). A soft-ask tap must never
+  // join an app-start `softAsk:false` run that never prompts — otherwise the OS
+  // dialog is silently skipped. A soft-ask arriving mid app-start waits the
+  // weaker run out, then starts a fresh prompting run. Resolves with the status
+  // THIS run produced, so requestPushPermission never reads a foreign snapshot.
+  if (inFlight && canJoinInFlight(inFlightSoftAsk, opts.softAsk)) return inFlight;
+  if (inFlight) await inFlight.catch(() => {});
+  inFlightSoftAsk = opts.softAsk;
+  inFlight = (async () => {
+    await registerPushImpl(opts);
+    return status;
   })();
-  try { await inFlight; } finally { inFlight = null; }
+  try {
+    return await inFlight;
+  } finally {
+    inFlight = null;
+    inFlightSoftAsk = false;
+  }
 }
 
 /** Install the foreground handler (banner, no sound/badge) and the tap

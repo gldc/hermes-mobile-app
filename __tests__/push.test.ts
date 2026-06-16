@@ -2,6 +2,7 @@
 // (src/lib/push.ts; wire shapes in docs/contracts/push.md).
 import {
   REGISTRATION_TTL_MS,
+  canJoinInFlight,
   isRegistrationFresh,
   parseMailboxMessages,
   parsePushRegistration,
@@ -63,6 +64,24 @@ describe('isRegistrationFresh (7-day staleness)', () => {
 
   it('future timestamp (clock rollback) is treated as stale', () => {
     expect(isRegistrationFresh(reg({ registeredAt: NOW + 60_000 }), TOKEN, DEVICE, NOW)).toBe(false);
+  });
+});
+
+describe('canJoinInFlight (soft-ask-aware coalescing)', () => {
+  // The bug this guards: an explicit user tap (softAsk:true) must never join an
+  // in-flight app-start run (softAsk:false), which never prompts — that would
+  // silently swallow the OS permission dialog.
+  it('soft-ask tap must NOT join an in-flight app-start run', () => {
+    expect(canJoinInFlight(/* inFlightSoftAsk */ false, /* requestSoftAsk */ true)).toBe(false);
+  });
+
+  it('soft-ask tap joins another in-flight soft-ask run', () => {
+    expect(canJoinInFlight(true, true)).toBe(true);
+  });
+
+  it('app-start request joins anything already running', () => {
+    expect(canJoinInFlight(false, false)).toBe(true);
+    expect(canJoinInFlight(true, false)).toBe(true);
   });
 });
 

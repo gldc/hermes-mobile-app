@@ -55,6 +55,16 @@ export function isRegistrationFresh(
   return now - reg.registeredAt < REGISTRATION_TTL_MS;
 }
 
+/** Whether a new maybeRegisterPush call may coalesce onto an in-flight one.
+ * Coalesce ONLY when the in-flight run is at least as strong (prompting) as the
+ * new request: a soft-ask request (an explicit user tap) must never be
+ * satisfied by an in-flight app-start (`softAsk:false`) run, which never shows
+ * the soft-ask Alert or the OS dialog. So a soft-ask request joins only another
+ * soft-ask run; an app-start request joins anything already running. */
+export function canJoinInFlight(inFlightSoftAsk: boolean, requestSoftAsk: boolean): boolean {
+  return inFlightSoftAsk || !requestSoftAsk;
+}
+
 /** One drained mailbox record (mailbox.py append_message). */
 export interface MailboxMessage {
   ts: number;

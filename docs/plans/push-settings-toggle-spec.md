@@ -79,36 +79,48 @@ Set `canAskAgain` at **every** status assignment point:
 - `error` → `canAskAgain: true` (retry makes sense)
 - `registered`, `unavailable`, `no-project-id` → omitted (not applicable)
 
-**Add re-entrancy guard to `maybeRegisterPush`:**
+**Add a soft-ask-aware re-entrancy guard to `maybeRegisterPush`:**
+
+The body moves into a `registerPushImpl(opts)` helper that mutates `status`;
+`maybeRegisterPush` wraps it to serialize callers and resolve with the status
+the run produced.
 
 ```ts
-let inFlight: Promise<void> | null = null;
+// canJoinInFlight(inFlightSoftAsk, requestSoftAsk) lives in src/lib/push.ts
+// (pure + unit-tested): coalesce only when the in-flight run is at least as
+// strong as the new request.
+let inFlight: Promise<PushStatus> | null = null;
+let inFlightSoftAsk = false;
 
-export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<void> {
-  if (inFlight) return inFlight;
-  inFlight = (async () => {
-    // ... existing body ...
-  })();
-  try { await inFlight; } finally { inFlight = null; }
+export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<PushStatus> {
+  if (inFlight && canJoinInFlight(inFlightSoftAsk, opts.softAsk)) return inFlight;
+  if (inFlight) await inFlight.catch(() => {}); // stronger request waits out the weaker run
+  inFlightSoftAsk = opts.softAsk;
+  inFlight = (async () => { await registerPushImpl(opts); return status; })();
+  try { return await inFlight; } finally { inFlight = null; inFlightSoftAsk = false; }
 }
 ```
 
-This prevents concurrent calls (app-start + settings tap) from corrupting the
-shared `status` variable.
+A naive `if (inFlight) return inFlight` guard would let an app-start
+`softAsk:false` run (which never prompts) satisfy a settings-tap `softAsk:true`
+caller, silently swallowing the OS dialog. Coalescing only onto an
+equal-or-stronger run prevents that; a soft-ask arriving mid app-start waits the
+weaker run out, then starts a fresh prompting run.
 
 **Export `requestPushPermission()`:**
 
 ```ts
 /** Re-attempt push registration with permission prompt. Returns a copy of
- *  the resulting status (callers get a snapshot, not a mutable reference). */
+ *  the status THIS run produced (not a re-read of the module-level `status`,
+ *  which a coalesced run could own). */
 export async function requestPushPermission(): Promise<PushStatus> {
-  await maybeRegisterPush({ softAsk: true });
-  return { ...status };
+  return { ...(await maybeRegisterPush({ softAsk: true })) };
 }
 ```
 
-Returns a **copy** of `status` — not the module-level reference — so later
-mutations of `status` don't bleed into a previously returned snapshot.
+Returns a **copy** of the status the run resolved with — not a post-await
+re-read of the module-level reference — so a coalesced or later-mutated
+`status` can't bleed into a previously returned snapshot.
 
 > **`canOpenSystemSettings()` was removed** during adversarial review — it
 > read the module-level `status` (potentially stale) while the UI should
@@ -134,42 +146,74 @@ const mounted = useRef(true);
 useEffect(() => () => { mounted.current = false; }, []);
 const [registering, setRegistering] = useState(false);
 
-async function onNotificationsTap() {
-  if (push.state === 'denied' && push.canAskAgain === false) {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-    await Linking.openSettings();
-    // Re-check OS permission — user may have enabled in Settings.
-    const perms = await Notifications.getPermissionsAsync();
-    if (perms.granted) {
+// OS-denied recovery: the only way back is the system Settings app, so re-check
+// permission when the app returns to the foreground. Linking.openSettings()
+// resolves when iOS *switches* apps, not when the user returns — a synchronous
+// re-check after it would read the pre-toggle (still-denied) value — so the
+// AppState 'active' edge is the real "user came back" signal.
+useEffect(() => {
+  if (push.state !== 'denied') return;
+  const sub = AppState.addEventListener('change', async (next) => {
+    if (next !== 'active') return;
+    let started = false;
+    try {
+      const perms = await Notifications.getPermissionsAsync();
+      if (!perms.granted || !mounted.current) return;
+      started = true;
       setRegistering(true);
       const result = await requestPushPermission();
-      if (mounted.current) { setPush(result); setRegistering(false); }
-    } else if (mounted.current) {
-      setPush(getPushStatus()); // still denied
+      if (mounted.current) setPush(result);
+    } catch {
+      if (mounted.current) setPush(getPushStatus());
+    } finally {
+      if (started && mounted.current) setRegistering(false);
     }
+  });
+  return () => sub.remove();
+}, [push.state]);
+
+async function onNotificationsTap() {
+  if (push.state === 'denied' && push.canAskAgain === false) {
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    // Hand off to iOS Settings; the AppState 'active' listener re-registers if
+    // the user flips the toggle and returns.
+    try { await Linking.openSettings(); } catch { /* no settings deep-link available */ }
     return;
   }
-  Haptics.selectionAsync();
+  void Haptics.selectionAsync().catch(() => {});
   setRegistering(true);
-  const result = await requestPushPermission();
-  if (mounted.current) {
-    setPush(result);
-    setRegistering(false);
-    if (result.state === 'registered') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    } else if (result.state === 'error') {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+  try {
+    const result = await requestPushPermission();
+    if (mounted.current) {
+      setPush(result);
+      if (result.state === 'registered') {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+      } else if (result.state === 'error') {
+        void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+      }
     }
+  } finally {
+    if (mounted.current) setRegistering(false);
   }
 }
 ```
 
-Key fixes from adversarial review:
-- **OS re-check after Settings return** — without this, the user who enables
-  notifications in iOS Settings gets stuck in an infinite "open Settings" loop
-- **`mounted` ref** — prevents state updates on unmounted component if user
-  navigates away during the async registration
-- **Error haptic** — tactile feedback on failure, not just success
+Key points (revised during implementation / adversarial review):
+- **Foreground re-check, not a synchronous one.** `Linking.openSettings()`
+  resolves when iOS switches apps, so re-checking permission immediately after
+  it reads the stale (pre-toggle) value and never registers on return. An
+  `AppState 'active'` listener — active only while `state === 'denied'` — is the
+  real "user came back" signal and re-registers once permission flips to
+  granted. (The earlier draft's "synchronous re-check prevents an infinite
+  open-Settings loop" reasoning was wrong: there is no loop; the re-check simply
+  never fired at the right moment.)
+- **`registering` reset in `finally`** on both tap branches and the listener, so
+  the spinner always clears even if an await throws.
+- **`mounted` ref** — prevents state updates after the component unmounts mid
+  registration.
+- **Unawaited haptics are `void …​.catch(() => {})`** — no unhandled-rejection
+  warnings on devices without a Taptic engine, and the deny-path impact no
+  longer depends on the surrounding try/catch.
 
 **Loading indicator:**
 
@@ -177,11 +221,12 @@ When `registering` is true, the row shows a small `ActivityIndicator` (from
 `react-native`) in place of the status label. This gives the user feedback
 that the OS permission dialog or token fetch is in progress.
 
-### 2.4 New import: `Linking` from `react-native`
+### 2.4 New imports: `Linking` and `AppState` from `react-native`
 
 `Linking.openSettings()` opens the iOS Settings app to the app's own
-permissions page. It's part of `react-native` — no new dependency. Already
-used by other Expo apps; no native rebuild required.
+permissions page. `AppState` drives the foreground re-check after the user
+returns from Settings (§2.3). Both are part of `react-native` — no new
+dependency, no native rebuild required.
 
 ---
 
@@ -276,14 +321,16 @@ function PushRow({
 
 ### 4.1 User returns from iOS Settings after enabling
 
-After `Linking.openSettings()`, the tap handler re-checks
-`Notifications.getPermissionsAsync()`. If granted, it proceeds with
-`requestPushPermission()` to register the token — the row transitions from
-"Off" to "On" without requiring an app restart.
+Tapping the row only opens iOS Settings. An `AppState 'active'` listener
+(registered while `state === 'denied'`) re-checks
+`Notifications.getPermissionsAsync()` when the app returns to the foreground; if
+granted, it calls `requestPushPermission()` and the row transitions "Off" → "On"
+with no app restart and no second tap.
 
-If the user returns without enabling, the permission check returns `!granted`
-and `setPush(getPushStatus())` keeps the row showing "Off." The user can tap
-again to re-open Settings — no dead-end loop.
+If the user returns without enabling, the foreground check is `!granted` and the
+row stays "Off." (A synchronous re-check right after `openSettings()` would not
+work: that call resolves when iOS *switches* apps, before the user has toggled
+anything.)
 
 ### 4.2 Rapid tapping
 
@@ -305,8 +352,11 @@ remains tappable — the user can tap to try again.
 
 ### 4.5 App foregrounded after settings change
 
-When the user opens iOS Settings and toggles notifications on, then returns
-to the app, the push status is stale. On next app-start, `maybeRegisterPush({ softAsk: false })` will detect the granted permission and register the token automatically. The user doesn't need to tap the row again.
+When the user toggles notifications on in iOS Settings and returns, the Settings
+screen's `AppState 'active'` listener (§4.1) re-registers immediately — no app
+restart needed. Even if the Settings screen is not mounted, the next app-start
+`maybeRegisterPush({ softAsk: false })` detects the granted permission and
+registers the token automatically.
 
 ---
 
@@ -314,14 +364,15 @@ to the app, the push status is stale. On next app-start, `maybeRegisterPush({ so
 
 ### 5.1 Unit tests
 
-The pure logic changes are minimal:
+The coalescing decision is extracted into a pure helper and unit-tested:
 
-- `canOpenSystemSettings()` — returns true only when `state === 'denied'` AND `canAskAgain === false`
-- `requestPushPermission()` — calls `maybeRegisterPush({ softAsk: true })` and returns the status
+- `canJoinInFlight(inFlightSoftAsk, requestSoftAsk)` in `src/lib/push.ts` —
+  covered by `__tests__/push.test.ts`: a soft-ask tap must NOT join an in-flight
+  app-start run; equal-or-stronger runs coalesce.
 
-Since `notifications.ts` has heavy Expo/OS dependencies (no injected I/O),
-these are best tested on-device. The existing `__tests__/push.test.ts` covers
-the pure logic in `src/lib/push.ts` which is unchanged.
+The rest of `notifications.ts` has heavy Expo/OS dependencies (no injected I/O),
+and the `settings.tsx` AppState/tap flow is screen glue — both are verified
+on-device per the repo convention.
 
 ### 5.2 On-device verification
 
@@ -340,10 +391,12 @@ the pure logic in `src/lib/push.ts` which is unchanged.
 
 | File | Change |
 |------|--------|
-| `src/notifications.ts` | Add `canAskAgain` to `PushStatus` (set at every assignment point); add `inFlight` mutex to `maybeRegisterPush`; export `requestPushPermission()` (returns copy) |
-| `src/app/settings.tsx` | Add `Linking`, `ActivityIndicator`, `Haptics`, `Notifications` imports; add `PushRow` component; make Notifications row tappable with state-dependent behavior; add `registering` loading state; add `mounted` ref for cleanup; hide note while registering |
+| `src/lib/push.ts` | Add pure `canJoinInFlight()` coalescing-decision helper |
+| `src/notifications.ts` | Add `canAskAgain` to `PushStatus` (set at every assignment point); split body into `registerPushImpl`; soft-ask-aware `inFlight` guard via `canJoinInFlight`; `maybeRegisterPush` resolves with the produced `PushStatus`; `requestPushPermission()` returns that snapshot |
+| `src/app/settings.tsx` | Add `AppState`, `Linking`, `ActivityIndicator`, `Haptics`, `Notifications` imports; add `PushRow` component; make Notifications row tappable with state-dependent behavior; `AppState 'active'` listener for the deny → Settings → return path; `registering` loading state reset in `finally`; `mounted` ref for cleanup; hide note while registering |
+| `__tests__/push.test.ts` | Add `canJoinInFlight` cases |
 
-No new files. No new dependencies (`Linking`, `ActivityIndicator` are from
-`react-native`; `Haptics` from `expo-haptics`; `Notifications` from
-`expo-notifications` — all already in the project). No changes to
-`connection.ts`, `src/lib/push.ts`, or any test files. No server-side changes.
+No new files. No new dependencies (`AppState`, `Linking`, `ActivityIndicator`
+from `react-native`; `Haptics` from `expo-haptics`; `Notifications` from
+`expo-notifications` — all already in the project). No `connection.ts` or
+server-side changes.
