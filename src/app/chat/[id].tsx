@@ -316,6 +316,11 @@ export default function ChatScreen() {
         withProfile({ session_id: storedIdRef.current }, profileRef.current),
       );
       liveIdRef.current = resumed.session_id;
+      // Best-effort: re-bind this device to the session (live id changes on
+      // resume) so session-stop push hooks can target it. Never block the flow.
+      void withAuthRetry((r) =>
+        r.claimSession(liveIdRef.current!, storedIdRef.current ?? liveIdRef.current!),
+      ).catch(() => {});
     }
   }
 
@@ -484,6 +489,11 @@ export default function ChatScreen() {
         );
         liveIdRef.current = created.session_id;
         if (created.stored_session_id) storedIdRef.current = created.stored_session_id;
+        // Best-effort: bind this device to the new session so session-stop push
+        // hooks can target it. Never block the send flow on the claim.
+        void withAuthRetry((r) =>
+          r.claimSession(liveIdRef.current!, storedIdRef.current ?? liveIdRef.current!),
+        ).catch(() => {});
       }
       // prompt.submit has no image params — stage the photo server-side first;
       // the next submit drains the attached-images queue (docs/contracts/attachments.md).
