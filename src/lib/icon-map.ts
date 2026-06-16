@@ -29,6 +29,8 @@ export const SF_TO_MATERIAL: Record<string, string> = {
   'pencil': 'pencil',
   'person.crop.circle': 'account-circle-outline',
   'photo.on.rectangle': 'image-multiple-outline',
+  'pin.fill': 'pin',
+  'pin.slash.fill': 'pin-off',
   'play.circle.fill': 'play-circle',
   'plus': 'plus',
   'qrcode.viewfinder': 'qrcode-scan',
