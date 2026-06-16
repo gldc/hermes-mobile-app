@@ -175,14 +175,18 @@ export default function SettingsScreen() {
   async function onNotificationsTap() {
     if (push.state === 'denied' && push.canAskAgain === false) {
       Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
-      await Linking.openSettings();
-      const perms = await Notifications.getPermissionsAsync();
-      if (perms.granted) {
-        setRegistering(true);
-        const result = await requestPushPermission();
-        if (mounted.current) { setPush(result); setRegistering(false); }
-      } else if (mounted.current) {
-        setPush(getPushStatus());
+      try {
+        await Linking.openSettings();
+        const perms = await Notifications.getPermissionsAsync();
+        if (perms.granted) {
+          setRegistering(true);
+          const result = await requestPushPermission();
+          if (mounted.current) { setPush(result); setRegistering(false); }
+        } else if (mounted.current) {
+          setPush(getPushStatus());
+        }
+      } catch {
+        if (mounted.current) setPush(getPushStatus());
       }
       return;
     }
