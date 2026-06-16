@@ -6,6 +6,7 @@ import {
   isRegistrationFresh,
   parseMailboxMessages,
   parsePushRegistration,
+  shouldSuppressForeground,
 } from '../src/lib/push';
 
 const NOW = 1_760_000_000_000;
@@ -82,6 +83,22 @@ describe('canJoinInFlight (soft-ask-aware coalescing)', () => {
   it('app-start request joins anything already running', () => {
     expect(canJoinInFlight(false, false)).toBe(true);
     expect(canJoinInFlight(true, false)).toBe(true);
+  });
+});
+
+describe('shouldSuppressForeground', () => {
+  it('suppresses session-stop pings while active', () => {
+    expect(shouldSuppressForeground({ type: 'session_end' }, 'active')).toBe(true);
+    expect(shouldSuppressForeground({ type: 'approval_request' }, 'active')).toBe(true);
+  });
+  it('shows when not active', () => {
+    expect(shouldSuppressForeground({ type: 'session_end' }, 'background')).toBe(false);
+    expect(shouldSuppressForeground({ type: 'approval_request' }, 'inactive')).toBe(false);
+  });
+  it('shows unknown/absent types even when active', () => {
+    expect(shouldSuppressForeground({ type: 'other' }, 'active')).toBe(false);
+    expect(shouldSuppressForeground(undefined, 'active')).toBe(false);
+    expect(shouldSuppressForeground({}, 'active')).toBe(false);
   });
 });
 

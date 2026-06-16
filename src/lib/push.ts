@@ -6,6 +6,18 @@
  * "mobile" (NOT "hermes-mobile") — see docs/contracts/push.md. */
 export const PUSH_TOKEN_ROUTE = '/api/plugins/mobile/push-token';
 export const MAILBOX_ROUTE = '/api/plugins/mobile/mailbox';
+export const SESSION_CLAIM_ROUTE = '/api/plugins/mobile/session-claim';
+
+export const SUPPRESSIBLE_PUSH_TYPES = ['session_end', 'approval_request'] as const;
+
+/** Suppress the banner only for our session-stop pings while the app is the
+ * active (foreground) app. Anything not clearly suppressible-while-active shows. */
+export function shouldSuppressForeground(data: unknown, appState: string): boolean {
+  if (appState !== 'active') return false;
+  if (typeof data !== 'object' || data === null) return false;
+  const type = (data as Record<string, unknown>).type;
+  return typeof type === 'string' && (SUPPRESSIBLE_PUSH_TYPES as readonly string[]).includes(type);
+}
 
 /** Re-register the Expo push token when older than this (task spec: 7 days). */
 export const REGISTRATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
