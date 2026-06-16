@@ -5,13 +5,14 @@ import Constants from 'expo-constants';
 import * as Device from 'expo-device';
 import * as Notifications from 'expo-notifications';
 import * as SecureStore from 'expo-secure-store';
-import { Alert, Platform } from 'react-native';
+import { Alert, AppState, Platform } from 'react-native';
 import { getConnectionMode, getDeviceId, withAuthRetry } from '@/connection';
 import {
   PUSH_TOKEN_ROUTE,
   canJoinInFlight,
   isRegistrationFresh,
   parsePushRegistration,
+  shouldSuppressForeground,
 } from '@/lib/push';
 
 const REG_STORE_KEY = 'hermes-push-registration';
@@ -190,12 +191,13 @@ export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<Pus
  * whose restore flow already replaces to the chat home. Returns an unsubscribe. */
 export function setupNotificationHandling(onTap: () => void): () => void {
   Notifications.setNotificationHandler({
-    handleNotification: async () => ({
-      shouldShowBanner: true,
-      shouldShowList: true,
-      shouldPlaySound: false,
-      shouldSetBadge: false,
-    }),
+    handleNotification: async (notification) => {
+      const data = notification.request.content.data;
+      if (shouldSuppressForeground(data, AppState.currentState)) {
+        return { shouldShowBanner: false, shouldShowList: false, shouldPlaySound: false, shouldSetBadge: false };
+      }
+      return { shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false };
+    },
   });
   const sub = Notifications.addNotificationResponseReceivedListener(() => onTap());
   return () => sub.remove();
