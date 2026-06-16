@@ -21,12 +21,24 @@ export interface PushStatus {
   state: 'idle' | 'registered' | 'denied' | 'no-project-id' | 'unavailable' | 'error';
   /** One-line note for the settings screen, when there is something to say. */
   note?: string;
+  /** Whether the OS permission prompt can still be shown. `true` when the
+   *  user hasn't seen the OS dialog yet (idle, error); `false` when they
+   *  denied at the OS level and must go to Settings to re-enable. Undefined
+   *  for states where the concept doesn't apply (registered, unavailable). */
+  canAskAgain?: boolean;
 }
 
 let status: PushStatus = { state: 'idle' };
 
 export function getPushStatus(): PushStatus {
   return status;
+}
+
+/** Re-attempt push registration with permission prompt. Returns a copy of
+ *  the resulting status (callers get a snapshot, not a mutable reference). */
+export async function requestPushPermission(): Promise<PushStatus> {
+  await maybeRegisterPush({ softAsk: true });
+  return { ...status };
 }
 
 /** EAS project id, required by getExpoPushTokenAsync in dev-client builds.
@@ -63,7 +75,11 @@ function softAskPermission(): Promise<boolean> {
  * on web/simulators, and when no EAS projectId is configured (in that case
  * settings shows "Run eas init to enable push"; we never run eas ourselves).
  * Failures are swallowed: push is best-effort, the next launch retries. */
+let inFlight: Promise<void> | null = null;
+
 export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<void> {
+  if (inFlight) return inFlight;
+  inFlight = (async () => {
   try {
     if (Platform.OS === 'web' || !Device.isDevice) {
       status = { state: 'unavailable', note: 'Push needs a physical device' };
@@ -90,21 +106,21 @@ export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<voi
       if (!opts.softAsk) {
         // App-start path: never prompt, just skip until the next pairing.
         status = perms.canAskAgain
-          ? { state: 'idle' }
-          : { state: 'denied', note: 'Notifications are off in system settings' };
+          ? { state: 'idle', canAskAgain: true }
+          : { state: 'denied', note: 'Notifications are off in system settings', canAskAgain: false };
         return;
       }
       if (!perms.canAskAgain) {
-        status = { state: 'denied', note: 'Notifications are off in system settings' };
+        status = { state: 'denied', note: 'Notifications are off in system settings', canAskAgain: false };
         return;
       }
       if (!(await softAskPermission())) {
-        status = { state: 'idle' };
+        status = { state: 'idle', canAskAgain: true };
         return;
       }
       perms = await Notifications.requestPermissionsAsync();
       if (!perms.granted) {
-        status = { state: 'denied', note: 'Notifications are off in system settings' };
+        status = { state: 'denied', note: 'Notifications are off in system settings', canAskAgain: false };
         return;
       }
     }
@@ -136,8 +152,10 @@ export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<voi
     // (google-services.json + EAS FCM V1 credentials — see READY.md "Android
     // push setup"), so Android push stays off without breaking login.
     console.warn('push registration skipped:', e instanceof Error ? e.message : e);
-    status = { state: 'error', note: 'Push registration failed — will retry next launch' };
+    status = { state: 'error', note: 'Push registration failed — will retry next launch', canAskAgain: true };
   }
+  })();
+  try { await inFlight; } finally { inFlight = null; }
 }
 
 /** Install the foreground handler (banner, no sound/badge) and the tap
