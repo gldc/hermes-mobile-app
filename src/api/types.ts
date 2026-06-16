@@ -9,6 +9,9 @@ export interface SessionSummary {
   model?: string | null;
   source?: string;
   is_active?: boolean;
+  /** Set by the server when a session is a compression continuation.
+   *  Points to the original root session id. Absent on non-compressed sessions. */
+  _lineage_root_id?: string;
 }
 
 export interface SessionListResponse {

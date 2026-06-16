@@ -51,6 +51,8 @@ function SwipeAction({
 export const SessionRow = memo(function SessionRow({
   session,
   onPress,
+  onPin,
+  pinned,
   onRename,
   onArchive,
   archiveLabel = 'Archive',
@@ -59,6 +61,10 @@ export const SessionRow = memo(function SessionRow({
 }: {
   session: SessionSummary;
   onPress: () => void;
+  /** When provided, swiping left reveals a Pin/Unpin action. */
+  onPin?: () => void;
+  /** Whether the session is currently pinned. */
+  pinned?: boolean;
   /** When provided, swiping left reveals a Rename action. */
   onRename?: () => void;
   /** When provided, swiping left reveals an Archive/Unarchive action. */
@@ -72,7 +78,7 @@ export const SessionRow = memo(function SessionRow({
   const { colors } = useTheme();
   const title = session.title?.trim() || session.preview?.trim() || 'Untitled conversation';
   const preview = session.title?.trim() ? session.preview?.trim() : undefined;
-  const swipeable = Boolean(onRename || onArchive || onDelete);
+  const swipeable = Boolean(onPin || onRename || onArchive || onDelete);
 
   const row = compact ? (
     <Pressable
@@ -136,6 +142,17 @@ export const SessionRow = memo(function SessionRow({
       overshootRight={false}
       renderRightActions={(_progress, _translation, methods: SwipeableMethods) => (
         <View style={{ flexDirection: 'row' }}>
+          {onPin ? (
+            <SwipeAction
+              icon={pinned ? 'pin.slash.fill' : 'pin.fill'}
+              label={pinned ? 'Unpin' : 'Pin'}
+              compact={compact}
+              background={pinned ? colors.raised : colors.accent}
+              tint={pinned ? colors.text : colors.onAccent}
+              accessibilityLabel={`${pinned ? 'Unpin' : 'Pin'} conversation: ${title}`}
+              onPress={() => { methods.close(); onPin(); }}
+            />
+          ) : null}
           {onRename ? (
             <SwipeAction
               icon="pencil"
