@@ -64,6 +64,12 @@ export type GatewayEventType =
   | 'tool.start'
   | 'tool.complete'
   | 'status.update'
+  | 'subagent.spawn_requested'
+  | 'subagent.start'
+  | 'subagent.thinking'
+  | 'subagent.tool'
+  | 'subagent.progress'
+  | 'subagent.complete'
   | 'error'
   | (string & {}); // forward-compatible
 

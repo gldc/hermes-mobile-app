@@ -26,13 +26,16 @@ function SubagentRow({
   const running = s.status === 'running';
   const elapsed = running ? (now - s.startedAtMs) / 1000 : s.durationSeconds;
   const dot = running ? colors.accent : s.status === 'completed' ? colors.success : colors.textFaint;
+  // Hoisted out of the `sf={…}` attribute so the icon-map usage scanner doesn't
+  // mistake the 'completed' status comparison for an icon name.
+  const doneGlyph = s.status === 'completed' ? 'checkmark.circle.fill' : 'xmark.circle';
   return (
     <View style={{ gap: 2 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         {running ? (
           <View style={{ width: 7, height: 7, borderRadius: 4, backgroundColor: dot }} />
         ) : (
-          <Icon sf={s.status === 'completed' ? 'checkmark.circle.fill' : 'xmark.circle'} size={12} color={dot} />
+          <Icon sf={doneGlyph} size={12} color={dot} />
         )}
         <Text numberOfLines={1} style={{ flex: 1, color: colors.text, fontSize: 13 }}>
           {s.goal || 'subagent'}

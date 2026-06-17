@@ -10,13 +10,15 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
 import { getModelInfo, modelDisplayName } from '@/api/models';
 import { withProfile } from '@/api/profiles';
-import type { SessionCreateResult, SessionResumeResult } from '@/api/types';
+import type { GatewayEvent, SessionCreateResult, SessionResumeResult } from '@/api/types';
 import { setAttachHandler } from '@/attach-bus';
 import { ApprovalCard } from '@/components/approval-card';
 import { Icon } from '@/components/icon';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
+import { SubagentMonitorCard } from '@/components/subagent-monitor-card';
 import { ThinkingDots } from '@/components/thinking-dots';
+import { TodoCard } from '@/components/todo-card';
 import { openGateway, withAuthRetry } from '@/connection';
 import { getProfileState, hydrateProfileStore } from '@/profile-store';
 import { openSidebar } from '@/sidebar-store';
@@ -26,6 +28,8 @@ import { exportAsJsonl, exportAsText } from '@/lib/export';
 import { greetingForHour } from '@/lib/greeting';
 import { historyToItems } from '@/lib/history';
 import { MAX_ATTACH_BYTES, base64ByteLength, buildAttachParams, type PickedImage } from '@/lib/image-attach';
+import { emptyBatch, finalizeBatch, reduceSubagentEvent } from '@/lib/subagent-progress';
+import { parseTodoList } from '@/lib/todo';
 import { serif, useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
@@ -109,6 +113,8 @@ export default function ChatScreen() {
   // for this chat even if the user switches profiles elsewhere mid-session.
   const profileRef = useRef<string | null>(getProfileState().selected);
   const keyCounter = useRef(0);
+  const activeSubagentKeyRef = useRef<string | null>(null);
+  const todoKeyRef = useRef<string | null>(null);
 
   const nextKey = () => `i${keyCounter.current++}`;
 
@@ -197,6 +203,53 @@ export default function ChatScreen() {
     ]);
   }
 
+  /** Reduce a `subagent.*` event into the active batch item (create one if the
+   * last batch finalized / none exists). */
+  function handleSubagentEvent(e: GatewayEvent) {
+    const ts = Date.now();
+    setItems((prev) => {
+      const k = activeSubagentKeyRef.current;
+      const idx = k ? prev.findIndex((it) => it.key === k) : -1;
+      if (idx >= 0 && prev[idx].subagent && !prev[idx].subagent!.finalized) {
+        const next = [...prev];
+        next[idx] = { ...prev[idx], subagent: reduceSubagentEvent(prev[idx].subagent!, e, ts) };
+        return next;
+      }
+      const key = nextKey();
+      activeSubagentKeyRef.current = key;
+      return [...prev, { key, role: 'subagent', text: '', subagent: reduceSubagentEvent(emptyBatch(), e, ts) }];
+    });
+    if (e.type === 'subagent.complete') {
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    }
+  }
+
+  /** Turn ended / interrupted: stop any still-running subagents and seal the card. */
+  function finalizeSubagents() {
+    const k = activeSubagentKeyRef.current;
+    if (!k) return;
+    activeSubagentKeyRef.current = null;
+    setItems((prev) => prev.map((it) => (it.key === k && it.subagent ? { ...it, subagent: finalizeBatch(it.subagent) } : it)));
+  }
+
+  /** Update (or create) the single todo card from a `todo` tool.complete. */
+  function upsertTodo(payload: any) {
+    const list = parseTodoList(payload);
+    if (list === null) return;
+    setItems((prev) => {
+      const k = todoKeyRef.current;
+      const idx = k ? prev.findIndex((it) => it.key === k) : -1;
+      if (idx >= 0) {
+        const next = [...prev];
+        next[idx] = { ...prev[idx], todo: list };
+        return next;
+      }
+      const key = nextKey();
+      todoKeyRef.current = key;
+      return [...prev, { key, role: 'todo', text: '', todo: list }];
+    });
+  }
+
   /** Turn ended / interrupted / connection lost: the gateway force-denies
    * pending approvals, so drop any still-interactive cards. */
   function cancelPendingApprovals() {
@@ -250,6 +303,10 @@ export default function ChatScreen() {
     const history = await withAuthRetry((r) => r.getMessages(storedId, profileRef.current ?? undefined));
     if (cancelledRef.current) return;
     setItems(historyToItems(history.messages, nextKey));
+    // historyToItems never emits subagent/todo rows; clear stale live-card keys
+    // so a reconnect/history replace can't update a row that no longer exists.
+    activeSubagentKeyRef.current = null;
+    todoKeyRef.current = null;
   }
 
   function wireGateway(gw: GatewayClient) {
@@ -260,6 +317,7 @@ export default function ChatScreen() {
           break;
         case 'message.complete':
           finishAssistant();
+          finalizeSubagents();
           cancelPendingApprovals(); // gateway force-denies leftovers on turn end
           setStreaming(false);
           setWaiting(false);
@@ -268,9 +326,14 @@ export default function ChatScreen() {
         case 'tool.start':
           setWaiting(false);
           finishAssistant();
+          if (e.payload?.name === 'todo') break; // todo renders as TodoCard on complete
           startTool(e.payload);
           break;
         case 'tool.complete':
+          if (e.payload?.name === 'todo') {
+            upsertTodo(e.payload);
+            break;
+          }
           completeTool(e.payload);
           break;
         case 'status.update':
@@ -282,8 +345,17 @@ export default function ChatScreen() {
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
           appendApproval(e.payload);
           break;
+        case 'subagent.spawn_requested':
+        case 'subagent.start':
+        case 'subagent.thinking':
+        case 'subagent.tool':
+        case 'subagent.progress':
+        case 'subagent.complete':
+          handleSubagentEvent(e);
+          break;
         case 'error':
           cancelPendingApprovals(); // gateway force-denies on interrupt/failure
+          finalizeSubagents();
           setStreaming(false);
           setWaiting(false);
           setError(e.payload?.message ?? 'agent error');
@@ -296,6 +368,7 @@ export default function ChatScreen() {
       setStreaming(false);
       setWaiting(false);
       cancelPendingApprovals(); // can't answer across a dead socket
+      finalizeSubagents(); // socket drop mid-delegation: seal the card / stop the ticker
       void reconnect();
     });
   }
@@ -588,6 +661,10 @@ export default function ChatScreen() {
                   active={item.key === activeApprovalKey}
                   onRespond={(choice) => respondApproval(item.key, choice)}
                 />
+              ) : item.subagent ? (
+                <SubagentMonitorCard batch={item.subagent} />
+              ) : item.todo ? (
+                <TodoCard items={item.todo} />
               ) : (
                 <MessageRow item={item} />
               )}

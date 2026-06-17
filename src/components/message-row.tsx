@@ -6,6 +6,8 @@ import type { ApprovalInfo } from '@/components/approval-card';
 import { Icon } from '@/components/icon';
 import { MarkdownView } from '@/components/markdown-view';
 import { bubbleImageSize } from '@/lib/image-attach';
+import type { SubagentBatch } from '@/lib/subagent-progress';
+import type { TodoItem } from '@/lib/todo';
 import { useTheme } from '@/theme';
 
 export interface ToolInfo {
@@ -25,7 +27,7 @@ export interface ToolInfo {
 
 export interface ChatItem {
   key: string;
-  role: 'user' | 'assistant' | 'tool' | 'status' | 'approval';
+  role: 'user' | 'assistant' | 'tool' | 'status' | 'approval' | 'subagent' | 'todo';
   text: string;
   /** Assistant messages render plain text while streaming, markdown once complete. */
   complete?: boolean;
@@ -33,6 +35,10 @@ export interface ChatItem {
   /** Gateway approval request, attached like ToolInfo. Rendered by the chat
    * screen via ApprovalCard (it owns the respond callback), not MessageRow. */
   approval?: ApprovalInfo;
+  /** Live subagent batch — rendered by the chat screen via SubagentMonitorCard. */
+  subagent?: SubagentBatch;
+  /** Current todo list — rendered by the chat screen via TodoCard. */
+  todo?: TodoItem[];
   /** Local uri of a photo sent with this (user) message. */
   imageUri?: string;
   /** Natural dimensions of the attached photo, for aspect-correct layout. */
@@ -196,9 +202,8 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
     );
   }
 
-  // Approval items are rendered by the chat screen (ApprovalCard needs the
-  // respond callback); render nothing if one ever falls through here.
-  if (item.role === 'approval') return null;
+  // Rendered by the chat screen (they own their components); render nothing here.
+  if (item.role === 'approval' || item.role === 'subagent' || item.role === 'todo') return null;
 
   // status
   return (
