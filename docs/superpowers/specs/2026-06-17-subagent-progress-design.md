@@ -116,7 +116,7 @@ export function emptyBatch(): SubagentBatch;
 // Pure. `now` injected for testability (no Date.now in lib).
 export function reduceSubagentEvent(
   batch: SubagentBatch,
-  event: { type: string; payload: Record<string, unknown> },
+  event: { type: string; payload?: Record<string, unknown> },
   now: number,
 ): SubagentBatch;
 // Mark any still-running subagents 'stopped' and finalize (turn ended/interrupted).

@@ -62,12 +62,17 @@ test('start → tool → complete tracks one subagent with rollup', () => {
   expect(batchAllDone(b)).toBe(true);
 });
 
-test('parallel subagents tracked separately, in task order', () => {
+test('parallel subagents tracked separately; updates preserve order + isolation', () => {
   let b = emptyBatch();
   b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 2 }), 0);
   b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'b', goal: 'B', task_index: 1, task_count: 2 }), 0);
   expect(b.subagents.map((s) => s.key)).toEqual(['a', 'b']);
   expect(batchAllDone(b)).toBe(false);
+  // An update to 'b' must not reorder the list nor touch 'a'.
+  b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'b', tool_name: 'read' }), 1);
+  expect(b.subagents.map((s) => s.key)).toEqual(['a', 'b']);
+  expect(b.subagents[0].activity).toBe('');
+  expect(b.subagents[1].activity).toContain('read');
 });
 
 test('falls back to task_index key when subagent_id absent', () => {
@@ -102,12 +107,52 @@ test('non-subagent events and subagent.text are ignored', () => {
   expect(b.subagents).toHaveLength(0);
 });
 
-test('finalizeBatch stops running subagents and marks finalized', () => {
+test('thinking sets activity; progress does not clobber tool activity', () => {
   let b = emptyBatch();
   b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 1 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.thinking', { subagent_id: 'a', text: 'planning approach' }), 1);
+  expect(b.subagents[0].activity).toBe('planning approach');
+  b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'a', tool_name: 'web_search', tool_preview: 'auth' }), 2);
+  expect(b.subagents[0].activity).toContain('web_search');
+  b = reduceSubagentEvent(b, ev('subagent.progress', { subagent_id: 'a', text: '🔀 [1] web_search, read, edit' }), 3);
+  expect(b.subagents[0].activity).toContain('web_search'); // not clobbered by the batch summary
+  expect(b.subagents[0].activity).not.toContain('🔀');
+});
+
+test('subagent.tool falls back to text when tool_preview is absent', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 1 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'a', tool_name: 'bash', text: 'ls -la' }), 1);
+  expect(b.subagents[0].activity).toContain('bash');
+  expect(b.subagents[0].activity).toContain('ls -la');
+});
+
+test('maps timeout status', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.complete', { subagent_id: 'a', status: 'timeout' }), 0);
+  expect(b.subagents[0].status).toBe('timeout');
+});
+
+test('unknown or missing complete status falls back to completed', () => {
+  const unknown = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'a', status: 'weird' }), 0);
+  expect(unknown.subagents[0].status).toBe('completed');
+  const missing = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'b' }), 0);
+  expect(missing.subagents[0].status).toBe('completed');
+});
+
+test('batchAllDone is false for an empty batch', () => {
+  expect(batchAllDone(emptyBatch())).toBe(false);
+});
+
+test('finalizeBatch stops only running subagents, leaves finished ones', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 2 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'b', goal: 'B', task_index: 1, task_count: 2 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.complete', { subagent_id: 'b', status: 'completed' }), 1);
   b = finalizeBatch(b);
   expect(b.finalized).toBe(true);
-  expect(b.subagents[0].status).toBe('stopped');
+  expect(b.subagents[0].status).toBe('stopped'); // 'a' was running
+  expect(b.subagents[1].status).toBe('completed'); // 'b' unchanged
 });
 ```
 
@@ -213,12 +258,15 @@ export function reduceSubagentEvent(
       else if (preview) next.activity = preview;
       break;
     }
-    case 'subagent.thinking':
-    case 'subagent.progress': {
+    case 'subagent.thinking': {
       const t = str(p.text);
       if (t) next.activity = t;
       break;
     }
+    case 'subagent.progress':
+      // Batch summary (gateway sends "🔀 [1] tool, tool, …"); toolCount conveys
+      // throughput. Do NOT clobber the cleaner per-tool activity from subagent.tool.
+      break;
     case 'subagent.complete': {
       next.status = COMPLETE_STATUS[str(p.status)] ?? 'completed';
       next.durationSeconds = num(p.duration_seconds);
@@ -256,7 +304,7 @@ export function finalizeBatch(batch: SubagentBatch): SubagentBatch {
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx jest src/lib/__tests__/subagent-progress.test.ts`
-Expected: PASS (7 tests).
+Expected: PASS (12 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -311,6 +359,12 @@ test('drops malformed entries (no string content)', () => {
 test('empty array returns empty list, not null', () => {
   expect(parseTodoList({ todos: [] })).toEqual([]);
 });
+
+test('synthesizes an id for an entry missing one', () => {
+  expect(parseTodoList({ todos: [{ content: 'no id here' }] })).toEqual([
+    { id: '0', content: 'no id here', status: 'pending' },
+  ]);
+});
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -355,7 +409,7 @@ export function parseTodoList(payload: { todos?: unknown } | null | undefined): 
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `npx jest src/lib/__tests__/todo.test.ts`
-Expected: PASS (5 tests).
+Expected: PASS (6 tests).
 
 - [ ] **Step 5: Commit**
 
@@ -451,9 +505,17 @@ export function TodoCard({ items }: { items: TodoItem[] }) {
 }
 ```
 
-- [ ] **Step 2: Verify Android icon mapping**
+- [ ] **Step 2: Add the new SF→Material icon mappings (UNCONDITIONAL)**
 
-Open `src/components/icon.tsx`. Confirm `checklist` and `checkmark.circle.fill` have Android (MaterialCommunityIcons) fallbacks in the mapping table. `checkmark.circle.fill` is already used in the app. If `checklist` has no mapping, add one (e.g. → `'format-list-checks'`) or switch the header glyph to a mapped name like `list.bullet`.
+`checklist`, `square.grid.2x2`, and `xmark.circle` are NOT in `src/lib/icon-map.ts`. Unmapped names fall back to a question-mark glyph on Android (`icon.tsx`: `SF_TO_MATERIAL[sf] ?? 'help-circle-outline'`) — visually indistinguishable from an intended icon, with no typecheck/test signal. Add all three entries to the `SF_TO_MATERIAL` object now (this covers both this card and the SubagentMonitorCard in Task 4); these are valid MaterialCommunityIcons names:
+
+```ts
+  'checklist': 'format-list-checks',
+  'square.grid.2x2': 'view-grid-outline',
+  'xmark.circle': 'close-circle-outline',
+```
+
+(`checkmark.circle.fill`, `chevron.up`, `chevron.down` are already mapped — leave them.)
 
 - [ ] **Step 3: Typecheck**
 
@@ -463,8 +525,8 @@ Expected: no errors.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/components/todo-card.tsx src/components/icon.tsx
-git commit -m "feat(#9): TodoCard checklist component"
+git add src/components/todo-card.tsx src/lib/icon-map.ts
+git commit -m "feat(#9): TodoCard checklist component + icon mappings"
 ```
 
 ---
@@ -589,9 +651,9 @@ export function SubagentMonitorCard({ batch }: { batch: SubagentBatch }) {
 }
 ```
 
-- [ ] **Step 2: Verify Android icon mapping**
+- [ ] **Step 2: Confirm icon mappings (added in Task 3)**
 
-In `src/components/icon.tsx`, confirm `square.grid.2x2`, `chevron.up`, `chevron.down`, `checkmark.circle.fill`, `xmark.circle` are mapped for Android. `chevron.*` and `checkmark.circle.fill` are already used. Add mappings for `square.grid.2x2` (→ `'view-grid-outline'`) and `xmark.circle` (→ `'close-circle-outline'`) if missing.
+`square.grid.2x2` and `xmark.circle` were added to `src/lib/icon-map.ts` in Task 3 Step 2; `chevron.up`, `chevron.down`, and `checkmark.circle.fill` are already mapped. Nothing to add — just confirm all five resolve in `src/lib/icon-map.ts`.
 
 - [ ] **Step 3: Typecheck**
 
@@ -601,7 +663,7 @@ Expected: no errors.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add src/components/subagent-monitor-card.tsx src/components/icon.tsx
+git add src/components/subagent-monitor-card.tsx
 git commit -m "feat(#9): SubagentMonitorCard with live elapsed ticker"
 ```
 
@@ -739,10 +801,12 @@ Add three helpers near the other `setItems` helpers (e.g. after `appendApproval`
 
 - [ ] **Step 4: Wire the event switch**
 
-In `wireGateway`'s `switch (e.type)` (around line 257):
+In `wireGateway`'s `switch (e.type)` (around line 257) **and the surrounding handlers**:
 
 - In `case 'message.complete':` add `finalizeSubagents();` right after `finishAssistant();`.
 - In `case 'error':` add `finalizeSubagents();` after `cancelPendingApprovals();`.
+- In `gw.onClose` (around line 298), add `finalizeSubagents();` right after `cancelPendingApprovals();`. **Critical:** on a socket drop mid-delegation neither `message.complete` nor `error` fires (they are live-stream events) — only `onClose` runs. Without this, running subagent rows are never sealed and the card's 1s elapsed ticker runs forever.
+- In `loadHistory` (around line 252), immediately after `setItems(historyToItems(...))`, reset both refs so a live card's stale key can't survive a reconnect/history replace: `activeSubagentKeyRef.current = null; todoKeyRef.current = null;` (`historyToItems` never emits `subagent`/`todo` rows, so the live cards are intentionally not rehydrated).
 - Replace `case 'tool.start':` body to suppress the generic todo card:
 
 ```ts
@@ -802,7 +866,7 @@ In the `FlatList` `renderItem` (around line 585), replace the `item.approval ? �
 - [ ] **Step 6: Typecheck + full test run**
 
 Run: `npx tsc --noEmit && npx jest`
-Expected: tsc clean; all tests pass (existing + the 12 new lib tests).
+Expected: tsc clean; all tests pass (existing + the 18 new lib tests: 12 subagent-progress + 6 todo).
 
 - [ ] **Step 7: Commit**
 
