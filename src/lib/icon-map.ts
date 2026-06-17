@@ -13,6 +13,7 @@ export const SF_TO_MATERIAL: Record<string, string> = {
   'checkmark': 'check',
   'checkmark.circle.fill': 'check-circle',
   'checkmark.seal.fill': 'check-decagram',
+  'checklist': 'format-list-checks',
   'chevron.down': 'chevron-down',
   'chevron.right': 'chevron-right',
   'chevron.up': 'chevron-up',
@@ -40,8 +41,10 @@ export const SF_TO_MATERIAL: Record<string, string> = {
   'sparkles': 'creation',
   'square.and.arrow.up': 'export-variant',
   'square.and.pencil': 'square-edit-outline',
+  'square.grid.2x2': 'view-grid-outline',
   'trash.fill': 'delete',
   'tray.and.arrow.up.fill': 'tray-arrow-up',
   'xmark': 'close',
+  'xmark.circle': 'close-circle-outline',
   'xmark.circle.fill': 'close-circle',
 };
