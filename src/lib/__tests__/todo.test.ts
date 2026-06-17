@@ -39,3 +39,13 @@ test('synthesizes an id for an entry missing one', () => {
     { id: '0', content: 'no id here', status: 'pending' },
   ]);
 });
+
+test('synthesized id is kept-list position; non-string id is synthesized', () => {
+  expect(parseTodoList({ todos: [null, { content: 'a' }, { content: 'b' }] })).toEqual([
+    { id: '0', content: 'a', status: 'pending' },
+    { id: '1', content: 'b', status: 'pending' },
+  ]);
+  expect(parseTodoList({ todos: [{ id: 5, content: 'numeric id' }] })).toEqual([
+    { id: '0', content: 'numeric id', status: 'pending' },
+  ]);
+});

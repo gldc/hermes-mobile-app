@@ -232,10 +232,12 @@ export default function ChatScreen() {
     setItems((prev) => prev.map((it) => (it.key === k && it.subagent ? { ...it, subagent: finalizeBatch(it.subagent) } : it)));
   }
 
-  /** Update (or create) the single todo card from a `todo` tool.complete. */
-  function upsertTodo(payload: any) {
+  /** Update (or create) the single todo card from a `todo` tool.complete.
+   * Returns false when the payload carried no list (e.g. an internal tool_error),
+   * so the caller can surface the failure instead of dropping it silently. */
+  function upsertTodo(payload: any): boolean {
     const list = parseTodoList(payload);
-    if (list === null) return;
+    if (list === null) return false;
     setItems((prev) => {
       const k = todoKeyRef.current;
       const idx = k ? prev.findIndex((it) => it.key === k) : -1;
@@ -248,6 +250,7 @@ export default function ChatScreen() {
       todoKeyRef.current = key;
       return [...prev, { key, role: 'todo', text: '', todo: list }];
     });
+    return true;
   }
 
   /** Turn ended / interrupted / connection lost: the gateway force-denies
@@ -331,7 +334,9 @@ export default function ChatScreen() {
           break;
         case 'tool.complete':
           if (e.payload?.name === 'todo') {
-            upsertTodo(e.payload);
+            // A todo write returns the full list; if it carried none (rare
+            // internal tool_error), surface it rather than dropping silently.
+            if (!upsertTodo(e.payload)) append('status', 'Todo update failed');
             break;
           }
           completeTool(e.payload);

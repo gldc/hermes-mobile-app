@@ -21,17 +21,19 @@ test('start → tool → complete tracks one subagent with rollup', () => {
   expect(batchAllDone(b)).toBe(true);
 });
 
-test('parallel subagents tracked separately; updates preserve order + isolation', () => {
+test('parallel subagents tracked separately; updates preserve order, isolation + fields', () => {
   let b = emptyBatch();
   b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 2 }), 0);
-  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'b', goal: 'B', task_index: 1, task_count: 2 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'b', goal: 'B', task_index: 1, task_count: 2, model: 'opus' }), 0);
   expect(b.subagents.map((s) => s.key)).toEqual(['a', 'b']);
   expect(batchAllDone(b)).toBe(false);
-  // An update to 'b' must not reorder the list nor touch 'a'.
+  // An update to 'b' that omits task_count/model must not reorder, touch 'a', or reset fields.
   b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'b', tool_name: 'read' }), 1);
   expect(b.subagents.map((s) => s.key)).toEqual(['a', 'b']);
   expect(b.subagents[0].activity).toBe('');
   expect(b.subagents[1].activity).toContain('read');
+  expect(b.subagents[1].taskCount).toBe(2); // not clobbered to default by the omitting event
+  expect(b.subagents[1].model).toBe('opus');
 });
 
 test('falls back to task_index key when subagent_id absent', () => {
@@ -92,11 +94,16 @@ test('maps timeout status', () => {
   expect(b.subagents[0].status).toBe('timeout');
 });
 
-test('unknown or missing complete status falls back to completed', () => {
-  const unknown = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'a', status: 'weird' }), 0);
-  expect(unknown.subagents[0].status).toBe('completed');
-  const missing = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'b' }), 0);
-  expect(missing.subagents[0].status).toBe('completed');
+test('error → failed, interrupted → stopped; unknown/missing fail-safe to failed (never success)', () => {
+  const errored = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'a', status: 'error' }), 0);
+  expect(errored.subagents[0].status).toBe('failed');
+  const interrupted = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'b', status: 'interrupted' }), 0);
+  expect(interrupted.subagents[0].status).toBe('stopped');
+  const unknown = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'c', status: 'weird' }), 0);
+  expect(unknown.subagents[0].status).toBe('failed');
+  expect(unknown.subagents[0].status).not.toBe('completed');
+  const missing = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'd' }), 0);
+  expect(missing.subagents[0].status).toBe('failed');
 });
 
 test('batchAllDone is false for an empty batch', () => {

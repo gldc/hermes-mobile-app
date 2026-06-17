@@ -25,9 +25,17 @@ function SubagentRow({
 }) {
   const running = s.status === 'running';
   const elapsed = running ? (now - s.startedAtMs) / 1000 : s.durationSeconds;
-  const dot = running ? colors.accent : s.status === 'completed' ? colors.success : colors.textFaint;
+  const errored = s.status === 'failed' || s.status === 'timeout';
+  const dot = running
+    ? colors.accent
+    : s.status === 'completed'
+      ? colors.success
+      : errored
+        ? colors.danger
+        : colors.textFaint; // stopped / interrupted: neutral, not a failure
+  const tokens = running ? 0 : (s.inputTokens ?? 0) + (s.outputTokens ?? 0);
   // Hoisted out of the `sf={…}` attribute so the icon-map usage scanner doesn't
-  // mistake the 'completed' status comparison for an icon name.
+  // mistake a status comparison for an icon name.
   const doneGlyph = s.status === 'completed' ? 'checkmark.circle.fill' : 'xmark.circle';
   return (
     <View style={{ gap: 2 }}>
@@ -45,8 +53,15 @@ function SubagentRow({
             {fmtElapsed(elapsed)}
           </Text>
         ) : null}
+        {tokens > 0 ? (
+          <Text style={{ color: colors.textFaint, fontSize: 11.5, fontVariant: ['tabular-nums'] }}>
+            {Math.round(tokens / 1000)}k
+          </Text>
+        ) : null}
       </View>
-      {(running || expanded) && s.activity ? (
+      {s.activity ? (
+        // Running rows show the current tool/thinking; finished rows keep their
+        // one-line completion summary visible even while collapsed.
         <Text numberOfLines={expanded ? 3 : 1} style={{ color: colors.textFaint, fontSize: 12, marginLeft: 14 }}>
           ↳ {s.activity}
           {s.toolCount ? ` · ${s.toolCount} tools` : ''}

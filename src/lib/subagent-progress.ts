@@ -34,6 +34,8 @@ const COMPLETE_STATUS: Record<string, SubagentStatus> = {
   completed: 'completed',
   failed: 'failed',
   timeout: 'timeout',
+  error: 'failed', // gateway non-timeout exception path
+  interrupted: 'stopped', // user /stop mid-delegation — neutral, not a failure
 };
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
@@ -102,7 +104,8 @@ export function reduceSubagentEvent(
       // throughput. Do NOT clobber the cleaner per-tool activity from subagent.tool.
       break;
     case 'subagent.complete': {
-      next.status = COMPLETE_STATUS[str(p.status)] ?? 'completed';
+      // Fail-safe: an unrecognised terminal status must never render as success.
+      next.status = COMPLETE_STATUS[str(p.status)] ?? 'failed';
       next.durationSeconds = num(p.duration_seconds);
       next.inputTokens = num(p.input_tokens);
       next.outputTokens = num(p.output_tokens);
