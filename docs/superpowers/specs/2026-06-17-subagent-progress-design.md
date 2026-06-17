@@ -62,13 +62,21 @@ Emitted on the **parent** sid via `_emit` (`tui_gateway/server.py:2819-2885`).
 | `subagent.text` | child reply token | **NOT emitted to parent** — ignore; do not depend on it |
 | `subagent.complete` | run ends | base + `status` (`completed`/`failed`/`timeout`), `summary` (≤500 chars), `duration_seconds: float`, `input_tokens`, `output_tokens`, `reasoning_tokens`, `api_calls`, `cost_usd?`, `files_read: string[]`, `files_written: string[]`, `output_tail: object[]` |
 
-### `todo` tool (`tools/todo_tool.py`)
+### `todo` tool (`tools/todo_tool.py`, `tui_gateway/server.py`)
 
-- Tool `name === 'todo'`. `tool.start` payload carries `args`.
-- **Write:** `args.todos: Array<{ id: string, content: string, status }>`, optional
-  `args.merge: boolean` (false/absent = replace whole list; true = update existing by
-  `id` + append new). Item order = priority.
-- **Read:** no `args.todos` → ignore (no card update, and suppress the generic tool card).
+- Tool `name === 'todo'`. **The list arrives on `tool.complete`, NOT `tool.start`.** The
+  gateway extracts the tool's JSON return onto a top-level `payload.todos` field
+  (`_on_tool_complete`: `if name == "todo": payload["todos"] = json.loads(result)["todos"]`).
+  `tool.start` carries no structured todos (only verbose `args_text`), and `args.todos`
+  would be a *partial* merge update — the gateway code comments this explicitly. So the
+  client reads `tool.complete` `payload.todos`.
+- `payload.todos: Array<{ id: string, content: string, status }>` is the **full current
+  list after the write** — the tool always returns the whole list and the gateway has
+  already applied replace/merge server-side, so **no client-side merge is needed**. Item
+  order = priority.
+- A todo *read* also returns the full list, so updating on every todo `tool.complete` is
+  correct and idempotent.
+- On `tool.start` AND `tool.complete` with `name === 'todo'`, suppress the generic tool card.
 - `status ∈ { 'pending', 'in_progress', 'completed', 'cancelled' }`
   (`VALID_STATUSES`). Caps: ≤256 items, content ≤4000 chars.
 
@@ -126,16 +134,15 @@ creates the row; non-`subagent.*` events return the batch unchanged.
 export type TodoStatus = 'pending' | 'in_progress' | 'completed' | 'cancelled';
 export interface TodoItem { id: string; content: string; status: TodoStatus; }
 
-// Returns null when the payload is a read (no args.todos) — caller ignores it.
-export function applyTodoWrite(
-  current: TodoItem[],
-  payload: { args?: { todos?: unknown; merge?: boolean } },
-): TodoItem[] | null;
+// Read the full todo list the gateway puts on a `todo` tool.complete payload.
+// Returns null when there is no todos array (nothing to render / not a todo result).
+export function parseTodoList(payload: { todos?: unknown }): TodoItem[] | null;
 ```
 
-Rules: missing `args.todos` → `null`. Replace mode (default) → new list (dedupe by
-`id`, last wins). Merge mode → update existing by `id`, append unknown ids. Coerce
-unknown `status` to `'pending'`. Drop malformed items (no string `content`).
+Rules: `payload.todos` not an array → `null`. Map each entry to
+`{ id, content, status }`; coerce missing/unknown `status` to `'pending'`; drop entries
+without a string `content`. **No merge logic** — the gateway already returns the
+post-write full list.
 
 ## UI behavior
 
@@ -155,11 +162,11 @@ unknown `status` to `'pending'`. Drop malformed items (no string `content`).
 | File | Change |
 |---|---|
 | `src/lib/subagent-progress.ts` | NEW — reducer + helpers (+ `__tests__`) |
-| `src/lib/todo.ts` | NEW — `applyTodoWrite` (+ `__tests__`) |
+| `src/lib/todo.ts` | NEW — `parseTodoList` (+ `__tests__`) |
 | `src/components/subagent-monitor-card.tsx` | NEW |
 | `src/components/todo-card.tsx` | NEW |
 | `src/components/message-row.tsx` | add `'subagent'` + `'todo'` to `ChatItem` role union; render branches (or render in chat screen like `ApprovalCard`) |
-| `src/app/chat/[id].tsx` | event switch: handle `subagent.*` (reduce into a batch item) and `tool.start`/`tool.complete` `name==='todo'` (update todo item, suppress generic tool card); 1s ticker; finalize batch on `message.complete` |
+| `src/app/chat/[id].tsx` | event switch: handle `subagent.*` (reduce into a batch item); on `tool.complete` `name==='todo'` update the todo item via `parseTodoList`; suppress the generic tool card for `name==='todo'` on both `tool.start` and `tool.complete`; 1s ticker; finalize batch on `message.complete`/`error` |
 | `src/api/types.ts` | add `subagent.*` to `GatewayEventType` (optional; wildcard already covers) |
 
 ## Conventions
