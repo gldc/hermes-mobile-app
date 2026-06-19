@@ -7,7 +7,10 @@ export interface SubagentState {
   taskIndex: number;
   taskCount: number;
   status: SubagentStatus;
+  /** Latest step, shown on the collapsed row. */
   activity: string;
+  /** Bounded recent-step history (tool/thinking), newest last; shown when expanded. */
+  log: string[];
   toolCount: number;
   model?: string;
   startedAtMs: number;
@@ -17,6 +20,8 @@ export interface SubagentState {
   costUsd?: number;
   filesRead?: string[];
   filesWritten?: string[];
+  /** Completion summary from subagent.complete. */
+  summary?: string;
   childSessionId?: string;
 }
 
@@ -37,6 +42,8 @@ const COMPLETE_STATUS: Record<string, SubagentStatus> = {
   error: 'failed', // gateway non-timeout exception path
   interrupted: 'stopped', // user /stop mid-delegation — neutral, not a failure
 };
+
+const MAX_LOG = 12; // recent-step history kept per subagent for the expanded view
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 const num = (v: unknown): number | undefined =>
@@ -75,6 +82,7 @@ export function reduceSubagentEvent(
         taskCount: num(p.task_count) ?? 1,
         status: 'running',
         activity: '',
+        log: [],
         toolCount: 0,
         startedAtMs: now,
       };
@@ -90,13 +98,19 @@ export function reduceSubagentEvent(
     case 'subagent.tool': {
       const tool = str(p.tool_name);
       const preview = str(p.tool_preview) || str(p.text);
-      if (tool) next.activity = preview ? `${tool} · ${preview}` : tool;
-      else if (preview) next.activity = preview;
+      const entry = tool ? (preview ? `${tool} · ${preview}` : tool) : preview;
+      if (entry) {
+        next.activity = entry;
+        next.log = [...next.log, entry].slice(-MAX_LOG);
+      }
       break;
     }
     case 'subagent.thinking': {
       const t = str(p.text);
-      if (t) next.activity = t;
+      if (t) {
+        next.activity = t;
+        next.log = [...next.log, t].slice(-MAX_LOG);
+      }
       break;
     }
     case 'subagent.progress':
@@ -112,7 +126,7 @@ export function reduceSubagentEvent(
       next.costUsd = num(p.cost_usd);
       next.filesRead = strArr(p.files_read);
       next.filesWritten = strArr(p.files_written);
-      if (str(p.summary)) next.activity = str(p.summary);
+      if (str(p.summary)) next.summary = str(p.summary);
       break;
     }
     default:

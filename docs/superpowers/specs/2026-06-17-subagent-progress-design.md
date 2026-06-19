@@ -93,7 +93,8 @@ export interface SubagentState {
   taskIndex: number;
   taskCount: number;
   status: SubagentStatus;
-  activity: string;       // latest tool/thinking/progress text
+  activity: string;       // latest tool/thinking step (collapsed row)
+  log: string[];          // bounded recent-step history (expanded timeline)
   toolCount: number;
   model?: string;
   startedAtMs: number;    // client clock, captured on first event (injected `now`)
@@ -104,6 +105,7 @@ export interface SubagentState {
   costUsd?: number;
   filesRead?: string[];
   filesWritten?: string[];
+  summary?: string;        // completion summary (subagent.complete)
   childSessionId?: string; // retained for future tap-to-open
 }
 
@@ -149,7 +151,7 @@ post-write full list.
 - **SubagentMonitorCard** (`src/components/subagent-monitor-card.tsx`): one chat item
   (`role: 'subagent'`) per delegation batch. Collapsed: `🧫 Subagents (N running|done)`
   header + per-subagent line (status dot · goal (truncated) · `↳ tool · n tools · m:ss`).
-  Expanded (tap, `LayoutAnimation`): per-subagent latest activity. On all-done: each row
+  Expanded (tap, `LayoutAnimation`): per-subagent recent-step timeline (capped history of tool/thinking steps) + completion summary + a `model · N files` footer. On all-done: each row
   shows `✓ goal · m:ss · Nk` and a `total ~$X.XX` line when `cost_usd` present. Light
   haptic on each `subagent.complete`. Elapsed ticks from a 1s interval **only while a
   subagent is running** (cleared otherwise).

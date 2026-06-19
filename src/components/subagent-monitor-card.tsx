@@ -37,6 +37,12 @@ function SubagentRow({
   // Hoisted out of the `sf={…}` attribute so the icon-map usage scanner doesn't
   // mistake a status comparison for an icon name.
   const doneGlyph = s.status === 'completed' ? 'checkmark.circle.fill' : 'xmark.circle';
+  // Collapsed row prefers the completion summary once finished, else the latest step.
+  const headline = s.status !== 'running' && s.summary ? s.summary : s.activity;
+  const fileCount = (s.filesRead?.length ?? 0) + (s.filesWritten?.length ?? 0);
+  const footer = [s.model, fileCount > 0 ? `${fileCount} file${fileCount === 1 ? '' : 's'}` : '']
+    .filter(Boolean)
+    .join(' · ');
   return (
     <View style={{ gap: 2 }}>
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
@@ -59,11 +65,27 @@ function SubagentRow({
           </Text>
         ) : null}
       </View>
-      {s.activity ? (
-        // Running rows show the current tool/thinking; finished rows keep their
-        // one-line completion summary visible even while collapsed.
-        <Text numberOfLines={expanded ? 3 : 1} style={{ color: colors.textFaint, fontSize: 12, marginLeft: 14 }}>
-          ↳ {s.activity}
+      {expanded ? (
+        // Full step timeline + completion summary + metadata footer.
+        <View style={{ gap: 3, marginLeft: 14 }}>
+          {s.log.map((line, i) => (
+            <Text
+              key={`${i}:${line.slice(0, 12)}`}
+              numberOfLines={2}
+              style={{ color: colors.textFaint, fontSize: 12 }}
+            >
+              ↳ {line}
+            </Text>
+          ))}
+          {s.status !== 'running' && s.summary ? (
+            <Text style={{ color: colors.textDim, fontSize: 12 }}>{s.summary}</Text>
+          ) : null}
+          {footer ? <Text style={{ color: colors.textFaint, fontSize: 11.5 }}>{footer}</Text> : null}
+        </View>
+      ) : headline ? (
+        // Collapsed: running rows show the current step; finished rows show the summary.
+        <Text numberOfLines={1} style={{ color: colors.textFaint, fontSize: 12, marginLeft: 14 }}>
+          ↳ {headline}
           {s.toolCount ? ` · ${s.toolCount} tools` : ''}
         </Text>
       ) : null}
