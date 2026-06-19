@@ -1,0 +1,145 @@
+// src/lib/__tests__/subagent-progress.test.ts
+import {
+  emptyBatch,
+  reduceSubagentEvent,
+  finalizeBatch,
+  batchAllDone,
+} from '../subagent-progress';
+
+const ev = (type: string, payload: Record<string, unknown>) => ({ type, payload });
+
+test('start → tool → complete tracks one subagent with rollup', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'Research', task_index: 0, task_count: 1 }), 1000);
+  expect(b.subagents).toHaveLength(1);
+  expect(b.subagents[0]).toMatchObject({ key: 'a', goal: 'Research', status: 'running', startedAtMs: 1000 });
+  b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'a', tool_name: 'web_search', tool_preview: 'auth libs', tool_count: 3 }), 1100);
+  expect(b.subagents[0].toolCount).toBe(3);
+  expect(b.subagents[0].activity).toContain('web_search');
+  b = reduceSubagentEvent(b, ev('subagent.complete', { subagent_id: 'a', status: 'completed', duration_seconds: 41, input_tokens: 12000, cost_usd: 0.04 }), 5000);
+  expect(b.subagents[0]).toMatchObject({ status: 'completed', durationSeconds: 41, inputTokens: 12000, costUsd: 0.04 });
+  expect(batchAllDone(b)).toBe(true);
+});
+
+test('parallel subagents tracked separately; updates preserve order, isolation + fields', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 2 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'b', goal: 'B', task_index: 1, task_count: 2, model: 'opus' }), 0);
+  expect(b.subagents.map((s) => s.key)).toEqual(['a', 'b']);
+  expect(batchAllDone(b)).toBe(false);
+  // An update to 'b' that omits task_count/model must not reorder, touch 'a', or reset fields.
+  b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'b', tool_name: 'read' }), 1);
+  expect(b.subagents.map((s) => s.key)).toEqual(['a', 'b']);
+  expect(b.subagents[0].activity).toBe('');
+  expect(b.subagents[1].activity).toContain('read');
+  expect(b.subagents[1].taskCount).toBe(2); // not clobbered to default by the omitting event
+  expect(b.subagents[1].model).toBe('opus');
+});
+
+test('falls back to task_index key when subagent_id absent', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { goal: 'X', task_index: 2, task_count: 3 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.tool', { task_index: 2, tool_name: 'read' }), 1);
+  expect(b.subagents).toHaveLength(1);
+  expect(b.subagents[0].key).toBe('idx:2');
+  expect(b.subagents[0].activity).toContain('read');
+});
+
+test('complete without prior start creates the row', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.complete', { subagent_id: 'z', goal: 'late', status: 'failed' }), 0);
+  expect(b.subagents).toHaveLength(1);
+  expect(b.subagents[0]).toMatchObject({ key: 'z', status: 'failed' });
+});
+
+test('duplicate events are idempotent; startedAtMs set once', () => {
+  let b = emptyBatch();
+  const e = ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 1 });
+  b = reduceSubagentEvent(b, e, 0);
+  b = reduceSubagentEvent(b, e, 50);
+  expect(b.subagents).toHaveLength(1);
+  expect(b.subagents[0].startedAtMs).toBe(0);
+});
+
+test('non-subagent events and subagent.text are ignored', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('tool.start', { name: 'x' }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.text', { subagent_id: 'a', text: 'tok' }), 0);
+  expect(b.subagents).toHaveLength(0);
+});
+
+test('thinking sets activity; progress does not clobber tool activity', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 1 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.thinking', { subagent_id: 'a', text: 'planning approach' }), 1);
+  expect(b.subagents[0].activity).toBe('planning approach');
+  b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'a', tool_name: 'web_search', tool_preview: 'auth' }), 2);
+  expect(b.subagents[0].activity).toContain('web_search');
+  b = reduceSubagentEvent(b, ev('subagent.progress', { subagent_id: 'a', text: '🔀 [1] web_search, read, edit' }), 3);
+  expect(b.subagents[0].activity).toContain('web_search'); // not clobbered by the batch summary
+  expect(b.subagents[0].activity).not.toContain('🔀');
+});
+
+test('subagent.tool falls back to text when tool_preview is absent', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 1 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'a', tool_name: 'bash', text: 'ls -la' }), 1);
+  expect(b.subagents[0].activity).toContain('bash');
+  expect(b.subagents[0].activity).toContain('ls -la');
+});
+
+test('accumulates an activity log (thinking + tools) and stores completion summary', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 1 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.thinking', { subagent_id: 'a', text: 'mulling' }), 1);
+  b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'a', tool_name: 'bash', tool_preview: 'git log' }), 2);
+  b = reduceSubagentEvent(b, ev('subagent.progress', { subagent_id: 'a', text: '🔀 [1] bash, read' }), 3);
+  expect(b.subagents[0].log).toEqual(['mulling', 'bash · git log']); // progress is not logged
+  b = reduceSubagentEvent(b, ev('subagent.complete', { subagent_id: 'a', status: 'completed', summary: 'Found 5 PRs', files_read: ['a.ts', 'b.ts'] }), 4);
+  expect(b.subagents[0].summary).toBe('Found 5 PRs');
+  expect(b.subagents[0].log).toEqual(['mulling', 'bash · git log']); // log preserved through complete
+});
+
+test('activity log keeps only the most recent entries (capped)', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 1 }), 0);
+  for (let i = 0; i < 20; i++) {
+    b = reduceSubagentEvent(b, ev('subagent.tool', { subagent_id: 'a', tool_name: `t${i}` }), i + 1);
+  }
+  expect(b.subagents[0].log).toHaveLength(12);
+  expect(b.subagents[0].log[0]).toBe('t8'); // oldest kept (20 - 12)
+  expect(b.subagents[0].log[11]).toBe('t19'); // newest
+});
+
+test('maps timeout status', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.complete', { subagent_id: 'a', status: 'timeout' }), 0);
+  expect(b.subagents[0].status).toBe('timeout');
+});
+
+test('error → failed, interrupted → stopped; unknown/missing fail-safe to failed (never success)', () => {
+  const errored = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'a', status: 'error' }), 0);
+  expect(errored.subagents[0].status).toBe('failed');
+  const interrupted = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'b', status: 'interrupted' }), 0);
+  expect(interrupted.subagents[0].status).toBe('stopped');
+  const unknown = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'c', status: 'weird' }), 0);
+  expect(unknown.subagents[0].status).toBe('failed');
+  expect(unknown.subagents[0].status).not.toBe('completed');
+  const missing = reduceSubagentEvent(emptyBatch(), ev('subagent.complete', { subagent_id: 'd' }), 0);
+  expect(missing.subagents[0].status).toBe('failed');
+});
+
+test('batchAllDone is false for an empty batch', () => {
+  expect(batchAllDone(emptyBatch())).toBe(false);
+});
+
+test('finalizeBatch stops only running subagents, leaves finished ones', () => {
+  let b = emptyBatch();
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'a', goal: 'A', task_index: 0, task_count: 2 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.start', { subagent_id: 'b', goal: 'B', task_index: 1, task_count: 2 }), 0);
+  b = reduceSubagentEvent(b, ev('subagent.complete', { subagent_id: 'b', status: 'completed' }), 1);
+  b = finalizeBatch(b);
+  expect(b.finalized).toBe(true);
+  expect(b.subagents[0].status).toBe('stopped'); // 'a' was running
+  expect(b.subagents[1].status).toBe('completed'); // 'b' unchanged
+});
