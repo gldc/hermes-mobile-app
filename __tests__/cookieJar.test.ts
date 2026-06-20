@@ -81,4 +81,44 @@ describe('CookieJar', () => {
     jar.ingest(['__Secure-hermes_session_at=at; Max-Age=900; Path=/']);
     expect(jar.accessTokenFresh(60_000)).toBe(true);
   });
+
+  it('recognises the __Host- prefixed access-token cookie (HTTPS deployments)', () => {
+    const jar = new CookieJar(() => 1_000_000);
+    jar.ingest(['__Host-hermes_session_at=at; Max-Age=900; Path=/']);
+    expect(jar.accessTokenFresh(60_000)).toBe(true);
+  });
+
+  it('treats remaining life exactly at the margin as not fresh (exclusive)', () => {
+    let now = 1_000_000;
+    const jar = new CookieJar(() => now);
+    jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/']); // expires at now+900_000ms
+    now += 840_000; // exactly 60_000ms of life remains == the margin
+    expect(jar.accessTokenFresh(60_000)).toBe(false);
+  });
+
+  it('extends the window when the same AT value is re-sent with a fresh Max-Age', () => {
+    let now = 1_000_000;
+    const jar = new CookieJar(() => now);
+    jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/']);
+    now += 880_000; // within margin now
+    expect(jar.accessTokenFresh(60_000)).toBe(false);
+    jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/']); // SAME value, fresh Max-Age
+    expect(jar.accessTokenFresh(60_000)).toBe(true);
+  });
+
+  it('drops a stale expiry when the AT is re-sent without a parseable Max-Age', () => {
+    const jar = new CookieJar(() => 1_000_000);
+    jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/']);
+    expect(jar.accessTokenFresh(60_000)).toBe(true);
+    jar.ingest(['hermes_session_at=at2; Path=/']); // rotation with no Max-Age → unknown
+    expect(jar.accessTokenFresh(60_000)).toBe(false);
+  });
+
+  it('clear() resets the tracked access-token expiry', () => {
+    const jar = new CookieJar(() => 1_000_000);
+    jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/']);
+    expect(jar.accessTokenFresh(60_000)).toBe(true);
+    jar.clear();
+    expect(jar.accessTokenFresh(60_000)).toBe(false);
+  });
 });

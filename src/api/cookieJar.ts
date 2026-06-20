@@ -7,10 +7,12 @@ export function splitSetCookie(joined: string): string[] {
   return joined.split(/,(?=\s*[A-Za-z0-9_\-!#$%&'*.^`|~]+=)/).map((s) => s.trim());
 }
 
-/** The access-token cookie, plain and `__Secure-`-prefixed (HTTPS) variants. */
-const AT_COOKIE_NAMES = new Set(['hermes_session_at', '__Secure-hermes_session_at']);
+/** The access-token cookie — bare over plain HTTP (tailnet), or carrying the
+ * `__Host-`/`__Secure-` cookie prefix over HTTPS (the gateway uses the stricter
+ * `__Host-` for the Path=/ no-Domain AT). Match all three by stripping the
+ * prefix, so the expiry optimization keeps working on HTTPS deployments. */
 function isAccessTokenCookie(name: string): boolean {
-  return AT_COOKIE_NAMES.has(name);
+  return name.replace(/^(__Host-|__Secure-)/, '') === 'hermes_session_at';
 }
 
 export class CookieJar {
@@ -53,10 +55,15 @@ export class CookieJar {
       }
       // Record/refresh the access token's expiry from its Max-Age, independent
       // of whether the value changed (a re-sent AT with a new Max-Age still
-      // extends the window).
+      // extends the window). Per RFC 6265 the LAST Max-Age wins. An AT set
+      // without a parseable Max-Age drops the expiry to unknown rather than
+      // keeping the prior token's — conservative serialize until one is seen.
       if (isAccessTokenCookie(name) && !expired && value !== '') {
-        const m = attrs.map((a) => /^\s*max-age\s*=\s*(\d+)\s*$/i.exec(a)).find(Boolean);
-        if (m) this.atExpiresAtMs = this.now() + parseInt(m[1], 10) * 1000;
+        const matches = attrs
+          .map((a) => /^\s*max-age\s*=\s*(\d+)\s*$/i.exec(a))
+          .filter((m): m is RegExpExecArray => m !== null);
+        const last = matches[matches.length - 1];
+        this.atExpiresAtMs = last ? this.now() + parseInt(last[1], 10) * 1000 : null;
       }
     }
     if (changed) this.notify();
@@ -75,6 +82,7 @@ export class CookieJar {
   }
 
   clear(): void {
+    this.atExpiresAtMs = null; // a jar with no cookies must not claim a fresh AT
     if (this.cookies.size === 0) return;
     this.cookies.clear();
     this.notify();

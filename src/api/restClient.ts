@@ -23,6 +23,18 @@ export const AT_FRESH_MARGIN_MS = 60_000;
  * freeing the serialization chain. */
 export const REQUEST_TIMEOUT_MS = 20_000;
 
+// Load-bearing invariant. The off-chain "fresh" path lets a request skip the
+// serialization chain; that is safe only because a fresh request finishes
+// (bounded by REQUEST_TIMEOUT_MS) before the access token can fall below
+// AT_FRESH_MARGIN_MS — so a fresh request and a later chained (post-rotation)
+// request can never overlap on the same refresh token. That holds only while
+// the margin dominates the timeout; fail loudly if a future edit breaks it.
+if (AT_FRESH_MARGIN_MS <= REQUEST_TIMEOUT_MS) {
+  throw new Error(
+    'RestClient: AT_FRESH_MARGIN_MS must exceed REQUEST_TIMEOUT_MS (fresh-path race invariant)',
+  );
+}
+
 export class RestClient {
   constructor(
     public readonly baseUrl: string,           // e.g. http://100.1.2.3:9119 (no trailing slash)
@@ -40,10 +52,13 @@ export class RestClient {
   private chain: Promise<unknown> = Promise.resolve();
 
   private request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    // Access token fresh → the server validates it without rotating, so
-    // requests are safe to run concurrently and a hung request cannot wedge the
-    // rest of the REST layer. Stale/unknown → fall back to the chain so only one
-    // request at a time can trigger (and thus race) a refresh-token rotation.
+    // Access token fresh → the server validates it without rotating the refresh
+    // token, so requests are safe to run concurrently and a hung request cannot
+    // wedge the rest of the REST layer. (This relies on the gateway contract
+    // that a valid, unexpired AT never triggers refresh_session / RT rotation —
+    // dashboard_auth middleware: AT present ⇒ no refresh.) Stale/unknown → fall
+    // back to the chain so only one request at a time can trigger (and thus
+    // race) a refresh-token rotation.
     if (this.jar.accessTokenFresh(AT_FRESH_MARGIN_MS)) {
       return this.send<T>(path, init);
     }
@@ -64,41 +79,48 @@ export class RestClient {
     };
     const cookie = this.jar.header();
     if (cookie) headers['Cookie'] = cookie;
+    // One controller + timer guards the WHOLE request — headers AND body reads.
+    // A server that returns headers then stalls the body would otherwise hang in
+    // res.json() forever (and, on the chain, re-wedge the REST layer). `init`
+    // never carries a caller signal today; we own it.
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-    let res: Response;
     try {
-      res = await this.fetchFn(`${this.baseUrl}${path}`, {
+      const res = await this.fetchFn(`${this.baseUrl}${path}`, {
         ...init,
         headers,
         credentials: 'omit', // we manage cookies ourselves
         signal: controller.signal,
       });
+      const setCookie = res.headers.get('set-cookie');
+      if (setCookie) this.jar.ingest([setCookie]);
+      if (res.status === 401) throw new AuthError('session expired or invalid credentials');
+      if (res.status === 429) throw new HttpError(429, 'rate limited — wait a minute');
+      if (!res.ok) {
+        // FastAPI errors carry {"detail": "..."} — surface it (e.g. cron
+        // schedule-parse 400s) instead of a bare status code.
+        let message = `HTTP ${res.status} on ${path}`;
+        try {
+          const body = (await res.json()) as { detail?: unknown };
+          if (typeof body?.detail === 'string' && body.detail) message = body.detail;
+        } catch {
+          // non-JSON (or aborted) error body — keep the generic message
+        }
+        throw new HttpError(res.status, message);
+      }
+      return (await res.json()) as T;
     } catch (e) {
-      if ((e as { name?: string } | null)?.name === 'AbortError') {
+      // The timeout fires by aborting the controller; map any resulting abort —
+      // during the headers phase OR a stalled body read — to a clear timeout.
+      // Detect via the controller's own state (robust to RN/polyfill error
+      // shapes). Intentional AuthError/HttpError thrown above pass through.
+      if (controller.signal.aborted && !(e instanceof AuthError) && !(e instanceof HttpError)) {
         throw new HttpError(0, `request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
       }
       throw e;
     } finally {
       clearTimeout(timer);
     }
-    const setCookie = res.headers.get('set-cookie');
-    if (setCookie) this.jar.ingest([setCookie]);
-    if (res.status === 401) throw new AuthError('session expired or invalid credentials');
-    if (res.status === 429) throw new HttpError(429, 'rate limited — wait a minute');
-    if (!res.ok) {
-      // FastAPI errors carry {"detail": "..."} — surface it (e.g. cron
-      // schedule-parse 400s) instead of a bare status code.
-      let message = `HTTP ${res.status} on ${path}`;
-      try {
-        const body = (await res.json()) as { detail?: unknown };
-        if (typeof body?.detail === 'string' && body.detail) message = body.detail;
-      } catch {
-        // non-JSON error body — keep the generic message
-      }
-      throw new HttpError(res.status, message);
-    }
-    return (await res.json()) as T;
   }
 
   /** Generic authed verbs — feature modules (cron, memory, …) build on these
