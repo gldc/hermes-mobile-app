@@ -17,6 +17,12 @@ type FetchFn = typeof fetch;
  * and in-flight time; the server-side reuse grace window backstops any residue. */
 export const AT_FRESH_MARGIN_MS = 60_000;
 
+/** Hard upper bound per request. The audited REST surface is all small JSON on
+ * a private network — nothing legitimately approaches this — so it only ever
+ * fires on a genuine hang, turning a silent freeze into an explicit failure and
+ * freeing the serialization chain. */
+export const REQUEST_TIMEOUT_MS = 20_000;
+
 export class RestClient {
   constructor(
     public readonly baseUrl: string,           // e.g. http://100.1.2.3:9119 (no trailing slash)
@@ -58,11 +64,24 @@ export class RestClient {
     };
     const cookie = this.jar.header();
     if (cookie) headers['Cookie'] = cookie;
-    const res = await this.fetchFn(`${this.baseUrl}${path}`, {
-      ...init,
-      headers,
-      credentials: 'omit', // we manage cookies ourselves
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    let res: Response;
+    try {
+      res = await this.fetchFn(`${this.baseUrl}${path}`, {
+        ...init,
+        headers,
+        credentials: 'omit', // we manage cookies ourselves
+        signal: controller.signal,
+      });
+    } catch (e) {
+      if ((e as { name?: string } | null)?.name === 'AbortError') {
+        throw new HttpError(0, `request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+      }
+      throw e;
+    } finally {
+      clearTimeout(timer);
+    }
     const setCookie = res.headers.get('set-cookie');
     if (setCookie) this.jar.ingest([setCookie]);
     if (res.status === 401) throw new AuthError('session expired or invalid credentials');

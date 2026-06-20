@@ -1,5 +1,5 @@
 // __tests__/restClient.test.ts
-import { RestClient, AuthError, AT_FRESH_MARGIN_MS } from '../src/api/restClient';
+import { RestClient, AuthError, AT_FRESH_MARGIN_MS, REQUEST_TIMEOUT_MS } from '../src/api/restClient';
 import { CookieJar } from '../src/api/cookieJar';
 
 function fakeFetch(status: number, body: unknown, setCookie?: string) {
@@ -189,5 +189,33 @@ describe('listSessions archived', () => {
     await c.listSessions(0);
     expect(f.calls[0].url).toBe('http://h/api/sessions?limit=40&offset=0&order=recent&archived=only');
     expect(f.calls[1].url).toBe('http://h/api/sessions?limit=40&offset=0&order=recent');
+  });
+});
+
+describe('RestClient request timeout', () => {
+  it('aborts a request that exceeds REQUEST_TIMEOUT_MS', async () => {
+    jest.useFakeTimers();
+    try {
+      const jar = new CookieJar(() => 1_000_000);
+      jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/']); // fresh → direct send
+
+      // Hangs forever unless its AbortSignal fires.
+      const hang = (_url: string, init: RequestInit = {}) =>
+        new Promise<Response>((_resolve, reject) => {
+          (init.signal as AbortSignal | undefined)?.addEventListener('abort', () => {
+            const e = new Error('Aborted');
+            e.name = 'AbortError';
+            reject(e);
+          });
+        });
+      const c = new RestClient('http://h', jar, hang as any);
+      const p = c.get('/slow');
+      p.catch(() => {}); // attach early so the rejection is never "unhandled"
+      await Promise.resolve(); // let send() install the timer + abort listener
+      jest.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+      await expect(p).rejects.toThrow(/timed out/i);
+    } finally {
+      jest.useRealTimers();
+    }
   });
 });
