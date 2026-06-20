@@ -17,7 +17,27 @@ export class RestClient {
     private readonly fetchFn: FetchFn = fetch,
   ) {}
 
-  private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  // Serializes authed requests. Refresh tokens rotate single-use server-side:
+  // two concurrent requests would both snapshot the same RT from the jar and
+  // send it, and the gateway treats the second (rotated-out) RT as reuse —
+  // revoking the device. Chaining each request after the previous one means a
+  // request always sends the freshly-rotated cookie the prior response
+  // ingested. The cost on a private network is one extra RTT per multi-call
+  // screen; streaming rides the WebSocket, not this path.
+  private chain: Promise<unknown> = Promise.resolve();
+
+  private request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    const run = this.chain.then(() => this.send<T>(path, init));
+    // Keep the chain alive across failures — a rejected request must not
+    // wedge later ones — while still propagating the real result to the caller.
+    this.chain = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async send<T>(path: string, init: RequestInit = {}): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(init.headers as Record<string, string> | undefined),
