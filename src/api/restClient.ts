@@ -10,6 +10,13 @@ export class HttpError extends Error {
 
 type FetchFn = typeof fetch;
 
+/** Serialize requests once the access token has less than this much life left
+ * (or its expiry is unknown). That is the only window in which a request falls
+ * back to the rotating refresh token, so it is the only window in which two
+ * concurrent requests could replay the same RT. The margin absorbs clock skew
+ * and in-flight time; the server-side reuse grace window backstops any residue. */
+export const AT_FRESH_MARGIN_MS = 60_000;
+
 export class RestClient {
   constructor(
     public readonly baseUrl: string,           // e.g. http://100.1.2.3:9119 (no trailing slash)
@@ -27,9 +34,16 @@ export class RestClient {
   private chain: Promise<unknown> = Promise.resolve();
 
   private request<T>(path: string, init: RequestInit = {}): Promise<T> {
+    // Access token fresh → the server validates it without rotating, so
+    // requests are safe to run concurrently and a hung request cannot wedge the
+    // rest of the REST layer. Stale/unknown → fall back to the chain so only one
+    // request at a time can trigger (and thus race) a refresh-token rotation.
+    if (this.jar.accessTokenFresh(AT_FRESH_MARGIN_MS)) {
+      return this.send<T>(path, init);
+    }
     const run = this.chain.then(() => this.send<T>(path, init));
-    // Keep the chain alive across failures — a rejected request must not
-    // wedge later ones — while still propagating the real result to the caller.
+    // Keep the chain alive across failures — a rejected request must not wedge
+    // later ones — while still propagating the real result to the caller.
     this.chain = run.then(
       () => undefined,
       () => undefined,

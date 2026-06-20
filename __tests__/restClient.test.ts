@@ -1,5 +1,5 @@
 // __tests__/restClient.test.ts
-import { RestClient, AuthError } from '../src/api/restClient';
+import { RestClient, AuthError, AT_FRESH_MARGIN_MS } from '../src/api/restClient';
 import { CookieJar } from '../src/api/cookieJar';
 
 function fakeFetch(status: number, body: unknown, setCookie?: string) {
@@ -122,6 +122,62 @@ describe('RestClient single-flight (rotating-token race)', () => {
     const c = new RestClient('http://h', jar, fetchFn as any);
     await expect(c.get('/a')).rejects.toThrow();
     await expect(c.get('/b')).resolves.toEqual({ ok: true });
+  });
+});
+
+describe('RestClient expiry-aware serialization', () => {
+  const res = (status: number, body: unknown, setCookie?: string) =>
+    ({
+      status,
+      ok: status >= 200 && status < 300,
+      headers: { get: (k: string) => (k.toLowerCase() === 'set-cookie' ? setCookie ?? null : null) },
+      json: async () => body,
+    }) as unknown as Response;
+
+  it('runs requests concurrently while the access token is fresh', async () => {
+    const NOW = 1_000_000;
+    const jar = new CookieJar(() => NOW);
+    jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/', 'hermes_session_rt=r1; Path=/']);
+
+    let firstDone = false;
+    let secondStartedBeforeFirstDone = false;
+    let call = 0;
+    const fetchFn = async () => {
+      const i = call++;
+      if (i === 0) {
+        await new Promise((r) => setTimeout(r, 20));
+        firstDone = true;
+        return res(200, { ok: true });
+      }
+      secondStartedBeforeFirstDone = !firstDone; // proves the 2nd didn't wait for the 1st
+      return res(200, { ok: true });
+    };
+    const c = new RestClient('http://h', jar, fetchFn as any);
+    await Promise.all([c.get('/a'), c.get('/b')]);
+    expect(secondStartedBeforeFirstDone).toBe(true);
+  });
+
+  it('serializes requests when the access token is within the refresh margin', async () => {
+    const NOW = 1_000_000;
+    const jar = new CookieJar(() => NOW);
+    // 30s of AT life left — inside AT_FRESH_MARGIN_MS → treated as stale.
+    jar.ingest(['hermes_session_at=at; Max-Age=30; Path=/', 'hermes_session_rt=r1; Path=/']);
+
+    const seen: string[] = [];
+    let call = 0;
+    const fetchFn = async (_url: string, init: RequestInit = {}) => {
+      const i = call++;
+      seen[i] = (init.headers as Record<string, string>)['Cookie'] ?? '';
+      if (i === 0) {
+        await new Promise((r) => setTimeout(r, 20));
+        return res(200, { ok: true }, 'hermes_session_rt=r2; Path=/');
+      }
+      return res(200, { ok: true });
+    };
+    const c = new RestClient('http://h', jar, fetchFn as any);
+    await Promise.all([c.get('/a'), c.get('/b')]);
+    expect(seen[0]).toContain('hermes_session_rt=r1');
+    expect(seen[1]).toContain('hermes_session_rt=r2'); // 2nd waited for the rotation
   });
 });
 
