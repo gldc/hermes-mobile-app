@@ -79,6 +79,52 @@ describe('RestClient', () => {
   });
 });
 
+describe('RestClient single-flight (rotating-token race)', () => {
+  // Minimal Response stub matching the transport's needs.
+  const res = (status: number, body: unknown, setCookie?: string) =>
+    ({
+      status,
+      ok: status >= 200 && status < 300,
+      headers: { get: (k: string) => (k.toLowerCase() === 'set-cookie' ? setCookie ?? null : null) },
+      json: async () => body,
+    }) as unknown as Response;
+
+  it('serializes concurrent authed requests so the second sends the rotated cookie', async () => {
+    const jar = new CookieJar();
+    jar.ingest(['hermes_session_rt=r1; Path=/']);
+
+    const seen: string[] = [];
+    let call = 0;
+    // The first request is slow and rotates r1→r2. If requests are NOT
+    // serialized, the second reads the jar before that rotation is ingested
+    // and ALSO sends r1 — exactly the rotated-out replay the gateway treats
+    // as reuse and revokes the device for.
+    const fetchFn = async (_url: string, init: RequestInit = {}) => {
+      const i = call++;
+      seen[i] = (init.headers as Record<string, string>)['Cookie'] ?? '';
+      if (i === 0) {
+        await new Promise((r) => setTimeout(r, 20));
+        return res(200, { ok: true }, 'hermes_session_rt=r2; Path=/');
+      }
+      return res(200, { ok: true });
+    };
+    const c = new RestClient('http://h', jar, fetchFn as any);
+    await Promise.all([c.get('/a'), c.get('/b')]);
+
+    expect(seen[0]).toBe('hermes_session_rt=r1');
+    expect(seen[1]).toBe('hermes_session_rt=r2'); // waited for the rotation
+  });
+
+  it('a failed request does not poison the chain for later requests', async () => {
+    const jar = new CookieJar();
+    let call = 0;
+    const fetchFn = async () => (call++ === 0 ? res(500, { nope: 1 }) : res(200, { ok: true }));
+    const c = new RestClient('http://h', jar, fetchFn as any);
+    await expect(c.get('/a')).rejects.toThrow();
+    await expect(c.get('/b')).resolves.toEqual({ ok: true });
+  });
+});
+
 describe('listSessions archived', () => {
   it('appends archived=only and keeps the default URL unchanged otherwise', async () => {
     const f = fakeFetch(200, { sessions: [], total: 0, limit: 40, offset: 0 });
