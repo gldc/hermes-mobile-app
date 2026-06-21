@@ -1,5 +1,5 @@
 // __tests__/restClient.test.ts
-import { RestClient, AuthError } from '../src/api/restClient';
+import { RestClient, AuthError, AT_FRESH_MARGIN_MS, REQUEST_TIMEOUT_MS } from '../src/api/restClient';
 import { CookieJar } from '../src/api/cookieJar';
 
 function fakeFetch(status: number, body: unknown, setCookie?: string) {
@@ -125,6 +125,81 @@ describe('RestClient single-flight (rotating-token race)', () => {
   });
 });
 
+describe('RestClient expiry-aware serialization', () => {
+  const res = (status: number, body: unknown, setCookie?: string) =>
+    ({
+      status,
+      ok: status >= 200 && status < 300,
+      headers: { get: (k: string) => (k.toLowerCase() === 'set-cookie' ? setCookie ?? null : null) },
+      json: async () => body,
+    }) as unknown as Response;
+
+  it('runs requests concurrently while the access token is fresh', async () => {
+    const NOW = 1_000_000;
+    const jar = new CookieJar(() => NOW);
+    jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/', 'hermes_session_rt=r1; Path=/']);
+
+    // The first request blocks on a gate the test controls — deterministic, no
+    // real timers. If requests were serialized, the second would never start
+    // until the gate releases; concurrent dispatch lets it run immediately.
+    let releaseFirst!: () => void;
+    const firstGate = new Promise<void>((r) => {
+      releaseFirst = r;
+    });
+    let secondStarted = false;
+    let call = 0;
+    const fetchFn = async () => {
+      const i = call++;
+      if (i === 0) {
+        await firstGate;
+        return res(200, { ok: true });
+      }
+      secondStarted = true;
+      return res(200, { ok: true });
+    };
+    const c = new RestClient('http://h', jar, fetchFn as any);
+    const all = Promise.all([c.get('/a'), c.get('/b')]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(secondStarted).toBe(true); // ran without waiting for the gated first
+    releaseFirst();
+    await all;
+  });
+
+  it('still ingests Set-Cookie rotations on the concurrent (fresh) path', async () => {
+    const NOW = 1_000_000;
+    const jar = new CookieJar(() => NOW);
+    jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/', 'hermes_session_rt=r1; Path=/']);
+    const fetchFn = async () => res(200, { ok: true }, 'hermes_session_rt=r2; Path=/');
+    const c = new RestClient('http://h', jar, fetchFn as any);
+    await c.get('/a');
+    expect(jar.header()).toContain('hermes_session_rt=r2');
+  });
+
+  it('serializes requests when the access token is within the refresh margin', async () => {
+    const NOW = 1_000_000;
+    const jar = new CookieJar(() => NOW);
+    // 30s of AT life left — inside AT_FRESH_MARGIN_MS → treated as stale.
+    jar.ingest(['hermes_session_at=at; Max-Age=30; Path=/', 'hermes_session_rt=r1; Path=/']);
+
+    const seen: string[] = [];
+    let call = 0;
+    const fetchFn = async (_url: string, init: RequestInit = {}) => {
+      const i = call++;
+      seen[i] = (init.headers as Record<string, string>)['Cookie'] ?? '';
+      if (i === 0) {
+        await new Promise((r) => setTimeout(r, 20));
+        return res(200, { ok: true }, 'hermes_session_rt=r2; Path=/');
+      }
+      return res(200, { ok: true });
+    };
+    const c = new RestClient('http://h', jar, fetchFn as any);
+    await Promise.all([c.get('/a'), c.get('/b')]);
+    expect(seen[0]).toContain('hermes_session_rt=r1');
+    expect(seen[1]).toContain('hermes_session_rt=r2'); // 2nd waited for the rotation
+  });
+});
+
 describe('listSessions archived', () => {
   it('appends archived=only and keeps the default URL unchanged otherwise', async () => {
     const f = fakeFetch(200, { sessions: [], total: 0, limit: 40, offset: 0 });
@@ -133,5 +208,75 @@ describe('listSessions archived', () => {
     await c.listSessions(0);
     expect(f.calls[0].url).toBe('http://h/api/sessions?limit=40&offset=0&order=recent&archived=only');
     expect(f.calls[1].url).toBe('http://h/api/sessions?limit=40&offset=0&order=recent');
+  });
+});
+
+describe('RestClient request timeout', () => {
+  const abortError = () => {
+    const e = new Error('Aborted');
+    e.name = 'AbortError';
+    return e;
+  };
+
+  it('aborts a request that hangs in the headers phase', async () => {
+    jest.useFakeTimers();
+    try {
+      const jar = new CookieJar(() => 1_000_000);
+      jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/']); // fresh → direct send
+
+      let captured: AbortSignal | undefined;
+      const hang = (_url: string, init: RequestInit = {}) =>
+        new Promise<Response>((_resolve, reject) => {
+          captured = init.signal as AbortSignal | undefined;
+          captured?.addEventListener('abort', () => reject(abortError()));
+        });
+      const c = new RestClient('http://h', jar, hang as any);
+      const p = c.get('/slow');
+      p.catch(() => {}); // attach early so the rejection is never "unhandled"
+      await Promise.resolve(); // let send() install the timer + abort listener
+      jest.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+      expect(captured?.aborted).toBe(true); // fails fast if the timer never fired
+      await expect(p).rejects.toThrow(/timed out/i);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('times out when the response body stalls after headers arrive', async () => {
+    jest.useFakeTimers();
+    try {
+      const jar = new CookieJar(() => 1_000_000);
+      jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/']);
+
+      // Headers arrive immediately; res.json() hangs until aborted — the timer
+      // must still cover the body read, or this would freeze forever.
+      const stallBody = (_url: string, init: RequestInit = {}) => {
+        const signal = init.signal as AbortSignal | undefined;
+        return Promise.resolve({
+          status: 200,
+          ok: true,
+          headers: { get: () => null },
+          json: () =>
+            new Promise((_resolve, reject) => {
+              signal?.addEventListener('abort', () => reject(abortError()));
+            }),
+        } as unknown as Response);
+      };
+      const c = new RestClient('http://h', jar, stallBody as any);
+      const p = c.get('/slow-body');
+      p.catch(() => {});
+      await Promise.resolve();
+      await Promise.resolve();
+      jest.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+      await expect(p).rejects.toThrow(/timed out/i);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+});
+
+describe('RestClient fresh-path race invariant', () => {
+  it('keeps the AT freshness margin dominating the request timeout', () => {
+    expect(AT_FRESH_MARGIN_MS).toBeGreaterThan(REQUEST_TIMEOUT_MS);
   });
 });
