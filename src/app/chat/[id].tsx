@@ -8,7 +8,14 @@ import { ActivityIndicator, FlatList, Pressable, Share, Text, View } from 'react
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
-import { getModelInfo, modelDisplayName } from '@/api/models';
+import { getModelInfo } from '@/api/models';
+import {
+  ModelPillState,
+  emptyModelPill,
+  withFallbackModel,
+  withSessionModel,
+  pillLabel,
+} from '@/lib/model-pill';
 import { withProfile } from '@/api/profiles';
 import type { GatewayEvent, SessionCreateResult, SessionResumeResult } from '@/api/types';
 import { setAttachHandler } from '@/attach-bus';
@@ -38,7 +45,7 @@ const MAX_RECONNECT_ATTEMPTS = 5;
 
 // Module-level so the pill shows instantly on later chat mounts; refreshed
 // quietly on every mount (the picker can change it between visits).
-let cachedModelName: string | null = null;
+let cachedModelId: string | null = null;
 
 const hasLiquidGlass = isLiquidGlassAvailable();
 
@@ -104,7 +111,10 @@ export default function ChatScreen() {
   const [error, setError] = useState<string | null>(null);
   const [reconnectNote, setReconnectNote] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [modelName, setModelName] = useState<string | null>(cachedModelName);
+  const [pill, setPill] = useState<ModelPillState>(() =>
+    withFallbackModel(emptyModelPill(), cachedModelId),
+  );
+  const modelName = pillLabel(pill);
   const gwRef = useRef<GatewayClient | null>(null);
   const liveIdRef = useRef<string | null>(null); // gateway (live) session handle
   const storedIdRef = useRef<string | null>(null); // persistent id, survives reconnects
@@ -358,6 +368,11 @@ export default function ChatScreen() {
         case 'subagent.complete':
           handleSubagentEvent(e);
           break;
+        case 'session.info':
+          // The gateway pushes this when a session's model changes (e.g. an
+          // in-chat /model switch). payload is the _session_info dict.
+          if (e.payload?.model) setPill((p) => withSessionModel(p, e.payload.model));
+          break;
         case 'error':
           cancelPendingApprovals(); // gateway force-denies on interrupt/failure
           finalizeSubagents();
@@ -394,6 +409,7 @@ export default function ChatScreen() {
         withProfile({ session_id: storedIdRef.current }, profileRef.current),
       );
       liveIdRef.current = resumed.session_id;
+      setPill((p) => withSessionModel(p, resumed.info?.model));
       // Best-effort: re-bind this device to the session (live id changes on
       // resume) so session-stop push hooks can target it. Never block the flow.
       void withAuthRetry((r) =>
@@ -455,9 +471,8 @@ export default function ChatScreen() {
     let stale = false;
     withAuthRetry((r) => getModelInfo(r))
       .then((info) => {
-        const name = modelDisplayName(info.model);
-        cachedModelName = name;
-        if (!stale) setModelName(name);
+        cachedModelId = info.model;
+        if (!stale) setPill((p) => withFallbackModel(p, info.model));
       })
       .catch(() => {
         // offline or older server — pill simply stays hidden
@@ -566,6 +581,7 @@ export default function ChatScreen() {
           withProfile({}, profileRef.current),
         );
         liveIdRef.current = created.session_id;
+        setPill((p) => withSessionModel(p, created.info?.model));
         if (created.stored_session_id) storedIdRef.current = created.stored_session_id;
         // Best-effort: bind this device to the new session so session-stop push
         // hooks can target it. Never block the send flow on the claim.
