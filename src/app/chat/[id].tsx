@@ -13,6 +13,7 @@ import {
   ModelPillState,
   emptyModelPill,
   withFallbackModel,
+  withResumedModel,
   withSessionModel,
   pillLabel,
 } from '@/lib/model-pill';
@@ -43,8 +44,11 @@ export { RouteError as ErrorBoundary } from '@/components/route-error';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 
-// Module-level so the pill shows instantly on later chat mounts; refreshed
-// quietly on every mount (the picker can change it between visits).
+// The gateway DEFAULT model id (from /api/model/info), cached module-level so
+// the pill's fallback shows instantly on later chat mounts. Never a session
+// model — each ChatScreen starts with session=null — so sharing it globally is
+// safe; it only seeds the fallback slot, which pillLabel yields when no
+// session model is known.
 let cachedModelId: string | null = null;
 
 const hasLiquidGlass = isLiquidGlassAvailable();
@@ -409,7 +413,10 @@ export default function ChatScreen() {
         withProfile({ session_id: storedIdRef.current }, profileRef.current),
       );
       liveIdRef.current = resumed.session_id;
-      setPill((p) => withSessionModel(p, resumed.info?.model));
+      // Only adopt a built (non-lazy) resume's model — a lazy reattach reports
+      // the gateway default, and an info-less resume omits it; neither must
+      // clobber the model we already know.
+      setPill((p) => withResumedModel(p, resumed.info));
       // Best-effort: re-bind this device to the session (live id changes on
       // resume) so session-stop push hooks can target it. Never block the flow.
       void withAuthRetry((r) =>
@@ -581,7 +588,7 @@ export default function ChatScreen() {
           withProfile({}, profileRef.current),
         );
         liveIdRef.current = created.session_id;
-        setPill((p) => withSessionModel(p, created.info?.model));
+        setPill((p) => withResumedModel(p, created.info));
         if (created.stored_session_id) storedIdRef.current = created.stored_session_id;
         // Best-effort: bind this device to the new session so session-stop push
         // hooks can target it. Never block the send flow on the claim.

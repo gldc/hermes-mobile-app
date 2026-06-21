@@ -30,6 +30,19 @@ export function withFallbackModel(s: ModelPillState, modelId: string | null | un
   return { ...s, fallback: toName(modelId) };
 }
 
+/** Adopt a session-model report from session.create / session.resume — but
+ * ONLY when the gateway actually built the agent. A `lazy` resume/create
+ * reports the gateway DEFAULT (not the chat's own model), and an info-less
+ * resume omits the model entirely; in both cases we keep the model we already
+ * know rather than clobber the session slot back to the default. */
+export function withResumedModel(
+  s: ModelPillState,
+  info: { model?: string; lazy?: boolean } | undefined,
+): ModelPillState {
+  if (!info?.model || info.lazy) return s; // lazy / absent → nothing real to adopt
+  return withSessionModel(s, info.model);
+}
+
 /** The pill label: the session's own model wins once known, else the default. */
 export function pillLabel(s: ModelPillState): string | null {
   return s.session ?? s.fallback;
