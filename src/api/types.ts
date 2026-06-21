@@ -54,6 +54,8 @@ export interface SessionCreateResult {
 export interface SessionResumeResult {
   session_id: string;
   resumed?: string;
+  /** Present on a built (non-lazy) resume; carries the session's own model. */
+  info?: { model?: string; profile_name?: string; lazy?: boolean };
 }
 
 export type GatewayEventType =
@@ -70,6 +72,7 @@ export type GatewayEventType =
   | 'subagent.tool'
   | 'subagent.progress'
   | 'subagent.complete'
+  | 'session.info'
   | 'error'
   | (string & {}); // forward-compatible
 
