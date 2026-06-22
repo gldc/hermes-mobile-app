@@ -4,6 +4,7 @@ import {
   withFallbackModel,
   withResumedModel,
   pillLabel,
+  pillModelId,
 } from '../model-pill';
 
 test('empty pill has no label', () => {
@@ -53,7 +54,7 @@ test('clearing the session model leaves the fallback intact', () => {
   s = withSessionModel(s, 'openai/qwen3.7-max');
   s = withSessionModel(s, null);
   expect(s.session).toBeNull();
-  expect(s.fallback).toBe('glm-5.2'); // fallback not disturbed by clearing session
+  expect(s.fallback).toBe('openrouter/glm-5.2'); // raw id retained (display applied in pillLabel)
 });
 
 test('withResumedModel adopts a built (non-lazy) session model', () => {
@@ -87,4 +88,16 @@ test('reducers are immutable (return new objects)', () => {
 test('emptyModelPill returns a fresh object each call', () => {
   expect(emptyModelPill()).not.toBe(emptyModelPill());
   expect(emptyModelPill()).toEqual({ session: null, fallback: null });
+});
+
+test('pillModelId is null for an empty pill', () => {
+  expect(pillModelId(emptyModelPill())).toBeNull();
+});
+
+test('pillModelId returns the raw (namespaced) id, session winning over fallback', () => {
+  let s = withFallbackModel(emptyModelPill(), 'openrouter/glm-5.2');
+  expect(pillModelId(s)).toBe('openrouter/glm-5.2'); // fallback when no session
+  s = withSessionModel(s, 'openai/qwen3.7-max');
+  expect(pillModelId(s)).toBe('openai/qwen3.7-max'); // session wins, raw not display
+  expect(pillLabel(s)).toBe('qwen3.7-max'); // label still the display name
 });
