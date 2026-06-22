@@ -9,6 +9,8 @@ import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-n
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
 import { getModelInfo } from '@/api/models';
+import { setSessionModelTarget } from '@/session-model-store';
+import { switchSessionModel, type SwitchOutcome } from '@/api/sessionModel';
 import {
   ModelPillState,
   emptyModelPill,
@@ -16,6 +18,7 @@ import {
   withResumedModel,
   withSessionModel,
   pillLabel,
+  pillModelId,
 } from '@/lib/model-pill';
 import { withProfile } from '@/api/profiles';
 import type { GatewayEvent, SessionCreateResult, SessionResumeResult } from '@/api/types';
@@ -119,6 +122,7 @@ export default function ChatScreen() {
     withFallbackModel(emptyModelPill(), cachedModelId),
   );
   const modelName = pillLabel(pill);
+  const currentModelId = pillModelId(pill);
   const gwRef = useRef<GatewayClient | null>(null);
   const liveIdRef = useRef<string | null>(null); // gateway (live) session handle
   const storedIdRef = useRef<string | null>(null); // persistent id, survives reconnects
@@ -489,6 +493,26 @@ export default function ChatScreen() {
     };
   }, []);
 
+  // Publish this chat's switch target so the /models picker (session mode) can
+  // switch THIS chat over its live socket. The switchModel closure reads the
+  // refs at call time, so it stays correct even if this object is stale.
+  useEffect(() => {
+    setSessionModelTarget({
+      sessionId: liveIdRef.current ?? '',
+      modelId: currentModelId,
+      streaming,
+      switchModel: (provider, model, confirmExpensive) => {
+        const gw = gwRef.current;
+        const sid = liveIdRef.current;
+        if (!gw || !sid) {
+          return Promise.resolve({ kind: 'error', message: 'Not connected.' } as SwitchOutcome);
+        }
+        return switchSessionModel(gw.call.bind(gw), { sessionId: sid, provider, model, confirmExpensive });
+      },
+    });
+    return () => setSessionModelTarget(null);
+  }, [currentModelId, streaming, ready]);
+
   /** Photo picking — staged locally, uploaded via image.attach_bytes on send. */
   async function pickImage(source: 'camera' | 'library') {
     try {
@@ -788,7 +812,7 @@ export default function ChatScreen() {
         onAttachPress={() => router.push('/attach')}
         onRemoveImage={() => setStagedImage(null)}
         modelName={modelName}
-        onModelPress={() => router.push('/models')}
+        onModelPress={() => router.push('/models?scope=session')}
       />
     </Animated.View>
   );
