@@ -13,6 +13,15 @@ export interface SocketLike {
 
 type Pending = { resolve: (v: any) => void; reject: (e: Error) => void };
 
+/** A rejected JSON-RPC call, carrying the gateway's numeric error code
+ * (e.g. 4009 = session busy) so callers can branch on it without string-matching. */
+export class RpcError extends Error {
+  constructor(message: string, readonly code: number) {
+    super(message);
+    this.name = 'RpcError';
+  }
+}
+
 export class GatewayClient {
   private socket: SocketLike | null = null;
   private nextId = 1;
@@ -73,7 +82,13 @@ export class GatewayClient {
       const p = this.pending.get(frame.id);
       if (!p) return;
       this.pending.delete(frame.id);
-      if (frame.error) p.reject(new Error(frame.error.message ?? 'gateway error'));
+      if (frame.error)
+        p.reject(
+          new RpcError(
+            frame.error.message ?? 'gateway error',
+            typeof frame.error.code === 'number' ? frame.error.code : 0,
+          ),
+        );
       else p.resolve(frame.result);
     }
   }

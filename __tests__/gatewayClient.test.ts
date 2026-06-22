@@ -1,5 +1,5 @@
 // __tests__/gatewayClient.test.ts
-import { GatewayClient } from '../src/api/gatewayClient';
+import { GatewayClient, RpcError } from '../src/api/gatewayClient';
 import type { GatewayEvent } from '../src/api/types';
 
 class FakeSocket {
@@ -46,6 +46,25 @@ describe('GatewayClient', () => {
     const id = JSON.parse(sock.sent[0]).id;
     sock.receive({ jsonrpc: '2.0', id, error: { code: -32000, message: 'boom' } });
     await expect(p).rejects.toThrow('boom');
+  });
+
+  it('call() rejects with an RpcError carrying the JSON-RPC code', async () => {
+    const { sock, client, ready } = connected();
+    await ready;
+    const p = client.call('config.set', { session_id: 'x', key: 'model', value: 'm' });
+    const id = JSON.parse(sock.sent[0]).id;
+    sock.receive({ jsonrpc: '2.0', id, error: { code: 4009, message: 'session busy' } });
+    await expect(p).rejects.toBeInstanceOf(RpcError);
+    await expect(p).rejects.toMatchObject({ code: 4009, message: 'session busy' });
+  });
+
+  it('defaults the error code to 0 when the frame omits it', async () => {
+    const { sock, client, ready } = connected();
+    await ready;
+    const p = client.call('x', {});
+    const id = JSON.parse(sock.sent[0]).id;
+    sock.receive({ jsonrpc: '2.0', id, error: { message: 'no code' } });
+    await expect(p).rejects.toMatchObject({ code: 0, message: 'no code' });
   });
 
   it('dispatches event frames to the handler', async () => {
