@@ -494,8 +494,10 @@ export default function ChatScreen() {
   }, []);
 
   // Publish this chat's switch target so the /models picker (session mode) can
-  // switch THIS chat over its live socket. The switchModel closure reads the
-  // refs at call time, so it stays correct even if this object is stale.
+  // switch THIS chat over its live socket. Re-keyed on `id` so navigating
+  // between chats clears the prior target and republishes for the active one;
+  // the switchModel closure also reads the refs at call time, so the switch
+  // always lands on the live session even within a re-establish window.
   useEffect(() => {
     setSessionModelTarget({
       sessionId: liveIdRef.current ?? '',
@@ -511,7 +513,7 @@ export default function ChatScreen() {
       },
     });
     return () => setSessionModelTarget(null);
-  }, [currentModelId, streaming, ready]);
+  }, [id, currentModelId, streaming, ready]);
 
   /** Photo picking — staged locally, uploaded via image.attach_bytes on send. */
   async function pickImage(source: 'camera' | 'library') {

@@ -328,7 +328,9 @@ export default function ModelsScreen() {
       Alert.alert('Hermes is responding', 'Stop the current turn before switching this chat’s model.');
       return;
     }
-    if (modelId === t.modelId) return;
+    // Compare on the display name: session.info.model and /api/model/options
+    // ids may differ in provider-namespacing, but their trailing segment matches.
+    if (t.modelId && modelDisplayName(modelId) === modelDisplayName(t.modelId)) return;
     Alert.alert(
       'Switch this chat?',
       `This chat will use ${modelDisplayName(modelId)} via ${provider.name}. Other chats and new chats are unaffected.`,
@@ -425,7 +427,11 @@ export default function ModelsScreen() {
                     {idx > 0 ? <Separator /> : null}
                     <ModelRow
                       modelId={m}
-                      selected={sessionMode ? m === sessionModelId : current?.provider === p.slug && current?.model === m}
+                      selected={
+                        sessionMode
+                          ? !!sessionModelId && modelDisplayName(m) === modelDisplayName(sessionModelId)
+                          : current?.provider === p.slug && current?.model === m
+                      }
                       disabled={busy || sessionStreaming}
                       unavailable={isModelUnavailable(p, m)}
                       pricing={pricingLine(p.pricing?.[m])}
