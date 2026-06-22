@@ -6,8 +6,8 @@
 // process's own profile (the default profile) and applies to NEW sessions
 // only — running chats keep their model.
 import * as Haptics from 'expo-haptics';
-import { Stack, router } from 'expo-router';
-import { useCallback, useEffect, useState } from 'react';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import {
   capabilityBadges,
@@ -27,6 +27,11 @@ import { AuthError } from '@/api/restClient';
 import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
+import {
+  getSessionModelTarget,
+  subscribeSessionModelTarget,
+  type SessionModelTarget,
+} from '@/session-model-store';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
 
@@ -212,6 +217,12 @@ interface Selection {
 
 export default function ModelsScreen() {
   const { colors } = useTheme();
+  const { scope } = useLocalSearchParams<{ scope?: string }>();
+  const target = useSyncExternalStore(subscribeSessionModelTarget, getSessionModelTarget);
+  // Session mode only when opened from a chat that actually has a live session.
+  const sessionMode = scope === 'session' && !!target && target.sessionId.length > 0;
+  const sessionModelId = sessionMode ? target!.modelId : null;
+  const sessionStreaming = sessionMode && !!target!.streaming;
   const [info, setInfo] = useState<ModelInfo | null>(null);
   const [options, setOptions] = useState<ModelOptionsResponse | null>(null);
   const [current, setCurrent] = useState<Selection | null>(null);
@@ -310,6 +321,59 @@ export default function ModelsScreen() {
     );
   }
 
+  function requestSessionSwitch(provider: ProviderRow, modelId: string) {
+    const t = target;
+    if (busy || !t) return;
+    if (t.streaming) {
+      Alert.alert('Hermes is responding', 'Stop the current turn before switching this chat’s model.');
+      return;
+    }
+    if (modelId === t.modelId) return;
+    Alert.alert(
+      'Switch this chat?',
+      `This chat will use ${modelDisplayName(modelId)} via ${provider.name}. Other chats and new chats are unaffected.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Switch', onPress: () => void applySessionSwitch(t, provider.slug, modelId, false) },
+      ],
+    );
+  }
+
+  async function applySessionSwitch(
+    t: SessionModelTarget,
+    provider: string,
+    model: string,
+    confirmExpensive: boolean,
+  ) {
+    setBusy(true);
+    setError(null);
+    setNotice(null);
+    const outcome = await t.switchModel(provider, model, confirmExpensive);
+    setBusy(false);
+    switch (outcome.kind) {
+      case 'ok':
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+        router.back(); // back to the chat; the pill updates from session.info
+        break;
+      case 'confirm':
+        Alert.alert('Expensive model', outcome.message, [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Switch anyway',
+            style: 'destructive',
+            onPress: () => void applySessionSwitch(t, provider, model, true),
+          },
+        ]);
+        break;
+      case 'busy':
+        Alert.alert('Hermes is responding', 'Stop the current turn before switching this chat’s model.');
+        break;
+      case 'error':
+        setError(outcome.message || 'The gateway did not accept the model switch.');
+        break;
+    }
+  }
+
   const configured = options?.providers.filter((p) => p.authenticated && p.models.length > 0) ?? [];
   const unconfigured = options?.providers.filter((p) => !p.authenticated) ?? [];
 
@@ -320,7 +384,7 @@ export default function ModelsScreen() {
       contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 40 }}
       refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.textDim} />}
     >
-      <Stack.Screen options={{ title: 'Model' }} />
+      <Stack.Screen options={{ title: sessionMode ? 'Switch model' : 'Model' }} />
 
       {error ? (
         <Text selectable style={{ color: colors.danger, fontSize: 14 }}>
@@ -335,11 +399,21 @@ export default function ModelsScreen() {
         <Text style={{ color: colors.textFaint, fontSize: 14, textAlign: 'center', paddingTop: 48 }}>Loading…</Text>
       ) : options || info ? (
         <>
-          <SectionTitle>Current</SectionTitle>
-          <CurrentModelCard info={info} current={current} />
+          <SectionTitle>{sessionMode ? 'This chat' : 'Current'}</SectionTitle>
+          <CurrentModelCard
+            info={sessionMode ? null : info}
+            current={sessionMode ? { provider: '', model: sessionModelId ?? '' } : current}
+          />
           <Text style={{ color: colors.textFaint, fontSize: 12.5, marginHorizontal: 4 }}>
-            Changes apply to new chats on the gateway&apos;s default profile — running chats keep their model.
+            {sessionMode
+              ? 'Switches this chat only. New chats use the default (change it in Settings).'
+              : 'Changes apply to new chats on the gateway’s default profile — running chats keep their model.'}
           </Text>
+          {sessionStreaming ? (
+            <Text style={{ color: colors.textDim, fontSize: 12.5, marginHorizontal: 4 }}>
+              Hermes is responding — stop the current turn to switch this chat&apos;s model.
+            </Text>
+          ) : null}
 
           {configured.map((p) => (
             <View key={p.slug} style={{ gap: 12 }}>
@@ -351,12 +425,12 @@ export default function ModelsScreen() {
                     {idx > 0 ? <Separator /> : null}
                     <ModelRow
                       modelId={m}
-                      selected={current?.provider === p.slug && current?.model === m}
-                      disabled={busy}
+                      selected={sessionMode ? m === sessionModelId : current?.provider === p.slug && current?.model === m}
+                      disabled={busy || sessionStreaming}
                       unavailable={isModelUnavailable(p, m)}
                       pricing={pricingLine(p.pricing?.[m])}
                       badges={hintBadges(p.capabilities?.[m])}
-                      onPress={() => requestSwitch(p, m)}
+                      onPress={() => (sessionMode ? requestSessionSwitch(p, m) : requestSwitch(p, m))}
                     />
                   </View>
                 ))}
