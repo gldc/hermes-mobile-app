@@ -40,6 +40,12 @@ export class RestClient {
     public readonly baseUrl: string,           // e.g. http://100.1.2.3:9119 (no trailing slash)
     private readonly jar: CookieJar,
     private readonly fetchFn: FetchFn = fetch,
+    // Flush queued cookie persistence to durable storage. Awaited after a
+    // response rotates the refresh token, BEFORE the request resolves, so the
+    // app can't be suspended/killed between rotating the RT and saving it —
+    // which would leave the next launch replaying the rotated-out token and
+    // (server-side) getting the device revoked. Best-effort; never rejects.
+    private readonly flushCookiePersist?: () => Promise<void>,
   ) {}
 
   // Serializes authed requests. Refresh tokens rotate single-use server-side:
@@ -93,7 +99,19 @@ export class RestClient {
         signal: controller.signal,
       });
       const setCookie = res.headers.get('set-cookie');
-      if (setCookie) this.jar.ingest([setCookie]);
+      if (setCookie) {
+        this.jar.ingest([setCookie]);
+        // Durably persist a rotated refresh token before this request resolves
+        // (see flushCookiePersist). Best-effort: a persistence failure must not
+        // fail the request — we'd rather proceed than wedge the REST layer.
+        if (this.flushCookiePersist) {
+          try {
+            await this.flushCookiePersist();
+          } catch {
+            // persistence is best-effort; the in-memory jar already rotated
+          }
+        }
+      }
       if (res.status === 401) throw new AuthError('session expired or invalid credentials');
       if (res.status === 429) throw new HttpError(429, 'rate limited — wait a minute');
       if (!res.ok) {
