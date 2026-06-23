@@ -280,3 +280,59 @@ describe('RestClient fresh-path race invariant', () => {
     expect(AT_FRESH_MARGIN_MS).toBeGreaterThan(REQUEST_TIMEOUT_MS);
   });
 });
+
+describe('RestClient durable rotation persistence', () => {
+  it('awaits cookie persistence before resolving when a response rotated the RT', async () => {
+    const jar = new CookieJar();
+    jar.ingest(['hermes_session_rt=r1; Path=/']);
+
+    let releasePersist!: () => void;
+    let persistCalls = 0;
+    const persisted = new Promise<void>((r) => {
+      releasePersist = r;
+    });
+    const flush = () => {
+      persistCalls++;
+      return persisted;
+    };
+    const f = fakeFetch(200, { ok: true }, 'hermes_session_rt=r2; Path=/');
+    const c = new RestClient('http://h', jar, f as any, flush);
+
+    let resolved = false;
+    const p = c.get('/a').then(() => {
+      resolved = true;
+    });
+    await new Promise((r) => setTimeout(r, 0)); // flush microtasks
+
+    expect(persistCalls).toBe(1); // persistence invoked after the rotation
+    expect(resolved).toBe(false); // request blocked on durable persistence
+    expect(jar.header()).toBe('hermes_session_rt=r2'); // rotation already ingested in-memory
+
+    releasePersist();
+    await p;
+    expect(resolved).toBe(true);
+  });
+
+  it('does not await persistence when a response carries no Set-Cookie', async () => {
+    const jar = new CookieJar();
+    let persistCalls = 0;
+    const flush = () => {
+      persistCalls++;
+      return Promise.resolve();
+    };
+    const f = fakeFetch(200, { ok: true }); // no rotation
+    const c = new RestClient('http://h', jar, f as any, flush);
+    await c.get('/a');
+    expect(persistCalls).toBe(0);
+  });
+
+  it('still resolves the request when persistence rejects (best-effort)', async () => {
+    const jar = new CookieJar();
+    jar.ingest(['hermes_session_rt=r1; Path=/']);
+    const flush = () => Promise.reject(new Error('keychain busy'));
+    const f = fakeFetch(200, { ok: true }, 'hermes_session_rt=r2; Path=/');
+    const c = new RestClient('http://h', jar, f as any, flush);
+    await expect(c.get('/a')).resolves.toEqual({ ok: true });
+    expect(jar.header()).toBe('hermes_session_rt=r2');
+  });
+});

@@ -38,6 +38,14 @@ function persistSaved(): Promise<void> {
   return persistChain;
 }
 
+/** Resolve once all queued SecureStore writes have flushed. The RestClient
+ * awaits this after a response rotates the refresh token, so the new RT is on
+ * disk before the call resolves — an app suspension can't then strand us on the
+ * rotated-out token (which the gateway treats as reuse). Never rejects. */
+function flushCookiePersist(): Promise<void> {
+  return persistChain;
+}
+
 /** Adopt a jar + blob as the live connection. The onChange hook persists the
  * jar after EVERY response that changed it — mandatory because refresh tokens
  * rotate server-side and replaying a stale persisted RT revokes the device. */
@@ -50,7 +58,7 @@ function activate(newJar: CookieJar, blob: StoredConnectionV2): void {
     saved = { ...saved, cookies };
     void persistSaved();
   });
-  rest = new RestClient(blob.baseUrl, jar);
+  rest = new RestClient(blob.baseUrl, jar, undefined, flushCookiePersist);
 }
 
 export function getRest(): RestClient {
