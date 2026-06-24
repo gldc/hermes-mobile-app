@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, FlatList, Pressable, Share, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, FlatList, Pressable, Share, Text, View } from 'react-native';
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { GatewayClient } from '@/api/gatewayClient';
@@ -41,11 +41,10 @@ import { historyToItems } from '@/lib/history';
 import { MAX_ATTACH_BYTES, base64ByteLength, buildAttachParams, type PickedImage } from '@/lib/image-attach';
 import { emptyBatch, finalizeBatch, reduceSubagentEvent } from '@/lib/subagent-progress';
 import { parseTodoList } from '@/lib/todo';
+import { shouldReconnect, backoffMs, MAX_RECONNECT_ATTEMPTS } from '@/lib/reconnect';
 import { serif, useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
-
-const MAX_RECONNECT_ATTEMPTS = 5;
 
 // The gateway DEFAULT model id (from /api/model/info), cached module-level so
 // the pill's fallback shows instantly on later chat mounts. Never a session
@@ -133,6 +132,8 @@ export default function ChatScreen() {
   const keyCounter = useRef(0);
   const activeSubagentKeyRef = useRef<string | null>(null);
   const todoKeyRef = useRef<string | null>(null);
+  const reconnectingRef = useRef(false); // single-flight guard for reconnect()
+  const gwUnsubsRef = useRef<Array<() => void>>([]); // current gw's onEvent/onClose detachers
 
   const nextKey = () => `i${keyCounter.current++}`;
 
@@ -330,8 +331,21 @@ export default function ChatScreen() {
     todoKeyRef.current = null;
   }
 
+  /** Reset live UI to the disconnected state, then drive a guarded reconnect.
+   * Shared by the socket onClose path and the AppState foreground path so both
+   * converge on identical UI. Idempotent and cancelled-safe. */
+  function dropAndReconnect() {
+    if (cancelledRef.current) return;
+    setReady(false);
+    setStreaming(false);
+    setWaiting(false);
+    cancelPendingApprovals(); // can't answer across a dead socket
+    finalizeSubagents(); // socket drop mid-delegation: seal the card / stop the ticker
+    void reconnect();
+  }
+
   function wireGateway(gw: GatewayClient) {
-    gw.onEvent((e) => {
+    const offEvent = gw.onEvent((e) => {
       switch (e.type) {
         case 'message.delta':
           appendDelta(e.payload?.text ?? '');
@@ -352,8 +366,6 @@ export default function ChatScreen() {
           break;
         case 'tool.complete':
           if (e.payload?.name === 'todo') {
-            // A todo write returns the full list; if it carried none (rare
-            // internal tool_error), surface it rather than dropping silently.
             if (!upsertTodo(e.payload)) append('status', 'Todo update failed');
             break;
           }
@@ -377,8 +389,6 @@ export default function ChatScreen() {
           handleSubagentEvent(e);
           break;
         case 'session.info':
-          // The gateway pushes this when a session's model changes (e.g. an
-          // in-chat /model switch). payload is the _session_info dict.
           if (e.payload?.model) setPill((p) => withSessionModel(p, e.payload.model));
           break;
         case 'error':
@@ -390,15 +400,8 @@ export default function ChatScreen() {
           break;
       }
     });
-    gw.onClose(() => {
-      if (cancelledRef.current) return;
-      setReady(false);
-      setStreaming(false);
-      setWaiting(false);
-      cancelPendingApprovals(); // can't answer across a dead socket
-      finalizeSubagents(); // socket drop mid-delegation: seal the card / stop the ticker
-      void reconnect();
-    });
+    const offClose = gw.onClose(() => dropAndReconnect());
+    gwUnsubsRef.current = [offEvent, offClose];
   }
 
   /** Open the gateway (fresh single-use ticket) and re-attach the persistent
@@ -409,6 +412,12 @@ export default function ChatScreen() {
       gw.close();
       throw new Error('cancelled');
     }
+    // Tear down any previous client BEFORE adopting the new one: detach its
+    // handlers FIRST (so its later onclose can't fire a surviving reconnect),
+    // then close it. Idempotent — no-ops on the initial connect (no prev gw).
+    for (const off of gwUnsubsRef.current) off();
+    gwUnsubsRef.current = [];
+    gwRef.current?.close();
     gwRef.current = gw;
     wireGateway(gw);
     if (storedIdRef.current) {
@@ -430,32 +439,39 @@ export default function ChatScreen() {
   }
 
   async function reconnect(): Promise<void> {
-    for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
-      if (cancelledRef.current) return;
-      setReconnectNote(`Connection lost — reconnecting (${attempt}/${MAX_RECONNECT_ATTEMPTS})…`);
-      await new Promise((r) => setTimeout(r, Math.min(1000 * 2 ** (attempt - 1), 8000)));
-      if (cancelledRef.current) return;
-      try {
-        await establish();
-        // Resync from the store: anything streamed while offline never reached us.
-        if (storedIdRef.current) await loadHistory(storedIdRef.current);
+    if (reconnectingRef.current) return; // single-flight: one loop across onClose + foreground
+    reconnectingRef.current = true;
+    try {
+      for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
         if (cancelledRef.current) return;
-        setReconnectNote(null);
-        setError(null);
-        setReady(true);
-        return;
-      } catch {
-        // next attempt with longer backoff
+        setReconnectNote(`Connection lost — reconnecting (${attempt}/${MAX_RECONNECT_ATTEMPTS})…`);
+        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
+        if (cancelledRef.current) return;
+        try {
+          await establish();
+          // Resync from the store: anything streamed while offline never reached us.
+          if (storedIdRef.current) await loadHistory(storedIdRef.current);
+          if (cancelledRef.current) return;
+          setReconnectNote(null);
+          setError(null);
+          setReady(true);
+          return;
+        } catch {
+          // next attempt with longer backoff
+        }
       }
-    }
-    if (!cancelledRef.current) {
-      setReconnectNote(null);
-      setError('Could not reconnect. Check your VPN or Wi-Fi, then reopen this chat.');
+      if (!cancelledRef.current) {
+        setReconnectNote(null);
+        setError('Could not reconnect. Check your VPN or Wi-Fi, then reopen this chat.');
+      }
+    } finally {
+      reconnectingRef.current = false; // clears on EVERY exit (success, cancel, exhaustion)
     }
   }
 
   useEffect(() => {
     cancelledRef.current = false;
+    reconnectingRef.current = true; // hold off foreground reconnects during the initial connect
     (async () => {
       try {
         await hydrateProfileStore(); // no-op when sessions screen already ran
@@ -468,10 +484,28 @@ export default function ChatScreen() {
         if (!cancelledRef.current) setReady(true);
       } catch {
         if (!cancelledRef.current) setError('Could not open a live session. Check your VPN or Wi-Fi.');
+      } finally {
+        reconnectingRef.current = false;
       }
     })();
+    // Foreground revival: iOS suspends the runtime and the OS tears the socket
+    // down without onclose firing. On return, if the socket is gone/not-open,
+    // reset live UI and reconnect; a healthy socket is left untouched.
+    const sub = AppState.addEventListener('change', (next) => {
+      if (cancelledRef.current) return;
+      if (
+        shouldReconnect({
+          hasSocket: !!gwRef.current,
+          isOpen: gwRef.current?.isOpen ?? false,
+          appState: next,
+        })
+      ) {
+        dropAndReconnect();
+      }
+    });
     return () => {
       cancelledRef.current = true;
+      sub.remove();
       gwRef.current?.close();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -586,7 +620,7 @@ export default function ChatScreen() {
     const text = input.trim();
     const image = stagedImage;
     const gw = gwRef.current;
-    if ((!text && !image) || !gw || streaming) return;
+    if ((!text && !image) || !gw || !gw.isOpen || streaming) return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setInput('');
     setStagedImage(null);
