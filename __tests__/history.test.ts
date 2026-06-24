@@ -182,4 +182,27 @@ describe('historyToItems', () => {
     );
     expect(items[0].tool).toEqual({ id: 'zzz', name: 'write_file', running: false, detail: 'r' });
   });
+
+  it('attaches reasoning to the assistant item and keeps the prose', () => {
+    const items = historyToItems(
+      [msg({ role: 'assistant', content: 'answer', reasoning_content: 'because' })],
+      keyer(),
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ role: 'assistant', text: 'answer', reasoning: 'because' });
+  });
+
+  it('emits a reasoning-only assistant item with empty text', () => {
+    const items = historyToItems(
+      [msg({ role: 'assistant', content: '', reasoning: 'just thinking' })],
+      keyer(),
+    );
+    expect(items).toHaveLength(1);
+    expect(items[0]).toMatchObject({ role: 'assistant', text: '', reasoning: 'just thinking' });
+  });
+
+  it('drops an assistant row with neither prose nor reasoning', () => {
+    const items = historyToItems([msg({ role: 'assistant', content: '' })], keyer());
+    expect(items).toHaveLength(0);
+  });
 });

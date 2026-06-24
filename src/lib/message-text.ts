@@ -19,3 +19,15 @@ export function messageText(m: { text?: string | null; content?: unknown }): str
   }
   return '';
 }
+
+/** Reasoning trace persisted on assistant rows. The populated column varies by
+ * model family; prefer reasoning_content, then reasoning. reasoning_details is a
+ * structured blob and is intentionally ignored without a verified sample. */
+export function reasoningText(m: {
+  reasoning?: string | null;
+  reasoning_content?: string | null;
+}): string {
+  if (typeof m.reasoning_content === 'string' && m.reasoning_content) return m.reasoning_content;
+  if (typeof m.reasoning === 'string' && m.reasoning) return m.reasoning;
+  return '';
+}

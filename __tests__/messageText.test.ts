@@ -1,4 +1,5 @@
 import { messageText } from '../src/lib/message-text';
+import { reasoningText } from '../src/lib/message-text';
 
 describe('messageText', () => {
   it('uses string content (the common DB shape)', () => {
@@ -24,5 +25,16 @@ describe('messageText', () => {
   it('returns empty string for null/missing content', () => {
     expect(messageText({})).toBe('');
     expect(messageText({ text: null, content: null })).toBe('');
+  });
+});
+
+describe('reasoningText', () => {
+  it('prefers reasoning_content, then reasoning', () => {
+    expect(reasoningText({ reasoning_content: 'rc', reasoning: 'r' })).toBe('rc');
+    expect(reasoningText({ reasoning: 'r' })).toBe('r');
+  });
+  it('returns empty string when none present', () => {
+    expect(reasoningText({})).toBe('');
+    expect(reasoningText({ reasoning: null, reasoning_content: null })).toBe('');
   });
 });

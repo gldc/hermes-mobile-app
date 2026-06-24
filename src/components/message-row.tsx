@@ -31,6 +31,9 @@ export interface ChatItem {
   text: string;
   /** Assistant messages render plain text while streaming, markdown once complete. */
   complete?: boolean;
+  /** Assistant reasoning trace, rehydrated from history; rendered as a
+   * collapsible disclosure above the prose. History-only (no live event yet). */
+  reasoning?: string;
   tool?: ToolInfo;
   /** Gateway approval request, attached like ToolInfo. Rendered by the chat
    * screen via ApprovalCard (it owns the respond callback), not MessageRow. */

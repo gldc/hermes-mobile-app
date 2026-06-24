@@ -2,7 +2,7 @@
 // Contract: docs/contracts/sessions-extra.md → raw /messages row schema.
 import type { SessionMessage } from '@/api/types';
 import type { ChatItem, ToolInfo } from '@/components/message-row';
-import { messageText } from './message-text';
+import { messageText, reasoningText } from './message-text';
 import { toolContextFromArgs } from './tool-context';
 
 /** Same cap the live tool.complete path applies to result text. */
@@ -31,8 +31,15 @@ export function historyToItems(messages: SessionMessage[], nextKey: () => string
   for (const m of messages) {
     if (m.role === 'user' || m.role === 'assistant') {
       const text = messageText(m);
-      if (!text.trim()) continue; // drop empty rows (invocation-only assistants)
-      items.push({ key: nextKey(), role: m.role, text, complete: true });
+      const reasoning = m.role === 'assistant' ? reasoningText(m).slice(0, MAX_TOOL_DETAIL) : '';
+      if (!text.trim() && !reasoning.trim()) continue; // drop only if nothing to show
+      items.push({
+        key: nextKey(),
+        role: m.role,
+        text,
+        complete: true,
+        ...(reasoning.trim() ? { reasoning } : {}),
+      });
     } else if (m.role === 'tool') {
       const name = m.tool_name?.trim();
       const detail = messageText(m).trim().slice(0, MAX_TOOL_DETAIL);

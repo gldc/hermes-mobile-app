@@ -44,6 +44,11 @@ export interface SessionMessage {
   /** Set on role='assistant' rows; the tool invocations whose results arrive as
    * later role='tool' rows. Parsed server-side; defensively re-checked here. */
   tool_calls?: ToolCall[] | null;
+  /** Reasoning/thinking trace persisted on assistant rows. Which column is
+   * populated varies by model family (docs/contracts/sessions-extra.md:130). */
+  reasoning?: string | null;
+  reasoning_content?: string | null;
+  reasoning_details?: string | null;
 }
 
 export interface MessagesResponse {
