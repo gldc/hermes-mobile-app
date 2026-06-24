@@ -13,7 +13,7 @@ import {
 import { AuthError } from '@/api/restClient';
 import { Icon } from '@/components/icon';
 import { connect, restore } from '@/connection';
-import { maybeRegisterPush } from '@/notifications';
+import { getColdStartRoute, maybeRegisterPush } from '@/notifications';
 import { useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
@@ -30,9 +30,13 @@ export default function ConnectScreen() {
 
   useEffect(() => {
     restore()
-      .then((ok) => {
+      .then(async (ok) => {
         if (ok) {
-          router.replace('/chat/new');
+          // If a notification cold-started the app, land on its session;
+          // else the chat home. Sequenced here (after restore) so this
+          // replace is the deep-link target, not a clobbered /chat/new.
+          const route = (await getColdStartRoute()) ?? '/chat/new';
+          router.replace(route as Parameters<typeof router.replace>[0]);
           // Refresh a stale (>7 days) push registration; never prompts here.
           void maybeRegisterPush({ softAsk: false });
         }
