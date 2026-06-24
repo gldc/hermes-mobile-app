@@ -112,4 +112,74 @@ describe('historyToItems', () => {
     );
     expect(items[0].text).toBe('part');
   });
+
+  it('restores tool-call context by merging assistant tool_calls into the result card', () => {
+    const items = historyToItems(
+      [
+        msg({
+          role: 'assistant',
+          content: '',
+          tool_calls: [{ id: 'c1', function: { name: 'write_file', arguments: '{"path":"/a/b.txt"}' } }],
+        }),
+        msg({ role: 'tool', tool_name: 'write_file', tool_call_id: 'c1', content: '{"bytes_written":3}' }),
+      ],
+      keyer(),
+    );
+    // The invocation-only assistant row does not render; only the tool card.
+    expect(items).toHaveLength(1);
+    expect(items[0].tool).toEqual({
+      id: 'c1',
+      name: 'write_file',
+      running: false,
+      context: '/a/b.txt',
+      detail: '{"bytes_written":3}',
+    });
+  });
+
+  it('joins on call_id when id is absent', () => {
+    const items = historyToItems(
+      [
+        msg({ role: 'assistant', content: '', tool_calls: [{ call_id: 'c2', function: { name: 'terminal', arguments: '{"command":"ls"}' } }] }),
+        msg({ role: 'tool', tool_name: 'terminal', tool_call_id: 'c2', content: 'a b c' }),
+      ],
+      keyer(),
+    );
+    expect(items[0].tool!.context).toBe('ls');
+  });
+
+  it('keeps the tool card at the result-row position (not the invocation row)', () => {
+    const items = historyToItems(
+      [
+        msg({ role: 'assistant', content: '', tool_calls: [{ id: 'c3', function: { name: 'read_file', arguments: '{"path":"/x"}' } }] }),
+        msg({ role: 'assistant', content: 'thinking out loud' }),
+        msg({ role: 'tool', tool_name: 'read_file', tool_call_id: 'c3', content: 'data' }),
+      ],
+      keyer(),
+    );
+    expect(items.map((i) => i.role)).toEqual(['assistant', 'tool']);
+    expect(items[1].tool!.context).toBe('/x');
+  });
+
+  it('does not throw on non-array or malformed tool_calls', () => {
+    const items = historyToItems(
+      [
+        msg({ role: 'assistant', content: '', tool_calls: 'oops' as any }),
+        msg({ role: 'assistant', content: '', tool_calls: [{ id: 'c4', function: { name: 'terminal', arguments: 'not json' } }] }),
+        msg({ role: 'tool', tool_name: 'terminal', tool_call_id: 'c4', content: 'ok' }),
+      ],
+      keyer(),
+    );
+    // Malformed args → card renders with no context, never throws.
+    expect(items).toHaveLength(1);
+    expect(items[0].tool!.name).toBe('terminal');
+    expect(items[0].tool!.context).toBeUndefined();
+  });
+
+  it('renders an orphan tool result (no invocation) unchanged', () => {
+    const items = historyToItems(
+      [msg({ role: 'tool', tool_name: 'write_file', tool_call_id: 'zzz', content: 'r' })],
+      keyer(),
+    );
+    expect(items[0].tool).toEqual({ id: 'zzz', name: 'write_file', running: false, detail: 'r' });
+  });
 });
