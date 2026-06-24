@@ -49,6 +49,33 @@ export interface ChatItem {
   imageHeight?: number;
 }
 
+function ReasoningDisclosure({ text }: { text: string }) {
+  const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  return (
+    <View style={{ marginBottom: 8 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={`Reasoning, ${expanded ? 'tap to collapse' : 'tap to expand'}`}
+        onPress={() => {
+          LayoutAnimation.configureNext(LayoutAnimation.create(220, 'easeInEaseOut', 'opacity'));
+          setExpanded((e) => !e);
+        }}
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}
+      >
+        <Icon sf="brain" size={12} color={colors.textFaint} />
+        <Text style={{ color: colors.textFaint, fontSize: 12.5, fontWeight: '600' }}>Reasoning</Text>
+        <Icon sf={expanded ? 'chevron.up' : 'chevron.down'} size={10} color={colors.textFaint} />
+      </Pressable>
+      {expanded ? (
+        <View style={{ marginTop: 6, opacity: 0.9 }}>
+          <MarkdownView text={text} />
+        </View>
+      ) : null}
+    </View>
+  );
+}
+
 function ToolCallCard({ tool }: { tool: ToolInfo }) {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState(false);
@@ -171,12 +198,12 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
 
   if (item.role === 'assistant') {
     // Markdown isn't selectable, so long-press opens the share sheet
-    // (which includes Copy on iOS).
+    // (which includes Copy on iOS). Reasoning-only items have empty text.
     return (
       <Pressable
         accessibilityLabel="Assistant message, long-press to share"
         onLongPress={
-          item.complete
+          item.complete && item.text.trim()
             ? () => {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 Share.share({ message: item.text });
@@ -185,8 +212,9 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
         }
         style={{ paddingVertical: 6 }}
       >
+        {item.reasoning ? <ReasoningDisclosure text={item.reasoning} /> : null}
         {item.complete ? (
-          <MarkdownView text={item.text} />
+          item.text.trim() ? <MarkdownView text={item.text} /> : null
         ) : (
           <Text selectable style={{ color: colors.text, fontSize: 17, lineHeight: 27 }}>
             {item.text}
