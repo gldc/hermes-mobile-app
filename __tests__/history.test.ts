@@ -175,6 +175,48 @@ describe('historyToItems', () => {
     expect(items[0].tool!.context).toBeUndefined();
   });
 
+  it('treats an object (non-array) tool_calls as having no invocations', () => {
+    // Spec §5a: `{}` (object, not array) must fall through to text handling and
+    // never throw — Array.isArray({}) is false so no invocation is indexed.
+    const items = historyToItems(
+      [
+        msg({ role: 'assistant', content: 'hi', tool_calls: {} as any }),
+        msg({ role: 'tool', tool_name: 'terminal', tool_call_id: 'nope', content: 'ok' }),
+      ],
+      keyer(),
+    );
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ role: 'assistant', text: 'hi' });
+    expect(items[1].tool!.context).toBeUndefined();
+  });
+
+  it('handles a combined row: assistant prose + reasoning + tool_calls, plus the tool result (5a+5b)', () => {
+    // Spec §5b: the two features must compose on a single assistant row — the
+    // prose+reasoning item AND the result-positioned tool card, nothing dropped
+    // or duplicated.
+    const items = historyToItems(
+      [
+        msg({
+          role: 'assistant',
+          content: 'ans',
+          reasoning_content: 'why',
+          tool_calls: [{ id: 'c1', function: { name: 'write_file', arguments: '{"path":"/a.ts"}' } }],
+        }),
+        msg({ role: 'tool', tool_name: 'write_file', tool_call_id: 'c1', content: 'done' }),
+      ],
+      keyer(),
+    );
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({ role: 'assistant', text: 'ans', reasoning: 'why' });
+    expect(items[1].role).toBe('tool');
+    expect(items[1].tool).toMatchObject({
+      name: 'write_file',
+      context: '/a.ts',
+      detail: 'done',
+      running: false,
+    });
+  });
+
   it('renders an orphan tool result (no invocation) unchanged', () => {
     const items = historyToItems(
       [msg({ role: 'tool', tool_name: 'write_file', tool_call_id: 'zzz', content: 'r' })],

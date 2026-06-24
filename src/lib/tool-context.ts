@@ -5,6 +5,13 @@
 // JSON.parses the persisted tool_calls[].function.arguments string). Returns
 // undefined when there's nothing useful to show (gateway returns None).
 
+// 80 matches the live wire EXACTLY: the app's tool.start payload.context is
+// built by the dashboard gateway via /api/ws → tui_gateway.ws.handle_ws →
+// tui_gateway/server.py `_tool_ctx` → build_tool_preview(name, args, max_len=80).
+// (NOT build_tool_preview's own default of 0/unlimited, which only feeds the
+// chat-completions SSE `label` path in gateway/platforms/api_server.py — a
+// different frontend the mobile app never consumes.) Keep this at 80 so a
+// rehydrated card's context matches the one the live event carried.
 const MAX_LEN = 80;
 
 // display.py:203-214 — tool name → its primary argument key.

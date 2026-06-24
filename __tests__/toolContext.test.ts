@@ -73,3 +73,29 @@ describe('toolContextFromArgs — special cases', () => {
       .toBe('wait sess1234567890ab 5s');
   });
 });
+
+describe('toolContextFromArgs — truncation caps match the gateway wire', () => {
+  // The live tool.start context is build_tool_preview(name, args, max_len=80)
+  // (tui_gateway/server.py `_tool_ctx`). These pin the caps so a rehydrated
+  // card's context can never silently diverge from the live one.
+  it('caps the general primary-arg preview at 80 with a 3-dot ellipsis', () => {
+    const out = toolContextFromArgs('read_file', { path: '/' + 'p'.repeat(200) })!;
+    expect(out).toHaveLength(80);
+    expect(out.endsWith('...')).toBe(true);
+  });
+  it('session_search caps the recalled query at 25 chars', () => {
+    expect(toolContextFromArgs('session_search', { query: 'q'.repeat(40) })).toBe(
+      `recall: "${'q'.repeat(25)}..."`,
+    );
+  });
+  it('memory add caps the content at 25 chars', () => {
+    expect(toolContextFromArgs('memory', { action: 'add', target: 'n', content: 'c'.repeat(40) })).toBe(
+      `+n: "${'c'.repeat(25)}..."`,
+    );
+  });
+  it('delegate_task batch caps each goal at 40 chars', () => {
+    expect(toolContextFromArgs('delegate_task', { tasks: [{ goal: 'g'.repeat(60) }] })).toBe(
+      `1 tasks: ${'g'.repeat(37)}...`,
+    );
+  });
+});
