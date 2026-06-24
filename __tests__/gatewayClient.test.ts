@@ -4,14 +4,15 @@ import type { GatewayEvent } from '../src/api/types';
 
 class FakeSocket {
   sent: string[] = [];
+  readyState = 0; // CONNECTING
   onopen: (() => void) | null = null;
   onmessage: ((ev: { data: string }) => void) | null = null;
   onclose: ((ev: { code: number; reason: string }) => void) | null = null;
   onerror: ((ev: unknown) => void) | null = null;
   send(data: string) { this.sent.push(data); }
-  close() { this.onclose?.({ code: 1000, reason: '' }); }
+  close() { this.readyState = 3; this.onclose?.({ code: 1000, reason: '' }); }
   // test helpers
-  open() { this.onopen?.(); }
+  open() { this.readyState = 1; this.onopen?.(); }
   receive(obj: unknown) { this.onmessage?.({ data: JSON.stringify(obj) }); }
 }
 
@@ -88,5 +89,29 @@ describe('GatewayClient', () => {
     const p = client.call('session.list', {});
     sock.close();
     await expect(p).rejects.toThrow(/closed/i);
+  });
+
+  it('isOpen reflects the socket readyState lifecycle', async () => {
+    const sock = new FakeSocket();
+    const client = new GatewayClient(() => sock as any);
+    const ready = client.connect('ws://h/api/ws?ticket=t');
+    expect(client.isOpen).toBe(false); // CONNECTING
+    sock.open();
+    await ready;
+    expect(client.isOpen).toBe(true); // OPEN
+    sock.close();
+    expect(client.isOpen).toBe(false); // socket nulled on close
+  });
+
+  it('onClose unsubscribe detaches the handler so it does not fire on close', () => {
+    const sock = new FakeSocket();
+    const client = new GatewayClient(() => sock as any);
+    client.connect('ws://h/api/ws?ticket=t');
+    sock.open();
+    let calls = 0;
+    const off = client.onClose(() => { calls++; });
+    off();
+    sock.close();
+    expect(calls).toBe(0);
   });
 });
