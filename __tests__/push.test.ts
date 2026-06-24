@@ -6,6 +6,7 @@ import {
   isRegistrationFresh,
   parseMailboxMessages,
   parsePushRegistration,
+  routeForPushData,
   shouldSuppressForeground,
 } from '../src/lib/push';
 
@@ -99,6 +100,27 @@ describe('shouldSuppressForeground', () => {
     expect(shouldSuppressForeground({ type: 'other' }, 'active')).toBe(false);
     expect(shouldSuppressForeground(undefined, 'active')).toBe(false);
     expect(shouldSuppressForeground({}, 'active')).toBe(false);
+  });
+});
+
+describe('routeForPushData', () => {
+  it('routes to the session when data carries a non-empty session_id', () => {
+    expect(routeForPushData({ type: 'session_end', session_id: 'abc' })).toBe('/chat/abc');
+    expect(routeForPushData({ type: 'approval_request', session_id: 'S-123' })).toBe('/chat/S-123');
+  });
+  it('falls back to /chat/new for missing/empty/blank session_id', () => {
+    expect(routeForPushData({ type: 'session_end' })).toBe('/chat/new');
+    expect(routeForPushData({ session_id: '' })).toBe('/chat/new');
+    expect(routeForPushData({ session_id: '   ' })).toBe('/chat/new');
+  });
+  it('falls back to /chat/new for non-object / nullish / wrong-typed data', () => {
+    expect(routeForPushData(undefined)).toBe('/chat/new');
+    expect(routeForPushData(null)).toBe('/chat/new');
+    expect(routeForPushData('nope')).toBe('/chat/new');
+    expect(routeForPushData({ session_id: 42 })).toBe('/chat/new');
+  });
+  it('trims a padded session_id', () => {
+    expect(routeForPushData({ session_id: '  abc  ' })).toBe('/chat/abc');
   });
 });
 

@@ -19,6 +19,19 @@ export function shouldSuppressForeground(data: unknown, appState: string): boole
   return typeof type === 'string' && (SUPPRESSIBLE_PUSH_TYPES as readonly string[]).includes(type);
 }
 
+/** Map a push notification's `data` payload to the route its tap should open.
+ * The plugin emits the persistent STORED session id under `session_id` for
+ * claimed sessions (docs/contracts/push.md); we deep-link there. Anything
+ * missing/blank/malformed (e.g. cron pings, which carry no id) opens the chat
+ * home. Defensive parse mirrors shouldSuppressForeground — never throws. */
+export function routeForPushData(data: unknown): string {
+  if (typeof data !== 'object' || data === null) return '/chat/new';
+  const id = (data as Record<string, unknown>).session_id;
+  if (typeof id !== 'string') return '/chat/new';
+  const trimmed = id.trim();
+  return trimmed ? `/chat/${trimmed}` : '/chat/new';
+}
+
 /** Re-register the Expo push token when older than this (task spec: 7 days). */
 export const REGISTRATION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
