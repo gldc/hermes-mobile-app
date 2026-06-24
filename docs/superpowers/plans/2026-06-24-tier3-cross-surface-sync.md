@@ -521,6 +521,8 @@ def test_session_end_pushes_for_claimed_session(store):
 
 > If a cron test exists (`_is_cron_run()` path), leave its `data` assertion as `{"type": "session_end"}` — cron stays broadcast and id-free (verified by Step 3 of this task). If it asserts a specific number of sends across N devices, that still holds.
 
+> **Targeted-shift test updates (do ALL of these so the file stays green):** a *claimed* send now targets one device via `get_push_token(device_id)`, so every existing test exercising the claimed path while claiming a *fake* `dev-x` must instead claim the **real** device id returned by `_tokened(store)` — `test_session_end_pushes_for_claimed_session`, `test_approval_pushes_for_claimed_gateway_session`, `test_absorbs_injected_kwargs`. The legacy `test_claim_and_resolve_by_either_id` must expect the new `(device_id, route_id)` tuple. Move `test_fan_out_skips_revoked_and_tokenless` onto the **cron broadcast** path (`monkeypatch.setenv("HERMES_CRON_SESSION", "1")`) — revoked/tokenless skipping now lives only on the broadcast path. The approval test asserts `data == {"type": "approval_request", "session_id": <STORED>}`. (Tests that early-return before sending — interrupted, disabled, non-gateway surface, unclaimed — need no change.)
+
 - [ ] **Step 2: Run to verify they fail**
 
 Run: `PYTHONPATH=/Users/gldc/Developer/hermes-agent python -m pytest tests/test_session_notify.py -q -k "stored_id or unclaimed_sends_nothing or pushes_for_claimed"`
