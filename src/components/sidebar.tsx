@@ -3,6 +3,7 @@ import * as Haptics from 'expo-haptics';
 import { useCallback, useEffect, useMemo, useState, useSyncExternalStore } from 'react';
 import {
   Alert,
+  AppState,
   Pressable,
   RefreshControl,
   Text,
@@ -103,8 +104,8 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
     setError('Gateway unreachable — check your VPN or Wi-Fi, then pull to retry.');
   }, []);
 
-  const load = useCallback(async () => {
-    setRefreshing(true);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setRefreshing(true);
     setError(null);
     try {
       await hydrateProfileStore();
@@ -153,6 +154,15 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   // Refresh whenever the drawer opens (and on archive/profile switches while open).
   useEffect(() => {
     if (open) load();
+  }, [open, load]);
+
+  // Reflect out-of-band activity (web dashboard, another device): when the app
+  // returns to the foreground with the drawer open, silently re-pull the list.
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (next) => {
+      if (next === 'active' && open) load({ silent: true });
+    });
+    return () => sub.remove();
   }, [open, load]);
 
   // Profile discovery: the switcher appears only when the server knows more

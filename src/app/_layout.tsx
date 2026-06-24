@@ -4,16 +4,22 @@ import { useEffect } from 'react';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { SidebarHost } from '@/components/sidebar-host';
 import { setupNotificationHandling } from '@/notifications';
+import { routeForPushData } from '@/lib/push';
 import { useTheme } from '@/theme';
 
 export default function Layout() {
   const { colors, dark } = useTheme();
 
-  // Foreground banners + tap → the chat home (sidebar lists everything from
-  // there). Pushes carry no data payload (docs/contracts/push.md), so there is
-  // no specific session to open; the chat screen's AuthError path already
-  // bounces to the connect screen when needed.
-  useEffect(() => setupNotificationHandling(() => router.navigate('/chat/new')), []);
+  // Foreground banners; a tap deep-links to the session the push concerns
+  // (claimed sessions carry data.session_id), else the chat home. Cold-start
+  // taps are handled in the connect screen's restore (index.tsx).
+  useEffect(
+    () =>
+      setupNotificationHandling((data) =>
+        router.navigate(routeForPushData(data) as Parameters<typeof router.navigate>[0]),
+      ),
+    [],
+  );
 
   return (
     <GestureHandlerRootView style={{ flex: 1 }}>

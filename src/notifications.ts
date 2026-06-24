@@ -12,6 +12,7 @@ import {
   canJoinInFlight,
   isRegistrationFresh,
   parsePushRegistration,
+  routeForPushData,
   shouldSuppressForeground,
 } from '@/lib/push';
 
@@ -184,12 +185,18 @@ export async function maybeRegisterPush(opts: { softAsk: boolean }): Promise<Pus
   }
 }
 
+// Response identifiers we've already routed, so the cold-start path
+// (getColdStartRoute) and the live listener never double-navigate for the
+// same tap. Module-level: both share it across the app's lifetime.
+const handledResponseIds = new Set<string>();
+
 /** Install the foreground handler (banner, no sound/badge) and the tap
- * listener. Gateway pushes carry no data payload (push.py sends title/body
- * only), so taps can only mean "go look" → caller navigates to the chat home.
- * Cold-start taps need no handling here: the app lands on the connect screen,
- * whose restore flow already replaces to the chat home. Returns an unsubscribe. */
-export function setupNotificationHandling(onTap: () => void): () => void {
+ * listener. Pushes for claimed sessions carry `data.session_id` (the stored
+ * route id); `onTap` receives the raw `data` so the caller can deep-link via
+ * routeForPushData. Cron/legacy pushes carry no id → caller opens the chat
+ * home. Cold-start taps (app was killed) are handled by getColdStartRoute,
+ * sequenced after the connect-screen restore. Returns an unsubscribe. */
+export function setupNotificationHandling(onTap: (data: unknown) => void): () => void {
   Notifications.setNotificationHandler({
     handleNotification: async (notification) => {
       const data = notification.request.content.data;
@@ -199,6 +206,22 @@ export function setupNotificationHandling(onTap: () => void): () => void {
       return { shouldShowBanner: true, shouldShowList: true, shouldPlaySound: false, shouldSetBadge: false };
     },
   });
-  const sub = Notifications.addNotificationResponseReceivedListener(() => onTap());
+  const sub = Notifications.addNotificationResponseReceivedListener((response) => {
+    const id = response.notification.request.identifier;
+    if (handledResponseIds.has(id)) return; // already routed by cold-start (or a prior fire)
+    handledResponseIds.add(id);
+    onTap(response.notification.request.content.data);
+  });
   return () => sub.remove();
+}
+
+/** Route for the notification that cold-started the app (app was killed when
+ * the user tapped), or null if the app wasn't launched from a notification.
+ * Marks the response handled so the live listener won't re-route it. Call
+ * AFTER the connect-screen restore so its replace() doesn't clobber the target. */
+export async function getColdStartRoute(): Promise<string | null> {
+  const response = await Notifications.getLastNotificationResponseAsync();
+  if (!response) return null;
+  handledResponseIds.add(response.notification.request.identifier);
+  return routeForPushData(response.notification.request.content.data);
 }
