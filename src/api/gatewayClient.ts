@@ -7,6 +7,8 @@ export interface SocketLike {
   onmessage: ((ev: { data: string }) => void) | null;
   onclose: ((ev: { code: number; reason: string }) => void) | null;
   onerror: ((ev: unknown) => void) | null;
+  /** Numeric WebSocket readyState (OPEN === 1). Optional so fakes/native need no change. */
+  readonly readyState?: number;
   send(data: string): void;
   close(): void;
 }
@@ -30,6 +32,12 @@ export class GatewayClient {
   private closeHandlers = new Set<(reason: string) => void>();
 
   constructor(private readonly makeSocket: (url: string) => SocketLike) {}
+
+  /** True only when the underlying socket is OPEN (readyState === 1). A closed
+   * or absent socket reads false (handleClose nulls this.socket at line 100). */
+  get isOpen(): boolean {
+    return this.socket?.readyState === 1;
+  }
 
   connect(url: string): Promise<void> {
     return new Promise((resolve, reject) => {
