@@ -21,6 +21,15 @@ export interface SessionListResponse {
   offset: number;
 }
 
+/** One entry of an assistant row's `tool_calls[]` invocation array
+ * (docs/contracts/sessions-extra.md:146-156). `function.arguments` is a JSON string. */
+export interface ToolCall {
+  id?: string;
+  call_id?: string;
+  type?: string;
+  function?: { name?: string; arguments?: string };
+}
+
 export interface SessionMessage {
   role: 'user' | 'assistant' | 'system' | 'tool';
   /** Some endpoints provide plain text… */
@@ -32,6 +41,14 @@ export interface SessionMessage {
   tool_name?: string | null;
   /** Set on role='tool' rows; joins to assistant tool_calls[i].id. */
   tool_call_id?: string | null;
+  /** Set on role='assistant' rows; the tool invocations whose results arrive as
+   * later role='tool' rows. Parsed server-side; defensively re-checked here. */
+  tool_calls?: ToolCall[] | null;
+  /** Reasoning/thinking trace persisted on assistant rows. Which column is
+   * populated varies by model family (docs/contracts/sessions-extra.md:130). */
+  reasoning?: string | null;
+  reasoning_content?: string | null;
+  reasoning_details?: string | null;
 }
 
 export interface MessagesResponse {

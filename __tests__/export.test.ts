@@ -123,4 +123,14 @@ describe('exportAsJsonl', () => {
   it('returns "" for no items', () => {
     expect(exportAsJsonl([])).toBe('');
   });
+
+  it('includes reasoning in the JSONL record when present', () => {
+    const out = exportAsJsonl([
+      { key: 'k0', role: 'assistant', text: 'ans', reasoning: 'because', complete: true },
+      { key: 'k1', role: 'assistant', text: 'plain', complete: true },
+    ] as any);
+    const [a, b] = out.split('\n').map((l) => JSON.parse(l));
+    expect(a).toMatchObject({ role: 'assistant', text: 'ans', reasoning: 'because' });
+    expect(b.reasoning).toBeUndefined();
+  });
 });

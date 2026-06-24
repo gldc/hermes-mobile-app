@@ -40,6 +40,7 @@ export function exportAsText(items: ChatItem[]): string {
 /** JSONL record for one item: stable data fields only, no local render keys. */
 function toRecord(item: ChatItem): Record<string, unknown> {
   const record: Record<string, unknown> = { role: item.role, text: item.text };
+  if (item.reasoning) record.reasoning = item.reasoning;
   if (item.tool) {
     const { name, context, summary, detail, diff, durationS } = item.tool;
     record.tool = {
