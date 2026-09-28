@@ -3,7 +3,8 @@
 import type { RestClient } from './restClient';
 
 export interface SearchResult {
-  /** Matched excerpt; matches are wrapped in <b>…</b> by the server. */
+  /** Matched excerpt; FTS5 wraps matches in >>>…<<< at both 0.20.4 and 0.21.5
+   * (hermes_state_search.py). Legacy <b>…</b> is still accepted. */
   snippet: string;
   /** null for direct session-id matches. */
   role: 'user' | 'assistant' | 'tool' | null;
@@ -39,7 +40,7 @@ export async function searchSessions(
 
 export interface SnippetSegment {
   text: string;
-  /** True when this run was inside <b>…</b> (an FTS match). */
+  /** True when this run was inside >>>…<<< (or legacy <b>…</b>) — an FTS match. */
   match: boolean;
 }
 
@@ -59,14 +60,14 @@ function decodeEntities(s: string): string {
 /** Split a server snippet into plain / matched runs for styled rendering. */
 export function parseSnippet(snippet: string): SnippetSegment[] {
   const segments: SnippetSegment[] = [];
-  const tokens = snippet.split(/(<\/?b>)/);
+  const tokens = snippet.split(/(>>>|<<<|<\/?b>)/);
   let inMatch = false;
   for (const tok of tokens) {
-    if (tok === '<b>') {
+    if (tok === '>>>' || tok === '<b>') {
       inMatch = true;
       continue;
     }
-    if (tok === '</b>') {
+    if (tok === '<<<' || tok === '</b>') {
       inMatch = false;
       continue;
     }

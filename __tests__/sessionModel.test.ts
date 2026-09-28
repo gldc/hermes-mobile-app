@@ -89,4 +89,33 @@ describe('switchSessionModel', () => {
   it('returns ok with null model when value is absent', async () => {
     expect(await switchSessionModel((async () => ({})) as any, args)).toEqual({ kind: 'ok', model: null });
   });
+
+  it('4001 (stale live id) → resumeSession once → retries with the fresh id', async () => {
+    const seen: string[] = [];
+    const call = async (_m: string, params: any) => {
+      seen.push(params.session_id);
+      if (seen.length === 1) throw new RpcError('session not found', 4001);
+      return { key: 'model', value: 'openrouter/glm-5.2' };
+    };
+    const resumeSession = jest.fn(async () => 's2');
+    expect(await switchSessionModel(call as any, { ...args, resumeSession })).toEqual({ kind: 'ok', model: 'openrouter/glm-5.2' });
+    expect(resumeSession).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual(['s1', 's2']);
+  });
+
+  it('a second 4001 surfaces as an error (retry once only)', async () => {
+    const call = async () => {
+      throw new RpcError('session not found', 4001);
+    };
+    const resumeSession = jest.fn(async () => 's2');
+    expect(await switchSessionModel(call as any, { ...args, resumeSession })).toEqual({ kind: 'error', message: 'session not found' });
+    expect(resumeSession).toHaveBeenCalledTimes(1);
+  });
+
+  it('without resumeSession a 4001 is a plain error', async () => {
+    const call = async () => {
+      throw new RpcError('session not found', 4001);
+    };
+    expect(await switchSessionModel(call as any, args)).toEqual({ kind: 'error', message: 'session not found' });
+  });
 });

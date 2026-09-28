@@ -94,3 +94,20 @@ describe('parseSnippet', () => {
     expect(parseSnippet('')).toEqual([]);
   });
 });
+
+describe('parseSnippet — FTS5 >>>…<<< markers (the server format at both tags)', () => {
+  it('splits >>>match<<< runs', () => {
+    expect(parseSnippet('before >>>match<<< after')).toEqual([
+      { text: 'before ', match: false },
+      { text: 'match', match: true },
+      { text: ' after', match: false },
+    ]);
+  });
+  it('never shows the literal markers', () => {
+    const text = parseSnippet('>>>a<<< mid >>>b<<<').map((s) => s.text).join('');
+    expect(text).toBe('a mid b');
+  });
+  it('decodes entities inside a match', () => {
+    expect(parseSnippet('>>>a &amp; b<<<')).toEqual([{ text: 'a & b', match: true }]);
+  });
+});
