@@ -93,7 +93,7 @@ Evidence:
      - 8.18 `hermes_cli/dashboard_auth/middleware.py:462-468`: a `ProviderError` from the refresh gives a 503 and the cookies are preserved.
      - 9.24 `middleware.py:192-196`: the same, via `run_in_threadpool`. `refresh_singleflight.py:73`: `ProviderError` is deliberately **not** cached, so the phone's retry reaches the store again.
 4. **Push storm from clarify retries.**
-   - *Risk:* at 0.21.5 a clarify with no capable client attached resolves empty at once, and the model may re-ask in a loop.
+   - *Risk:* at 0.21.5 a clarify resolves empty at once when every attached client is a pre-`client.capabilities` build, such as today's app before Plan A. The model may then re-ask in a loop. With **no** client attached, the question waits in `open_requests` (`session_transports.py:38-47` @9.24). That is the case the push exists for.
    - *Expected:* at most one clarify push per (device, route session) per 30 s. Other sessions are unaffected, and pushes resume after the window.
    - *Pinned by:* Task 5 `test_clarify_cooldown_drops_repeat_questions_for_one_session`.
 5. **Hook contract drift and fail-closed dispatch.**
@@ -1073,8 +1073,10 @@ Replace `_locked` and add the two helpers:
         threadpool, and the dashboard holds several DeviceStore instances).
         Processes: an exclusive ``flock`` on :attr:`lock_path` (``hermes mobile
         pair``/``revoke``). The kernel drops a flock when its holder dies, so a
-        crash cannot leave a stale lock.
+        crash cannot leave a stale lock. Both waits share ONE deadline, so the total
+        wait never exceeds ``lock_timeout`` (at 8.18 refresh runs on the event loop).
         """
+        deadline = time.monotonic() + self._lock_timeout
         thread_lock = _path_lock(self._path)
         if not thread_lock.acquire(timeout=self._lock_timeout):
             raise DeviceStoreError(
@@ -1084,7 +1086,7 @@ Replace `_locked` and add the two helpers:
             fd = self._open_lock_file()
             try:
                 if fd is not None:
-                    self._flock(fd)
+                    self._flock(fd, deadline)
                 yield
             finally:
                 if fd is not None:
@@ -1107,8 +1109,7 @@ Replace `_locked` and add the two helpers:
         _match_dir_owner(self.lock_path, self._path.parent)
         return fd
 
-    def _flock(self, fd: int) -> None:
-        deadline = time.monotonic() + self._lock_timeout
+    def _flock(self, fd: int, deadline: float) -> None:
         while True:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -1545,8 +1546,10 @@ APPROVAL_BODY = "Hermes needs your approval"
 CLARIFY_BODY = "Hermes has a question"
 _DISABLED_VALUES = {"0", "false", "no", "off"}
 _DEFAULT_TTL_SECONDS = 24 * 60 * 60
-#: One clarify push per (device, route session) per window. At 0.21.5 a clarify with
-#: no capable client attached resolves empty at once and the model may re-ask in a loop.
+#: One clarify push per (device, route session) per window. At 0.21.5 a clarify whose
+#: attached clients are ALL pre-capabilities builds resolves empty at once and the model
+#: may re-ask in a loop; with NO client attached it waits in open_requests for the
+#: reconnect replay (tui_gateway/session_transports.py:38-47), which is when the push matters.
 _CLARIFY_COOLDOWN_SECONDS = 30.0
 _GATE_MEMORY_SECONDS = 60 * 60
 ```
@@ -2058,6 +2061,11 @@ Expected: `194 passed` and `exit=0` for both.
 - [ ] **Step 2: Sync the branch tree to dc1-1 and prepare an shfs lock dir owned by uid 10000**
 
 ```bash
+# rsync creates only the LAST path component; /mnt/cache/compat may not exist yet.
+# Disk gate: the 0.21.5 base is ~3 GB and Plan D needs 7-9 GB after this; STOP below 11G.
+ssh root@dc1-1.local 'mkdir -p /mnt/cache/compat && df -BG --output=avail /var/lib/docker | tail -1
+docker image inspect nousresearch/hermes-agent@sha256:22e37bb4ed1b0f50cb6bd991dca7ecacd6c9f29df9b4a20fc989d32bc763ccf6 >/dev/null 2>&1 \
+  && echo "old-base: present-before" || { echo "old-base: absent-before"; touch /mnt/cache/compat/.p-pulled-old-base; }'
 rsync -a --delete --exclude .git --exclude __pycache__ --exclude .pytest_cache --exclude .ruff_cache \
   $HOME/Developer/hermes-mobile-plugin-worktrees/store-lock-and-pushes/ \
   root@dc1-1.local:/mnt/cache/compat/hermes-mobile-plugin-lock/
@@ -2067,7 +2075,10 @@ ssh root@dc1-1.local 'mkdir -p /mnt/user/appdata/hermes-locktest \
   && stat -f -c %T /mnt/user/appdata/hermes-locktest'
 ```
 
-Expected: the last line is a FUSE type (`fuseblk` or `fuse`), which proves the path is shfs, like `/opt/data` in production. If it prints `xfs` or `btrfs`, stop: the shfs check would not be testing shfs.
+Expected:
+- the first line is avail `≥11G`. **STOP** below that: pruning is his call.
+- `old-base: present-before` or `absent-before`, recorded so Step 4 can remove only what this run pulled. The old base's layers are shared with `hermes-dc1:local`, which was built FROM it, so the pull should cost little.
+- The last line is a FUSE type. It was **`fuse`** on 2026-09-28, with `/mnt/user` = `fuse.shfs`. That proves the path is shfs, like `/opt/data` in production. If it prints `xfs` or `btrfs`, stop: the shfs check would not be testing shfs.
 
 - [ ] **Step 3: Run the suite inside both images: as root, as uid 10000, and the lock tests on shfs**
 
@@ -2121,13 +2132,20 @@ Expected, for **each** digest:
 - The leftovers listing is empty.
 - The final line is `ssh exit=0`.
 
-Any other result is a failure. Fix the root cause in the owning task and re-run from Step 1.
+Any other result is a failure. Run Step 4's cleanup even then. Fix the root cause in the owning task and re-run from Step 1.
 
-- [ ] **Step 4: Clean up the dc1-1 scratch**
+- [ ] **Step 4: Clean up the dc1-1 scratch (also on the failure path)**
 
 ```bash
-ssh root@dc1-1.local 'rm -rf /mnt/cache/compat/hermes-mobile-plugin-lock /mnt/cache/compat/pydeps-* /mnt/user/appdata/hermes-locktest'
+ssh root@dc1-1.local 'rm -rf /mnt/cache/compat/hermes-mobile-plugin-lock /mnt/cache/compat/pydeps-* /mnt/user/appdata/hermes-locktest
+if [ -e /mnt/cache/compat/.p-pulled-old-base ]; then
+  docker rmi nousresearch/hermes-agent@sha256:22e37bb4ed1b0f50cb6bd991dca7ecacd6c9f29df9b4a20fc989d32bc763ccf6 >/dev/null && echo old-base-removed
+  rm -f /mnt/cache/compat/.p-pulled-old-base
+fi
+test ! -e /mnt/user/appdata/hermes-locktest && echo scratch-gone
+df -BG --output=avail /var/lib/docker | tail -1'
 ```
+Expected: `scratch-gone`. Also `old-base-removed` if Step 2 printed `absent-before`. **Keep** the 0.21.5 image, because Plan D's Task S and bump build reuse it.
 
 - [ ] **Step 5: Push and open the PR** (the active gh account must be `gldc`: run `gh auth status`)
 
@@ -2152,6 +2170,8 @@ Spec: hermes-mobile-app `docs/superpowers/specs/2026-09-28-control-path-0.21.5-d
 - Contract-test mutation check: a raising handler turns 5 contract tests red at 9.24 (block directive)
 
 **Cross-repo note:** the app should add `clarify_request` to `SUPPRESSIBLE_PUSH_TYPES` (foreground suppression). Tap routing already works via `data.session_id`.
+
+**Deploy note:** the box's boot pulls plugin `main`. From the merge on, the **next restart of the live 0.20.4 container** runs this code, even before the bump. The suite passes at 8.18 in the 0.20.4 image. If the box restarts before the bump, check `docker exec hermes ls -ln /opt/data/mobile/`: `devices.json` and `devices.json.lock` should be owned by `10000`. Then check that one phone refreshes without re-pairing.
 
 🤖 Generated with [Claude Code](https://claude.com/claude-code)
 EOF

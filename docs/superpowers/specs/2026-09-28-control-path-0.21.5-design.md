@@ -522,8 +522,9 @@ process**:
 The CLI `pair`/`revoke` commands write from another process. The fix:
 
 - a **module-level lock keyed by the resolved store path**, plus an **`fcntl.flock` on a sidecar lock
-  file**, for cross-process writers. flock already works on this shfs path, per the Slack token lock
-  (bump §3);
+  file**, for cross-process writers. `/mnt/user` is `fuse.shfs`; taking a flock there works, since
+  qdrant holds one, but that it **excludes a second process** is proven only by Plan P Task 8 (the
+  Slack token lock is an O_EXCL pid file, not a flock);
 - it wraps load→modify→save in `create_device`, `rotate_refresh`, `revoke`, `revoke_by_refresh` and
   `set_push_token`;
 - a unique tmp file per write (`tempfile.mkstemp` in the store dir, then `os.replace`), replacing

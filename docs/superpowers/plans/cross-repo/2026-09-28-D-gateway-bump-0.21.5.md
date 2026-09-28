@@ -3,6 +3,27 @@
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 > This is mostly an **ops runbook**. Code-changing steps are RED→GREEN. Ops steps give the exact command, the expected output, and a **STOP** condition. A STOP means: do not run the next step; record what you saw; if the STOP names Gianluca, message him with the evidence and a ready-to-run next command, then wait.
 
+## Revision log (review 2026-09-28)
+
+Adversarial ops review; findings in the controller's scratchpad `plans-review-ops.md`. Changes:
+1. **Task S step 5:** `scripts/gen-password-hash.sh` prints an empty line (the `echo` after `read -rsp`) before the hash. So `HASH` began with a newline, and the `scrypt$*` check failed **every** time. The hash is now extracted with `grep -o`.
+2. **Task 1 step 3:** it copied this plan and the assessment from the ephemeral session scratchpad, which holds the pre-review text. It now copies from the app repo's committed copies.
+3. **Exit-code gates:** these pytest runs piped `| tail -1` and so gated on nothing:
+   - Task 1.2, 3.9, 4.2 and 11.6. Each now prints its own `exit=`, per this plan's Global Constraint.
+   - Task 5.5 (`| tee`): it now captures the exit code.
+4. **New Task 7 step 5:** a pre-stop check that every path in the cold-backup list exists. Task 8 step 4's `tar` STOPs on a missing path, and before this it did so **during the outage**.
+5. **New Task 7 step 4:** the image is built **before** the stop.
+   - This is safe: a container is pinned to its image ID, and `pre-0.21.5` is already tagged.
+   - Task 8 step 9's build then becomes a cache hit, so the build leaves the downtime window.
+6. **Task 3 step 11 (new):** push the branch and open a **draft** PR, then gate the box sync (Task 6) on CI `exit=0`. Before, CI first ran after the deploy. Task 12 now marks the draft ready.
+7. **Task 0 step 2:** the gate now also requires Plan C. Spec §11 item 5 says deploy only after 2–4 are verified.
+8. **Task 8 step 3:** a `-wal` file deleted by a clean close counts as clean; the bare glob printed a false alarm.
+9. **Task 9 A8:** a `mobile/` ownership check (Plan P's hand-off: `devices.json` and `.lock` owned by 10000).
+10. **Task 10:** before an autonomous rollback, check for post-bump conversations. Slack is live, so a rollback would lose them, and then the rollback is his call. The `skills/` restore note is added.
+11. **Task 13 step 2:** `dashboard-auth.log` is **JSON lines** (`{"ts":…,"event":"refresh_failure"}`, `hermes_cli/dashboard_auth/audit.py`). The Python-log awk passed every historic line (`{` sorts after digits), and the grep strings are not event names. It now uses `jq` on `.ts`/`.event`, and it gates the merge.
+12. **Task S step 1 and Task 7:** check the host tools (`jq`, `openssl`, `nsenter`, `ss`) and the ownership and remote of the live plugin checkout **before** relying on them. The reviewer could not re-verify these: the 1Password ssh approval lapsed mid-review. The ssh-approval note is added to the Global Constraints.
+13. **Task S:** if Plan P's branch head moves after its review, refresh the throwaway checkout, and record the SHA that A/B tested against.
+
 **Goal:** Move the live dc1-1 gateway from hermes 0.20.4 (`v2026.8.18`) to 0.21.5 (`v2026.9.24`) through runbook Phase B, with the assessment's ★ additions, a rehearsed one-way migration, a DB-restoring rollback, and his on-device QA as the gate.
 
 **Architecture:** Merge PR #29 first, branch `chore/base-bump-2026.9.24` off the new `main`, re-pin `IMAGE` + `ARG BASE` (RED→GREEN sync test), prove compat in the new base, rehearse the migration on an online copy of the live DB on the same `shfs` filesystem, then do Phase B B3→B6 on the box. A throwaway 0.21.5 container on dc1-1 (loopback-only, SSH-tunnelled) serves Plans A/B's integration testing before any of that.
@@ -44,6 +65,16 @@ P_SHA=<gldc/hermes-mobile-plugin main SHA recorded in Task 0 step 1>
 - dc1-1 docker vdisk: **15 GB free of 50 GB** at planning time; base + build + probe ≈ 7–9 GB. Any docker-heavy step checks `df` first (STOP below 8 GB; pruning old tags or build cache is his call).
 - Commits end with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`; PR bodies end with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 - Deployed ≠ done: his on-device QA (spec §10.3) is the gate for merging the bump PR.
+- ssh to dc1-1 signs through the **1Password agent**, which asks Gianluca to approve each connection. During the 2026-09-28 review it began refusing mid-session (`agent refused operation`). Handle it this way:
+  - Before Task S and again before Task 8, message him to approve.
+  - Keep one master open, and pass the same `ControlPath` on every later ssh. `ssh -O exit` closes it at the end.
+
+    ```bash
+    ssh -o ControlMaster=auto -o ControlPersist=60m \
+        -o ControlPath="$HOME/.ssh/cm-%r@%h:%p" -fN root@dc1-1.local
+    ```
+
+  - **During the outage (Task 8), a refused signature is a STOP for him.** Have him approve before Task 8 step 2, never after.
 
 ## Review Focus
 
@@ -74,10 +105,14 @@ Most likely to bite first. Each line has a check in the owning task.
 ssh root@dc1-1.local 'df -BG --output=avail /var/lib/docker | tail -1
 ss -ltn | grep -c ":19119 " || true
 test ! -e /mnt/user/appdata/hermes-test-0215 && test ! -e /mnt/user/appdata/hermes-test-0215.env && echo absent
-docker ps -a --filter name=^hermes-test-0215$ -q | wc -l'
+docker ps -a --filter name=^hermes-test-0215$ -q | wc -l
+for t in jq openssl nsenter ss git; do command -v "$t" >/dev/null || echo "MISSING $t"; done; echo tools-checked'
 git ls-remote https://github.com/gldc/hermes-mobile-plugin "refs/heads/$PLUGIN_REF"
 ```
-Expected: `≥8G` (e.g. `15G`), `0`, `absent`, `0`, and one `<sha>\trefs/heads/<PLUGIN_REF>` line. **STOP** if avail < 8G (pruning is his call), or if the ref is missing.
+Expected: `≥8G` (e.g. `15G`), `0`, `absent`, `0`, `tools-checked` with no `MISSING` line before it, and one `<sha>\trefs/heads/<PLUGIN_REF>` line. **STOP** if:
+- avail < 8G (pruning is his call);
+- any tool is `MISSING`. This plan uses the host's `jq`/`nsenter`/`ss` throughout, and the review could not re-verify them;
+- the ref is missing. The plugin repo is PUBLIC, so the anonymous https clone works.
 
 - [ ] **Step 2: Pull the target image and prove what it is**
 
@@ -102,7 +137,15 @@ chown -R 10000:10000 "$D"
 stat -c '%a %u:%g' "$D"
 SH
 ```
-Expected: the SHA from step 1 and its subject, then `700 10000:10000`.
+Expected: the SHA from step 1 and its subject, then `700 10000:10000`. Record the SHA as `S_PLUGIN_SHA`: A/B's sign-off is against that code.
+
+**If Plan P's branch head moves later** (review fixes), fast-forward the throwaway's checkout and restart it. Tell the A/B executor the new `S_PLUGIN_SHA`, because scenarios run before the move tested old code.
+
+```bash
+ssh root@dc1-1.local 'docker exec -u 10000 hermes-test-0215 git -C /opt/data/plugins/hermes-mobile pull --ff-only --quiet \
+  && docker exec -u 10000 hermes-test-0215 git -C /opt/data/plugins/hermes-mobile log -1 --format=%H \
+  && docker restart hermes-test-0215 >/dev/null && echo restarted'
+```
 
 - [ ] **Step 4: Env file: model-provider keys only, filtered by name**
 
@@ -137,7 +180,10 @@ Expected: 13 names (`KIMI_API_KEY`, `OPENROUTER_API_KEY`, `GOOGLE_API_KEY`, `DAS
 umask 077
 PW=$(openssl rand -base64 18 | tr -d '/+=')
 printf 'url=http://127.0.0.1:19119\nuser=qa\npassword=%s\n' "$PW" > "$SCRATCH/throwaway-0215.creds"
-HASH=$(printf '%s\n' "$PW" | ssh root@dc1-1.local "bash /mnt/user/appdata/hermes/scripts/gen-password-hash.sh $NEW_IMAGE" 2>/dev/null)
+# The script's `read -rsp …; echo` prints an EMPTY LINE before the hash on stdout, so take the
+# scrypt token itself rather than the whole output (review 2026-09-28).
+HASH=$(printf '%s\n' "$PW" | ssh root@dc1-1.local "bash /mnt/user/appdata/hermes/scripts/gen-password-hash.sh $NEW_IMAGE" 2>/dev/null \
+  | grep -o 'scrypt[$][^[:space:]]*' | head -n1)
 case "$HASH" in scrypt\$*) echo hash-ok ;; *) echo "STOP: no scrypt hash" ;; esac
 printf 'HERMES_DASHBOARD_BASIC_AUTH_PASSWORD_HASH=%s\n' "$HASH" | ssh root@dc1-1.local 'cat >> /mnt/user/appdata/hermes-test-0215.env'
 ```
@@ -255,7 +301,15 @@ Expected: `burst-1 False`, `burst-2 False`, `burst-3 False`, `burst-4 False`, `b
 
 - [ ] **Step 10: Hand-off to Plans A/B**
 
-Tell the Plan A/B executor: URL `http://127.0.0.1:19119`, user `qa`, password in `$SCRATCH/throwaway-0215.creds`, and the tunnel command from step 8. The §10.2 scenario list is theirs: approval, clarify batch + push, secure entry, Stop mid-tool, steer, kill mid-clarify, reconnect mid-turn, two-device burst. Also give them the live-0.20.4 legacy list. Record their sign-off (PR links) for Task 0.
+Tell the Plan A/B executor:
+- URL `http://127.0.0.1:19119`;
+- user `qa`, with the password in `$SCRATCH/throwaway-0215.creds`;
+- the tunnel command from step 8;
+- `S_PLUGIN_SHA`.
+
+The §10.2 scenario list is theirs: approval, clarify batch + push, secure entry, Stop mid-tool, steer, kill mid-clarify, reconnect mid-turn, two-device burst. The throwaway runs real commands inside its container, with LAN egress and live provider keys. So the "dangerous command" scenario uses a harmless target (e.g. `rm -rf /tmp/qa-x`), and it is denied or run only inside the container.
+
+Also give them the live-0.20.4 legacy list. Record their sign-off (PR links) for Task 0.
 
 - [ ] **Step 11: Teardown (after A+B sign-off; before Task 8 regardless)**
 
@@ -287,10 +341,17 @@ git -C ~/Developer/hermes-mobile-plugin grep -c 'pre_tool_call' origin/main -- h
 ```
 Expected: Plan P's squash commit (record its full SHA as **`P_SHA`**), then a count ≥ 2, then ≥ 1, then ≥ 1. **STOP** if P is not merged.
 
-- [ ] **Step 2: Plans A and B are verified on the throwaway container AND on live 0.20.4**
+- [ ] **Step 2: Plans A, B and C are verified on the throwaway container AND on live 0.20.4**
 
-Open both PRs (their numbers come from Plans A/B):
-`gh pr view <A_PR> -R gldc/hermes-mobile-app --json state,body --jq '.state'` (and the same for `<B_PR>`). Read each body. Expected: the §10.2 throwaway checklist and the "against live 0.20.4" checklist (legacy approval, Stop, best-effort steer, normal chat) are ticked, with screenshots. **STOP** if either list is missing or unticked.
+Spec §11 item 5 says the bump runs only after "2–4" (App A, B **and C**) are verified. Open all three PRs; their numbers come from Plans A/B/C:
+`gh pr view <A_PR> -R gldc/hermes-mobile-app --json state,body --jq '.state'`, and the same for `<B_PR>` and `<C_PR>`.
+
+Read each body. Expected:
+- A and B tick the §10.2 throwaway checklist and the "against live 0.20.4" checklist (legacy approval, Stop, best-effort steer, normal chat), with screenshots;
+- C ticks its polish acceptance with dark and light screenshots;
+- each A/B sign-off names the `S_PLUGIN_SHA` it ran against.
+
+**STOP** if any list is missing or unticked.
 
 - [ ] **Step 3: The app build is on his phone, and the throwaway is gone**
 
@@ -298,7 +359,7 @@ Open both PRs (their numbers come from Plans A/B):
 
 - [ ] **Step 4: Gianluca is available for QA: his go**
 
-Message him: *"Ready to bump dc1-1 hermes 0.20.4 → 0.21.5. Plugin P (`<P_SHA>`) merged; A+B verified on the throwaway and live 0.20.4. Is the new app build on your phone? The outage will be about build (~2 min) + the migration measured in Task 5 + boot; I'll send the exact figure before I stop the box. Rollback restores the DBs and loses anything said after the bump. Reply `go` when you can QA today."* **STOP** until he replies `go`.
+Message him: *"Ready to bump dc1-1 hermes 0.20.4 → 0.21.5. Plugin P (`<P_SHA>`) merged; A+B+C verified on the throwaway and live 0.20.4. Is the new app build on your phone? The image is built before the stop, so the outage is about the backup + the migration measured in Task 5 + boot; I'll send the exact figure before I stop the box. Rollback restores the DBs and loses anything said after the bump. Reply `go` when you can QA today."* **STOP** until he replies `go`.
 
 ---
 
@@ -328,18 +389,23 @@ Expected: `MERGED <sha>`.
 git -C ~/Developer/hermes-deploy fetch --quiet origin
 git -C ~/Developer/hermes-deploy worktree add "$WT" -b "$BRANCH" origin/main
 cd "$WT" && git log -1 --format='%h %s'
-PYTHONDONTWRITEBYTECODE=1 python3 -m pytest credexec/tests/ -q -p no:cacheprovider 2>&1 | tail -1
+PYTHONDONTWRITEBYTECODE=1 python3 -m pytest credexec/tests/ -q -p no:cacheprovider > "$SCRATCH/pytest-baseline.txt" 2>&1; echo "exit=$?"
+tail -1 "$SCRATCH/pytest-baseline.txt"
 ```
-Expected: `<sha> chore(dc1): bump hermes base to v2026.8.18 (0.20.4); guard PID-1 ownership (#29)`, then `724 passed, 1 skipped, …`.
+Expected: `<sha> chore(dc1): bump hermes base to v2026.8.18 (0.20.4); guard PID-1 ownership (#29)`, then `exit=0`, then `724 passed, 1 skipped, …`. **STOP** on any other `exit=`.
 
 - [ ] **Step 3: Preserve the assessment and this plan in the branch immediately (the scratchpad is ephemeral)**
 
 ```bash
 mkdir -p "$WT/docs/research"
-cp /private/tmp/claude-501/-Users-gldc-Developer/c27ce2fd-7a03-4b96-bdec-b4340f7064a1/scratchpad/bump-0.21.5-assessment.md \
-   "$WT/docs/research/2026-09-28-bump-0.21.5-assessment.md"
-cp /private/tmp/claude-501/-Users-gldc-Developer/c27ce2fd-7a03-4b96-bdec-b4340f7064a1/scratchpad/plan-D-bump.md \
-   "$WT/docs/superpowers/plans/2026-09-28-D-gateway-bump-0.21.5.md"
+# Sources = the REVIEWED copies committed in the app repo (the session scratchpad is ephemeral
+# and holds pre-review text).
+A=$HOME/Developer/hermes-mobile-app/docs/superpowers/plans/cross-repo
+test -s "$A/2026-09-28-bump-0.21.5-assessment.md" && grep -q '^## Revision log (review 2026-09-28)' "$A/2026-09-28-D-gateway-bump-0.21.5.md" \
+  || { echo "STOP: reviewed sources not found"; exit 1; }
+mkdir -p "$WT/docs/superpowers/plans"
+cp "$A/2026-09-28-bump-0.21.5-assessment.md" "$WT/docs/research/2026-09-28-bump-0.21.5-assessment.md"
+cp "$A/2026-09-28-D-gateway-bump-0.21.5.md" "$WT/docs/superpowers/plans/2026-09-28-D-gateway-bump-0.21.5.md"
 cd "$WT" && git add docs/research/2026-09-28-bump-0.21.5-assessment.md docs/superpowers/plans/2026-09-28-D-gateway-bump-0.21.5.md
 git commit -m "docs: 0.21.5 bump assessment and Plan D, verbatim
 
@@ -490,10 +556,11 @@ In `.github/workflows/credexec-tests.yml` add `'IMAGE',` after `'Dockerfile',` i
 - [ ] **Step 9: Full suite + lint**
 
 ```bash
-cd "$WT" && PYTHONDONTWRITEBYTECODE=1 python3 -m pytest credexec/tests/ -q -p no:cacheprovider 2>&1 | tail -1
+cd "$WT" && PYTHONDONTWRITEBYTECODE=1 python3 -m pytest credexec/tests/ -q -p no:cacheprovider > "$SCRATCH/pytest-b1.txt" 2>&1; echo "pytest=$?"
+tail -1 "$SCRATCH/pytest-b1.txt"
 uvx ruff@0.14.10 check credexec; echo "check=$?"; uvx ruff@0.14.10 format --check credexec; echo "format=$?"
 ```
-Expected: `725 passed, 1 skipped, …`, `check=0`, `format=0`.
+Expected: `pytest=0`, `725 passed, 1 skipped, …`, `check=0`, `format=0`.
 
 - [ ] **Step 10: Commit**
 
@@ -503,6 +570,19 @@ git commit -m "chore(dc1): pin hermes base v2026.9.24 (0.21.5); guard IMAGE == A
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
+
+- [ ] **Step 11: Draft PR now, and CI gates the box (review 2026-09-28)**
+
+The code synced to the box in Task 6 must be the code CI passed. Before this step, CI first ran in Task 12, after the deploy.
+```bash
+cd "$WT" && git push -u origin "$BRANCH"
+printf 'Draft: 0.21.5 base bump. Body is replaced in Task 12 with the deploy evidence.\n\n🤖 Generated with [Claude Code](https://claude.com/claude-code)\n' > "$SCRATCH/pr-body-0215-draft.md"
+gh pr create -R gldc/hermes-deploy --draft --base main --head "$BRANCH" \
+  --title "chore(dc1): bump hermes base to v2026.9.24 (0.21.5)" --body-file "$SCRATCH/pr-body-0215-draft.md"
+NN=$(gh pr view "$BRANCH" -R gldc/hermes-deploy --json number --jq .number); echo "PR #$NN"
+gh pr checks "$NN" -R gldc/hermes-deploy --watch; echo "exit=$?"
+```
+Expected: `PR #<NN>` (use it as `#NN` everywhere from here on), then `exit=0`. **STOP** on any other exit. Nothing is synced to the box until this passes.
 
 ---
 
@@ -532,13 +612,14 @@ Expected: `P_SHA`, `image-present`, `≥8G`.
 ssh root@dc1-1.local "bash -s -- $NEW_IMAGE" <<'SH'
 for IMG in "$1" hermes-dc1:local; do
   echo "== $IMG"
-  docker run --rm --entrypoint /bin/sh -v /mnt/cache/compat/hermes-mobile-plugin:/plugin "$IMG" -c '
+  docker run --rm --entrypoint /bin/sh -e PYTHONDONTWRITEBYTECODE=1 -v /mnt/cache/compat/hermes-mobile-plugin:/plugin "$IMG" -c '
     /usr/local/bin/uv pip install --python /opt/hermes/.venv/bin/python pytest pytest-asyncio >/dev/null 2>&1
-    cd /plugin && PYTHONPATH=/opt/hermes /opt/hermes/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider 2>&1 | tail -1'
+    cd /plugin && PYTHONPATH=/opt/hermes /opt/hermes/.venv/bin/python -m pytest tests/ -q -p no:cacheprovider > /tmp/pt.txt 2>&1; rc=$?
+    tail -1 /tmp/pt.txt; echo "exit=$rc"'
 done
 SH
 ```
-Expected: two `N passed` lines, 0 failed, where N is ≥ 155 plus Plan P's new tests and equals the count Plan P's final report records. **STOP** on any failure or error.
+Expected, for each image: `exit=0` and a count line. These containers run as **root**, so it matches Plan P's "as root" figure: `193 passed, 1 skipped` for a 194-test suite. Root bypasses the permission test. The count must equal the one Plan P's final report records. **STOP** on any `exit=` other than 0.
 
 - [ ] **Step 3: The differential real-loader smoke**
 
@@ -734,9 +815,12 @@ Expected: `1`, `1`, then exactly:
 ```bash
 ssh root@dc1-1.local "time docker run --rm --user 10000:10000 --entrypoint /opt/hermes/.venv/bin/python \
   -e HERMES_HOME=/w -e PYTHONPATH=/opt/hermes -w /opt/hermes \
-  -v /mnt/user/appdata/hermes-dryrun-0215:/w -v /mnt/cache/compat/dryrun.py:/dryrun.py:ro $NEW_IMAGE /dryrun.py" 2>&1 | tee "$SCRATCH/dryrun-0215.txt"
+  -v /mnt/user/appdata/hermes-dryrun-0215:/w -v /mnt/cache/compat/dryrun.py:/dryrun.py:ro $NEW_IMAGE /dryrun.py" \
+  > "$SCRATCH/dryrun-0215.txt" 2>&1; echo "exit=$?"
+cat "$SCRATCH/dryrun-0215.txt"
 ```
 Expected:
+- `exit=0` (a traceback in `dryrun.py` is a **STOP**, never a partial read);
 - `config-migrate rc=0` with `[config-migrate] Migrating config schema 37 -> 46`;
 - `T_MIG=<s>` (record it);
 - `sqlite 3.53.4`, `schema 30`, `integrity [('ok',)]`;
@@ -768,7 +852,7 @@ Expected, exactly these five lines:
 
 - [ ] **Step 7: Outage estimate to Gianluca**
 
-Send: *"Dry-run done: config 37→46 = exactly steps 40+44; state.db 26→30 in `T_MIG` s on a copy of the live DB (integrity ok, row count unchanged). Expected outage ≈ 2 min build + `T_MIG` s + 1 min boot."* This is a notification, not a wait (he already said `go`).
+Send: *"Dry-run done: config 37→46 = exactly steps 40+44; state.db 26→30 in `T_MIG` s on a copy of the live DB (integrity ok, row count unchanged). Expected outage ≈ 1 min backup + `T_MIG` s + 1 min boot (the image is pre-built in Task 7 step 4)."* This is a notification, not a wait (he already said `go`).
 
 - [ ] **Step 8: Record the figures for the docs**
 
@@ -783,7 +867,7 @@ Append `T_MIG`, `<M>`, the backup seconds and both diffs to `$SCRATCH/acceptance
 ## Task 6 — B3: sync, preflight, probe-build (old container still serving)
 
 **Files:** none new. The box's deploy tree receives the branch.
-**Interfaces:** Consumes `$WT` at Task 3's commit (plus Task 1's docs commit).
+**Interfaces:** Consumes `$WT` at Task 3's commit (plus Task 1's docs commit). **Precondition:** Task 3 step 11 printed `exit=0` for that exact HEAD. Check that `git -C "$WT" status --porcelain` is empty and that `git -C "$WT" rev-parse HEAD` equals `gh pr view "$NN" -R gldc/hermes-deploy --json headRefOid --jq .headRefOid`.
 
 - [ ] **Step 1: Disk**
 
@@ -825,10 +909,10 @@ Expected: `build exit=0`, `probe-removed`, avail still ≥ 6G. **STOP** on a fai
 
 ---
 
-## Task 7 — B4: pin the rollback, capture baselines, pre-pull the plugin
+## Task 7 — B4: pin the rollback, capture baselines, pre-pull the plugin, pre-build, check the backup list
 
 **Files:** none. On the box: `/mnt/cache/compat/listeners-pre0215.txt`.
-**Interfaces:** Produces the image tag `hermes-dc1:pre-0.21.5` (the only rollback target) and the listener baseline for Task 9 A6.
+**Interfaces:** Produces the image tag `hermes-dc1:pre-0.21.5` (the only rollback target), the listener baseline for Task 9 A6, the pre-built new `hermes-dc1:local` (step 4; the running container stays on the old image ID), and a verified backup list (step 5).
 
 - [ ] **Step 1: Tag and assert**
 
@@ -853,6 +937,10 @@ Expected (ports on tailscaled's lines vary per boot): `0.0.0.0:9119`, `100.89.28
 ```bash
 ssh root@dc1-1.local "bash -s -- $P_SHA" <<'SH'
 set -eu; G="docker exec -u 10000 hermes git -C /opt/data/plugins/hermes-mobile"
+# Unverified by the review: ownership and remote. A root-owned tree gives "dubious ownership" as uid 10000,
+# and an ssh remote has no key for uid 10000. Both are STOPs, never a chown or a remote rewrite.
+stat -c '%u:%g %n' /mnt/user/appdata/hermes/data/plugins/hermes-mobile /mnt/user/appdata/hermes/data/plugins/hermes-mobile/.git
+$G remote get-url origin
 $G pull --ff-only --quiet
 $G log -1 --format=%H
 $G branch -vv | sed -n '/^\*/p'
@@ -860,7 +948,56 @@ $G branch -D fix/adapter-connect-is-reconnect 2>/dev/null || echo "stale branch 
 [ "$($G log -1 --format=%H)" = "$1" ] && echo PLUGIN-AT-P_SHA
 SH
 ```
-Expected: `P_SHA`, `* main <P_SHA7> [origin/main] …`, `Deleted branch fix/adapter-connect-is-reconnect (was 47e9175).` (optional hygiene per assessment §5b), `PLUGIN-AT-P_SHA`. **STOP** if it does not fast-forward.
+Expected:
+- `10000:10000` twice;
+- `https://github.com/gldc/hermes-mobile-plugin(.git)`;
+- `P_SHA`;
+- `* main <P_SHA7> [origin/main] …`;
+- `Deleted branch fix/adapter-connect-is-reconnect (was 47e9175).` (optional hygiene per assessment §5b);
+- `PLUGIN-AT-P_SHA`.
+
+**STOP** if:
+- the owner is not 10000, or the remote is not https (his call);
+- it does not fast-forward.
+
+The running 0.20.4 processes keep the old plugin in memory. Only a process started after this (a crash-restart, or the `hermes mobile` CLI) runs `P_SHA`, and Plan P passes at 8.18.
+
+- [ ] **Step 4: Build the new image while the old container still serves (moves the build out of the outage)**
+
+A container is pinned to its image **ID**. `docker compose build` retags `hermes-dc1:local` to the new image, and the running container, or a restart-policy restart of that same container, stays on the old ID. The rollback target `pre-0.21.5` is already pinned (step 1). Only `docker compose up` would switch images, and that runs only in Task 8 step 9.
+```bash
+ssh root@dc1-1.local 'bash -s' <<'SH'
+cd /mnt/user/appdata/hermes
+OLD=$(docker inspect -f '{{.Image}}' hermes)
+docker compose build >/tmp/build-0215.log 2>&1; echo "build exit=$?"; tail -3 /tmp/build-0215.log
+[ "$(docker inspect -f '{{.Image}}' hermes)" = "$OLD" ] && echo "old container still on old image"
+[ "$(docker image inspect -f '{{.Id}}' hermes-dc1:local)" != "$OLD" ] && echo "local = new image"
+[ "$(docker image inspect -f '{{.Id}}' hermes-dc1:pre-0.21.5)" = "$OLD" ] && echo "rollback tag = running image"
+df -BG --output=avail /var/lib/docker | tail -1
+SH
+```
+Expected:
+- `build exit=0`;
+- `old container still on old image`;
+- `local = new image`;
+- `rollback tag = running image`;
+- avail ≥ 5G.
+
+**STOP** on any other result. Run `docker tag hermes-dc1:pre-0.21.5 hermes-dc1:local` so `:local` is the old image again, then diagnose.
+
+**From here until Task 8, never run `docker compose up`**. It would recreate the container onto 0.21.5 without the backup.
+
+- [ ] **Step 5: Every path in the cold-backup list exists (before the stop, not during it)**
+
+Task 8 step 4's `tar` exits non-zero on a missing path, and there that is a STOP in the middle of the outage.
+```bash
+ssh root@dc1-1.local 'cd /mnt/user/appdata/hermes/data && for p in config.yaml state.db kanban.db projects.db verification_evidence.db auth.json SOUL.md PERSONA.md \
+  channel_directory.json gateway_state.json cron sessions memories platforms pairing hooks mobile plugins skills tailscale; do
+  test -e "$p" || echo "MISSING $p"; done; echo backup-list-checked'
+```
+Expected: `backup-list-checked` with no `MISSING` line. For any `MISSING`:
+- if the path genuinely does not exist on this box (a feature never used), drop it from Task 8 step 4's list **and** from the runbook's list in Task 11 step 5. Record which;
+- if you cannot tell, **STOP** for Gianluca.
 
 ---
 
@@ -873,7 +1010,7 @@ Expected: `P_SHA`, `* main <P_SHA7> [origin/main] …`, `Deleted branch fix/adap
 
 - [ ] **Step 1: Heads-up + the config backup (before the stop, before any edit)**
 
-Tell Gianluca: *"Stopping hermes now; back in ≈ 2 min + `T_MIG` s + 1 min."*
+Tell Gianluca: *"Stopping hermes now; back in ≈ 1 min + `T_MIG` s + 1 min."* Confirm first that the ssh master from the Global Constraints is up (`ssh -O check -o ControlPath=… root@dc1-1.local`), so no 1Password prompt can land mid-outage.
 ```bash
 D8=$(date +%Y%m%d)
 ssh root@dc1-1.local "cd /mnt/user/appdata/hermes && cp -p data/config.yaml data/config.yaml.bak-$D8-pre0215 && stat -c '%a %u:%g %s %n' data/config.yaml data/config.yaml.bak-$D8-pre0215"
@@ -887,9 +1024,10 @@ Expected: two lines, both `640 10000:10000 <same size>`.
 - [ ] **Step 3: Every WAL is 0 bytes**
 
 ```bash
-ssh root@dc1-1.local 'cd /mnt/user/appdata/hermes/data && for w in *.db-wal; do printf "%s %s\n" "$(stat -c %s "$w")" "$w"; done'
+ssh root@dc1-1.local 'cd /mnt/user/appdata/hermes/data && shopt -s nullglob && n=0
+for w in *.db-wal; do n=$((n+1)); printf "%s %s\n" "$(stat -c %s "$w")" "$w"; done; echo "wal-files=$n"'
 ```
-Expected: `0 state.db-wal`, `0 kanban.db-wal` (and `0` for any other `*.db-wal`). **STOP** on any non-zero: the writer did not exit cleanly and a tar would be torn. Run `docker compose start`, wait 60 s, then `docker compose stop` once more and re-check. If it is still non-zero, message Gianluca.
+Expected: `0 state.db-wal` and `0 kanban.db-wal` (and `0` for any other `*.db-wal`), then `wal-files=<n>`. A clean last close may **delete** a `-wal` file instead of truncating it, so a missing `-wal` (even `wal-files=0`) is also clean. **STOP** on any non-zero: the writer did not exit cleanly and a tar would be torn. Run `docker compose start`, wait 60 s, then `docker compose stop` once more and re-check. If it is still non-zero, message Gianluca.
 
 - [ ] **Step 4: Cold backup, extended list (assessment §2), 0600**
 
@@ -983,7 +1121,10 @@ date -u '+%F %T' > /mnt/cache/compat/boot-ts-0215.txt
   || { echo "STOP: preflight/build failed — nothing recreated"; tail -20 /tmp/build-0215.log; }
 SH
 ```
-Expected: `PREFLIGHT OK`, `UP ISSUED`. **STOP** otherwise. `docker compose start` brings the old container back, because `:local` is unchanged if the build failed. Then diagnose.
+Expected: `PREFLIGHT OK`, `UP ISSUED`. The build is a cache hit, because the image was pre-built in Task 7 step 4. **STOP** otherwise. If `up -d` did not run, `docker compose start` brings the old container back: it is still pinned to the old image ID, even though `:local` is now the new image. If `up -d` already removed it, do the following, then diagnose:
+1. Read `schema_version` with the in-image python from `hermes-dc1:pre-0.21.5`.
+2. If it is still 26, retag `pre-0.21.5` → `:local` and run `up -d`. Skip the DB restore: nothing migrated.
+3. If it is not 26, run the full Task 10.
 
 - [ ] **Step 10: Watch the one-way migration; never restart mid-migration**
 
@@ -1017,6 +1158,20 @@ If the deadline passes without `MIGRATED`, **do not restart the container**: a r
 `awk -v ts="$TS" 'FNR==1{f=0} f||substr($0,1,19)>=ts{f=1;print}' <files>`. Log lines start `YYYY-MM-DD HH:MM:SS,mmm`; the per-file reset keeps untimestamped traceback lines that follow a post-boot line. `BOOT_TS` is UTC. A7 first asserts that the container logs in UTC too.
 
 **Rollback triggers.** Go to Task 10 on any of these. The gateway is not `running`. Schema < 30. Slack **and** mobile are both down. A broker regression. Any "must" below that fails and cannot be fixed forward without touching the DBs. **Before** his QA traffic, roll back autonomously and tell him. **After** he has used it, rollback loses his conversations, so it is his call.
+
+"Before his QA traffic" is a **measured** fact, not an assumption, because Slack goes live at boot:
+```bash
+ssh root@dc1-1.local 'bash -s' <<'SH'
+TS=$(cat /mnt/cache/compat/boot-ts-0215.txt)
+docker exec -i -u 10000 hermes /usr/bin/python3 - "$TS" <<'PY'
+import sqlite3, sys
+c = sqlite3.connect("file:/opt/data/state.db?mode=ro", uri=True)
+print("post-boot messages:", c.execute(
+    "SELECT count(*) FROM messages WHERE timestamp >= strftime('%s', ?)", (sys.argv[1],)).fetchone()[0])
+PY
+SH
+```
+`messages.timestamp` is `REAL NOT NULL` epoch seconds (`hermes_state_common.py:411` @9.24), and `BOOT_TS` is UTC, which is what `strftime('%s', …)` assumes. A non-zero count means post-bump conversations exist, and then the rollback is his call. If the query errors, treat it as his call.
 
 - [ ] **A1 Version and config**
 
@@ -1137,13 +1292,19 @@ ssh root@dc1-1.local "bash -s -- $P_SHA" <<'SH'
 set -eu; cd /mnt/user/appdata/hermes
 [ "$(docker exec -u 10000 hermes git -C /opt/data/plugins/hermes-mobile log -1 --format=%H)" = "$1" ] && echo PLUGIN-AT-P_SHA
 jq -r '.platforms.mobile.state, .platforms.slack.state' data/gateway_state.json
+stat -c '%u:%g %a %n' data/mobile/devices.json data/mobile/devices.json.lock 2>&1 || true
 P=$(docker exec -u 10000 hermes bash -lc "hermes mobile pair --name bump-check-0215 --url http://127.0.0.1:9119" | grep -m1 -o '{.*}')
 ID=$(printf %s "$P" | jq -r .device_id); RT=$(printf %s "$P" | jq -r .rt)
 docker exec hermes curl -s -b "hermes_session_rt=$RT" http://127.0.0.1:9119/api/plugins/mobile/me | jq -c '{device_id,name,revoked}'
 docker exec -u 10000 hermes bash -lc "hermes mobile revoke $ID" >/dev/null && echo "revoked $ID"
 SH
 ```
-Expected: `PLUGIN-AT-P_SHA`, `connected`, `connected`, `{"device_id":"<ID>","name":"bump-check-0215","revoked":false}`, `revoked <ID>`. `{"detail":"Not Found"}` = the #67069 gate unmounted the route: **STOP**. The temporary device stays in `devices.json` as revoked; say so in HANDOFF.md.
+Expected, in order:
+- `PLUGIN-AT-P_SHA`;
+- `connected`, `connected`;
+- `10000:10000 600 …devices.json`, then `10000:10000 600 …devices.json.lock`. The lock file exists once any refresh has run since boot; if it is not there yet, re-run the `stat` after the pair below. A `0:0` owner = Plan P's chown did not hold, which locks the dashboard out: **STOP**;
+- `{"device_id":"<ID>","name":"bump-check-0215","revoked":false}`;
+- `revoked <ID>`. `{"detail":"Not Found"}` = the #67069 gate unmounted the route: **STOP**. The temporary device stays in `devices.json` as revoked; say so in HANDOFF.md.
 
 - [ ] **A9 Skills and curator**
 
@@ -1247,7 +1408,7 @@ docker exec hermes curl -sk -H "Host: hermes.kite-opah.ts.net" https://100.89.28
 docker exec -u 10000 hermes bash -lc 'kraken server-time' | head -c 120; echo
 SH
 ```
-Expected: `Hermes Agent v0.20.4 (2026.8.18)`, `_config_version: 37`, `26`, `running connected connected`, the sign-in title, and a Kraken server time. If 0.20.4 logs a schema error on `projects.db` or `verification_evidence.db`, stop the container, restore that file from the same tarball, and start it again.
+Expected: `Hermes Agent v0.20.4 (2026.8.18)`, `_config_version: 37`, `26`, `running connected connected`, the sign-in title, and a Kraken server time. If 0.20.4 logs a schema error on `projects.db` or `verification_evidence.db`, stop the container, restore that file from the same tarball, and start it again. If the 0.21.5 curator archived any skill during the window, restore `skills/` from the same tarball the same way. Check this with `hermes curator status`, or with a diff of `tar -tzf "$B" skills/` against `data/skills/`. With `prune_builtins: false` this should be empty.
 
 - [ ] **Step 3: Tell Gianluca**
 
@@ -1341,7 +1502,11 @@ Edit `docs/dc1-runbook.md` from `## Phase B` to the end:
   - add the ★ checks from Task 4 steps 4–6 verbatim (compat over both plugins, protocol compliance, the `required_credential_files` grep with a positive control);
   - replace "OLD digest" with "the OLD image (`hermes-dc1:local` — the bare old base is usually not on the box)";
   - add a **B2b — migration dry-run** subsection with Task 5 steps 1–6 verbatim, including "on shfs, via the SQLite backup API, never `cp`" and the 450 s STOP.
-- **B4:** `pre-<version>` naming; "never `pre-0.20.4`/`pre-L`/`preperuid` — 0.18.2 builds"; a **B4b plugin checkout** subsection (Task 7 step 3).
+- **B4:**
+  - `pre-<version>` naming, and "never `pre-0.20.4`/`pre-L`/`preperuid` — 0.18.2 builds";
+  - a **B4b plugin checkout** subsection (Task 7 step 3);
+  - a **B4c build before the stop** subsection (Task 7 step 4, including "never `compose up` until B5");
+  - the backup-list existence check (Task 7 step 5).
 - **B5:**
   - the extended backup list and the WAL loop (Task 8 steps 3–4);
   - the backup `integrity_check` + the FTS rebuild (steps 5/6);
@@ -1355,13 +1520,14 @@ Edit `docs/dc1-runbook.md` from `## Phase B` to the end:
 - [ ] **Step 6: The suite still passes (docs are CI-guarded), then commit**
 
 ```bash
-cd "$WT" && PYTHONDONTWRITEBYTECODE=1 python3 -m pytest credexec/tests/ -q -p no:cacheprovider 2>&1 | tail -1
+cd "$WT" && PYTHONDONTWRITEBYTECODE=1 python3 -m pytest credexec/tests/ -q -p no:cacheprovider > "$SCRATCH/pytest-docs.txt" 2>&1; echo "exit=$?"
+tail -1 "$SCRATCH/pytest-docs.txt"
 git add CHANGELOG.md STATE.md HANDOFF.md docs/dc1-runbook.md docs/research/2026-09-28-bump-0.21.5-assessment.md
 git commit -m "docs: 0.21.5 deployed — STATE, CHANGELOG, HANDOFF, runbook Phase B, assessment execution notes
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
-Expected: `725 passed, 1 skipped, …` (a `test_docs_policy_coherence` failure means a doc edit broke a policy-prose invariant: fix the prose). Then a commit.
+Expected: `exit=0`, `725 passed, 1 skipped, …`. Commit only after `exit=0`. (a `test_docs_policy_coherence` failure means a doc edit broke a policy-prose invariant: fix the prose). Then a commit.
 
 - [ ] **Step 7: Wiki (per `~/Developer/wiki/AGENTS.md`: pull --rebase, one commit, push)**
 
@@ -1397,10 +1563,11 @@ Expected: `<sha> sync: YYYY-MM-DD` and `## main...origin/main` (no ahead/behind)
 
 - [ ] **Step 1: Push and open**
 
+The draft PR already exists (Task 3 step 11). Push the docs commits, replace the body and mark the PR ready:
 ```bash
-cd "$WT" && git push -u origin "$BRANCH"
-gh pr create -R gldc/hermes-deploy --base main --head "$BRANCH" \
-  --title "chore(dc1): bump hermes base to v2026.9.24 (0.21.5)" --body-file "$SCRATCH/pr-body-0215.md"
+cd "$WT" && git push origin "$BRANCH"
+gh pr edit "$NN" -R gldc/hermes-deploy --body-file "$SCRATCH/pr-body-0215.md"
+gh pr ready "$NN" -R gldc/hermes-deploy; echo "ready exit=$?"
 ```
 The PR body includes:
 - the summary (base, migrations, decisions);
@@ -1447,14 +1614,24 @@ Ready-to-run next step for him: *"reply `qa pass`, or paste what broke."*
 
 - [ ] **Step 2: Post-QA log check (burst/refresh evidence)**
 
+`dashboard-auth.log` is **JSON lines** (`{"ts":"<ISO-8601 UTC>","event":"refresh_failure",…}`, `hermes_cli/dashboard_auth/audit.py` @9.24). Filter on the fields. The Python-log `awk` passes every line, because `{` sorts after digits, and the exception texts are not event names.
 ```bash
 ssh root@dc1-1.local 'bash -s' <<'SH'
-TS=$(cat /mnt/cache/compat/boot-ts-0215.txt)
-awk -v ts="$TS" 'FNR==1{f=0} f||substr($0,1,19)>=ts{f=1;print}' /mnt/user/appdata/hermes/data/logs/dashboard-auth.log \
-  | grep -ciE 'not recognised|UnknownRefreshToken|reuse detected' || true
+set -u; L=/mnt/user/appdata/hermes/data/logs/dashboard-auth.log
+test -s "$L" || { echo "STOP: $L missing/empty"; exit 1; }
+TS=$(sed 's/ /T/' /mnt/cache/compat/boot-ts-0215.txt)
+echo "refresh_success since boot: $(jq -c --arg ts "$TS" 'select(.ts >= $ts and .event=="refresh_success")' "$L" | wc -l)"
+echo "refresh_failure since boot: $(jq -c --arg ts "$TS" 'select(.ts >= $ts and .event=="refresh_failure")' "$L" | wc -l)"
+jq -c --arg ts "$TS" 'select(.ts >= $ts and .event=="refresh_failure") | del(.ip, .user_agent)' "$L" | tail -20
 SH
+echo "ssh exit=$?"
 ```
-Expected: `0`. Any hit that coincides with his burst = a lost update, and Plan P's fix did not hold live. Tell him, and do **not** merge.
+Expected:
+- `ssh exit=0`;
+- a non-zero `refresh_success` count, which shows the >15 min refresh and the burst actually ran;
+- `refresh_failure since boot: 0`.
+
+A `refresh_failure` whose time matches his burst or refresh test means a lost update, and Plan P's fix did not hold live. Tell him with the printed lines, and do **not** merge. A failure from a device he knows is stale (revoked/old) is not a lost update. Name it, and it is his call.
 
 - [ ] **Step 3: On `qa pass`: merge, verify, clean up**
 
@@ -1482,6 +1659,7 @@ Expected: `exit=0`, `MERGED <sha>`, `compat-removed`. Then a one-line wiki sync 
 | Migration dry-run: steps 40+44, `T_MIG` | Task 5 |
 | B3: rsync without `--delete`, stale-rootfs check, `_bindscan` both flags, probe build | Task 6 |
 | B4 tag + label assert | Task 7.1 |
+| Build before the stop (review 2026-09-28) + backup-list pre-check | Task 7.4, 7.5 |
 | Plugin `pull --ff-only` + `log -1` = `P_SHA` (★6b) | Task 7.3 |
 | `config.yaml.bak-…-pre0215` | Task 8.1 |
 | Stop, WAL 0 | Task 8.2–3 |
@@ -1512,8 +1690,9 @@ Expected: `exit=0`, `MERGED <sha>`, `compat-removed`. Then a one-line wiki sync 
 - `P_SHA` (Task 0.1);
 - `T_MIG` (Task 5.5);
 - `D8`/`PIN_DATE` (`date` on the day);
-- `<A_PR>`/`<B_PR>` (Plans A/B);
-- `#NN` (Task 12.1);
+- `<A_PR>`/`<B_PR>`/`<C_PR>` (Plans A/B/C);
+- `S_PLUGIN_SHA` (Task S step 3);
+- `#NN` (Task 3 step 11, the draft PR);
 - `<T>` (the table printed by 8.5);
 - `PLUGIN_REF` (Plan P's branch).
 
