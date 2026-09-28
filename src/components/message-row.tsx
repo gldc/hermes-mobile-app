@@ -47,6 +47,10 @@ export interface ChatItem {
   /** Natural dimensions of the attached photo, for aspect-correct layout. */
   imageWidth?: number;
   imageHeight?: number;
+  /** User message delivered via session.steer into the running turn (spec §5.3). */
+  steered?: boolean;
+  /** Status rows with special rendering. 'stopped' = the turn ended with status "interrupted". */
+  marker?: 'stopped';
 }
 
 function ReasoningDisclosure({ text }: { text: string }) {
@@ -178,6 +182,8 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
         ) : null}
         {item.text ? (
           <View
+            accessible
+            accessibilityLabel={item.steered ? `You steered: ${item.text}` : undefined}
             style={{
               maxWidth: '82%',
               backgroundColor: colors.userBubble,
@@ -190,6 +196,12 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
             <Text selectable style={{ color: colors.text, fontSize: 17, lineHeight: 24 }}>
               {item.text}
             </Text>
+          </View>
+        ) : null}
+        {item.steered ? (
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 4, paddingTop: 4, paddingRight: 6 }}>
+            <Icon sf="arrow.turn.down.right" size={11} color={colors.textFaint} />
+            <Text style={{ color: colors.textFaint, fontSize: 12, fontWeight: '600' }}>Steered</Text>
           </View>
         ) : null}
       </View>
@@ -237,6 +249,18 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
   if (item.role === 'approval' || item.role === 'subagent' || item.role === 'todo') return null;
 
   // status
+  if (item.marker === 'stopped') {
+    return (
+      <View
+        accessible
+        accessibilityLabel="Response stopped"
+        style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingVertical: 6 }}
+      >
+        <Icon sf="stop.circle" size={13} color={colors.textDim} />
+        <Text style={{ color: colors.textDim, fontSize: 13, fontWeight: '600' }}>Stopped</Text>
+      </View>
+    );
+  }
   return (
     <Text style={{ color: colors.textFaint, fontSize: 12.5, paddingVertical: 3 }}>{item.text}</Text>
   );
