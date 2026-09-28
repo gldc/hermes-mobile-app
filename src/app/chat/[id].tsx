@@ -482,6 +482,10 @@ export default function ChatScreen() {
     orchestratorRef.current = t.orchestrator;
     setTurn(t.store.getState());
     const unsubStore = t.store.subscribe(() => setTurn(t.store.getState()));
+    // Foreground triggers are held off until start() owns the single-flight slot (PR #22
+    // hold-off, review M2): before that, hydrate + first-paint history are still running and a
+    // reconnect would flash "Connection lost" and back off for nothing.
+    let started = false;
     (async () => {
       try {
         await hydrateProfileStore(); // no-op when sessions screen already ran
@@ -499,6 +503,7 @@ export default function ChatScreen() {
         // connect → resume → history (spec §7). The first paint above already replaced the
         // transcript, so the initial run skips a second load that would re-key and re-fade
         // every row (review I1); reconnects still reload.
+        started = true;
         await t.orchestrator.start({ historyLoaded });
       } catch {
         if (!cancelledRef.current) setError('Could not open a live session. Check your VPN or Wi-Fi.');
@@ -508,9 +513,10 @@ export default function ChatScreen() {
     // down without a close event. On return, if the socket is not OPEN, run the
     // single-flight reconnect (it joins a heartbeat/close-triggered run).
     const sub = AppState.addEventListener('change', (next) => {
-      if (cancelledRef.current) return;
+      if (cancelledRef.current || !started) return;
       if (shouldReconnect({ hasSocket: true, isOpen: t.client.isOpen, appState: next })) {
-        void t.orchestrator.reconnect('foreground');
+        // May join a failing start(): its caller already reports that failure (review M1).
+        t.orchestrator.reconnect('foreground').catch(() => {});
       }
     });
     return () => {
