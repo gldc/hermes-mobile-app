@@ -296,3 +296,34 @@ export function mergeRequestRows<T extends { key: string }>(
   for (const card of tail) rows.push({ kind: 'request', card });
   return rows;
 }
+
+// ── Plan B: composer selectors and request-card semantics ───────────────────────────────────
+
+export type ComposerMode =
+  | { kind: 'send'; enabled: boolean } // idle
+  | { kind: 'stop+steer'; stopEnabled: boolean; steerEnabled: boolean }; // waiting/streaming/stopping
+
+/** Spec §5.2. Images are not steerable, so steer needs text; a staged photo waits for idle. */
+export function composerMode(model: TurnModel, hasText: boolean, hasImage: boolean): ComposerMode {
+  switch (model.turn) {
+    case 'idle':
+      return { kind: 'send', enabled: hasText || hasImage };
+    case 'waiting':
+    case 'streaming':
+      return { kind: 'stop+steer', stopEnabled: true, steerEnabled: hasText };
+    case 'stopping':
+      return { kind: 'stop+steer', stopEnabled: false, steerEnabled: false };
+  }
+}
+
+/** 0.21.5 approvals resolve per request id (all actionable). Legacy approvals resolve the OLDEST
+ *  pending one server-side, so only the oldest unresolved legacy card is actionable (spec §6.1). */
+export function isApprovalActionable(requests: RequestCardState[], id: string): boolean {
+  const card = requests.find((r) => r.id === id);
+  if (!card || card.kind !== 'approval' || card.status !== 'pending') return false;
+  if (!card.legacy) return true;
+  const oldest = requests.find(
+    (r) => r.kind === 'approval' && r.legacy && (r.status === 'pending' || r.status === 'answering'),
+  );
+  return oldest?.id === id;
+}
