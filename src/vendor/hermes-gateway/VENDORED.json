@@ -1,0 +1,27 @@
+{
+  "tag": "v2026.9.24",
+  "commit": "f97608f178d1ffeca59860195ab7da295f7c8e5f",
+  "source": "NousResearch/hermes-agent",
+  "files": {
+    "json-rpc-channel.ts": {
+      "upstream_sha256": "39ca0506154add3036c833ec092b6d36c9da8860025e80fe9813c060364dc18a",
+      "vendored_sha256": "780b32c5c2f7b5d4ddd0a7e25b62f03b608a82e70a228baf7092643ecc2d6b57"
+    },
+    "json-rpc-gateway.ts": {
+      "upstream_sha256": "e9d41048d763c027a4493e45b8a9ba094602f293cbf4a160bc3807a5eb4f14cb",
+      "vendored_sha256": "82e5ff800a17d1ba1b26c421125473a12d72d45b293579c4b4d8857e0d490aa3"
+    },
+    "gateway-events.ts": {
+      "upstream_sha256": "f2172b313c2002d15784d0d74c988cb00e15011220fa9d26d5ce38222d2611e0",
+      "vendored_sha256": "0f429642897210cd2db3291933f15c05d49ff18a5532e01f582b37f3fe5832fc"
+    },
+    "gateway-contract.generated.ts": {
+      "upstream_sha256": "e41fcf57c1f6e43bebe34cb99a4f2a695edde6eae796faf65da7b230408cd071",
+      "vendored_sha256": "e41fcf57c1f6e43bebe34cb99a4f2a695edde6eae796faf65da7b230408cd071"
+    },
+    "LICENSE": {
+      "upstream_sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6",
+      "vendored_sha256": "821556e6336796450ab852d375117b48a4887e71d255794fd6318d99982a5ab6"
+    }
+  }
+}
