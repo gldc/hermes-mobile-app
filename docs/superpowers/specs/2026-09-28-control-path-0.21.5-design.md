@@ -1,9 +1,8 @@
 # Control path, interactive requests & polish against hermes 0.21.5 — design
 
 - **Date:** 2026-09-28
-- **Status:** Revision 2. It incorporates the adversarial review (1 BLOCKER, 11 MAJOR, 21 MINOR, all
-  addressed below; the review is recorded in `docs/research/2026-09-28-spec-review.md`). Pending
-  sign-off from Gianluca, then the implementation plan.
+- **Status:** Revision 2, **approved by Gianluca 2026-09-28**. It incorporates the adversarial review (1 BLOCKER, 11 MAJOR, 21 MINOR, all
+  addressed below; the review is recorded in `docs/research/2026-09-28-spec-review.md`).
 - **Author:** gldc (with Claude)
 - **Repos:** `gldc/hermes-mobile-app` (most of the work), `gldc/hermes-mobile-plugin` (a store fix and
   pushes), `gldc/hermes-deploy` (the gateway bump)
@@ -34,7 +33,8 @@ problems:
 - Scope as in §3, **including sudo and secret prompts** through the safe design in §6.4.
 - Merge `hermes-deploy` PR #29 before the bump.
 - Keep compaction near **750K** tokens (`compression.threshold_tokens: null`).
-- **Open, needed before the bump:** the curator setting (§9.2 step 7).
+- Curator: **`prune_builtins: false`**, upstream's new default. The new 14/30-day windows then apply
+  only to agent-authored skills.
 
 **Success:**
 
@@ -572,7 +572,7 @@ and additions:
 7. **His decisions applied** (back up `config.yaml` as `config.yaml.bak-YYYYMMDD-<reason>` before each
    edit):
    - `compression.threshold_tokens: null`, to keep roughly 750K on k3's 1M context;
-   - **curator:** `prune_builtins` and the new 14/30-day windows — **awaiting his choice**.
+   - **curator:** `curator.prune_builtins: false`, his decision; the migrated 14/30-day windows stay.
 8. **B5: back up and bring up.**
    1. `cp -p data/config.yaml data/config.yaml.bak-YYYYMMDD-pre0215`.
    2. Stop, and check the WAL is at 0.
