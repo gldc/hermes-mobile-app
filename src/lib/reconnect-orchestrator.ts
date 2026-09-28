@@ -223,9 +223,13 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
   function singleFlight(body: () => Promise<void>): Promise<void> {
     if (disposed) return Promise.resolve();
     if (inflight) return inflight;
-    const run = body().finally(() => {
-      if (inflight === run) inflight = null;
-    });
+    // Claim the slot BEFORE the body runs (review M2): start()'s synchronous client.invalidate()
+    // can fire onState('closed') → reconnect('close') re-entrantly, which must join this run.
+    const run = Promise.resolve()
+      .then(body)
+      .finally(() => {
+        if (inflight === run) inflight = null;
+      });
     inflight = run;
     return run;
   }

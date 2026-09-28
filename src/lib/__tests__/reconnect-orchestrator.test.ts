@@ -228,6 +228,26 @@ describe('single-flight', () => {
     expect(h.client.connect).toHaveBeenCalledTimes(1);
   });
 
+  it("M2: a close fired synchronously by start()'s invalidate() joins start — one mint, one connect", async () => {
+    // Real adapter: invalidating an open socket emits onState('closed') synchronously, and the
+    // transport turns that into reconnect('close'). singleFlight must already own the slot.
+    const h = harness();
+    h.results['session.resume'] = [resume(), resume()];
+    const joined: Promise<void>[] = [];
+    h.client.invalidate.mockImplementation(() => {
+      joined.push(h.orch.reconnect('close'));
+      return h.log.push('invalidate');
+    });
+    const s = h.orch.start();
+    await s;
+    await Promise.all(joined);
+    expect(joined.length).toBeGreaterThan(0);
+    for (const j of joined) expect(j).toBe(s);
+    expect(h.deps.mintUrl).toHaveBeenCalledTimes(1);
+    expect(h.client.connect).toHaveBeenCalledTimes(1);
+    expect(h.actions).not.toContainEqual({ type: 'socket.lost' });
+  });
+
   it('a trigger after the run finished starts a new run', async () => {
     const h = harness();
     h.results['session.resume'] = [resume(), resume()];
