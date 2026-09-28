@@ -1,25 +1,21 @@
-import { nextComposerHeight, COMPOSER_MAX_HEIGHT } from '../composer-height';
+import { composerMinHeight } from '../composer-height';
 
-test('empty value has no explicit height override', () => {
-  expect(nextComposerHeight(180, '')).toBeUndefined();
+test('the commit that clears the value leaves minHeight unset', () => {
+  // The empty value has not been committed yet, so nothing flips on this commit.
+  expect(composerMinHeight('', false)).toBeUndefined();
 });
 
-test('non-empty value under the max uses the measured content height', () => {
-  expect(nextComposerHeight(60, 'hello')).toBe(60);
+test('an empty value that has been committed (after a clear, or on mount) gets minHeight 0', () => {
+  expect(composerMinHeight('', true)).toBe(0);
 });
 
-test('non-empty value over the max clamps to COMPOSER_MAX_HEIGHT', () => {
-  const longText = 'a very long multi-line message '.repeat(10);
-  expect(nextComposerHeight(400, longText)).toBe(COMPOSER_MAX_HEIGHT);
+test('a clear and the commit after it produce different minHeights (the re-measure trigger)', () => {
+  const onClear = composerMinHeight('', false);
+  const afterSettle = composerMinHeight('', true);
+  expect(afterSettle).not.toBe(onClear);
 });
 
-test('clearing after a tall message drops the override, not the last height', () => {
-  const grown = nextComposerHeight(200, 'six lines of wrapped text that grew the input');
-  expect(grown).toBe(COMPOSER_MAX_HEIGHT);
-  const afterSend = nextComposerHeight(200, ''); // parent clears value; a stale content size may lag
-  expect(afterSend).toBeUndefined();
-});
-
-test('a freshly mounted empty composer has no override regardless of a stray content size', () => {
-  expect(nextComposerHeight(0, '')).toBeUndefined();
+test('a non-empty value never sets minHeight, so native auto-grow is untouched', () => {
+  expect(composerMinHeight('hello', false)).toBeUndefined();
+  expect(composerMinHeight('six lines of wrapped text '.repeat(10), true)).toBeUndefined();
 });

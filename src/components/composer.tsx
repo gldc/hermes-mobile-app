@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useLayoutEffect, useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { Icon } from '@/components/icon';
-import { COMPOSER_MAX_HEIGHT, nextComposerHeight } from '@/lib/composer-height';
+import { composerMinHeight } from '@/lib/composer-height';
 import { useTheme } from '@/theme';
 
 interface ComposerProps {
@@ -43,12 +43,15 @@ export function Composer({
   const { colors, dark } = useTheme();
   const canSend = !disabled && !streaming && (value.trim().length > 0 || Boolean(stagedImageUri));
 
-  // Tracks the TextInput's own reported content height. nextComposerHeight()
-  // clears the height override once `value` is empty again, so a send
-  // (which clears `value` in the parent) snaps the input back to one line —
-  // see src/lib/composer-height.ts.
-  const [contentHeight, setContentHeight] = useState(0);
-  const composerHeight = nextComposerHeight(contentHeight, value);
+  // Fabric measures a JS-cleared TextInput against its previous text, so after
+  // a send it would keep its grown height. Re-render once after an empty value
+  // is committed so composerMinHeight() can flip a layout-neutral prop and
+  // force a re-measure — see src/lib/composer-height.ts.
+  const [emptyCommitted, setEmptyCommitted] = useState(value === '');
+  useLayoutEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- the follow-up commit IS the fix
+    setEmptyCommitted(value === '');
+  }, [value]);
 
   return (
     // Bottom spacing is owned by the chat screen, which tracks the keyboard
@@ -110,7 +113,6 @@ export function Composer({
         <TextInput
           value={value}
           onChangeText={onChangeText}
-          onContentSizeChange={(e) => setContentHeight(e.nativeEvent.contentSize.height)}
           editable={!disabled}
           multiline
           placeholder={streaming ? 'Hermes is responding…' : 'Chat with Hermes'}
@@ -119,8 +121,8 @@ export function Composer({
             color: colors.text,
             fontSize: 17,
             lineHeight: 23,
-            height: composerHeight,
-            maxHeight: COMPOSER_MAX_HEIGHT,
+            minHeight: composerMinHeight(value, emptyCommitted),
+            maxHeight: 120,
             paddingTop: 10,
             paddingBottom: 2,
           }}
