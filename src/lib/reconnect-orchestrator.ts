@@ -194,6 +194,13 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
         if (running) await replay(res.session_id);
         if (disposed) return;
       }
+      // Fix round 1: a trigger that JOINS this run (singleFlight) after session.resume must not
+      // resolve `ready` on a socket that died in the meantime. loadHistory is a REST call and a
+      // replay RPC failure is deliberately swallowed (0.20.4 -32601 compat), so neither one
+      // notices a closed socket — nothing else touches the socket again before flushParked().
+      // Fail the attempt here so the retry loop redials (spec §7: one single-flight sequence per
+      // reconnect trigger; a joined trigger must not be silently dropped on a dead connection).
+      if (!deps.client.isOpen) throw new Error('socket lost during reconnect');
       flushParked();
     } catch (e) {
       parked = null; // this generation's parked frames die with it; the next attempt re-resumes

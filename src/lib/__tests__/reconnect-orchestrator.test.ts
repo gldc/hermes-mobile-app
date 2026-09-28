@@ -14,7 +14,7 @@ function harness(over: Partial<OrchestratorDeps> = {}) {
   const gate = (name: string) => new Promise<void>((r) => (gates[name] ??= []).push(r));
   const open = (name: string) => (gates[name] ?? []).splice(0).forEach((r) => r());
   const client = {
-    isOpen: false,
+    isOpen: true,
     invalidate: jest.fn(() => log.push('invalidate')),
     connect: jest.fn(async (url: string) => {
       log.push(`connect:${url}`);
@@ -305,6 +305,40 @@ describe('parking live events during steps 2–4', () => {
     expect(h.client.call.mock.calls.filter((c) => c[0] === 'session.resume')).toHaveLength(2);
     // the frame parked during the failed attempt died with it — it must not surface later
     expect(h.applied).toEqual([]);
+  });
+});
+
+describe('socket death after resume (fix round 1)', () => {
+  it('a socket that dies during history/replay makes the attempt redial instead of reporting ready on a dead socket', async () => {
+    const phases: string[] = [];
+    const h = harness({ onPhase: (p) => phases.push(p.kind === 'attempt' ? `attempt${p.attempt}` : p.kind) });
+    h.holdHistory();
+    h.results['session.resume'] = [resume({ running: false }), resume({ running: false })];
+    const run = h.orch.reconnect('close');
+    await flush();
+    // the socket died while history (a REST call) was in flight — no code here notices
+    h.client.isOpen = false;
+    // a frame lands on the dying connection before the close settles: parked, dies with the attempt
+    h.orch.onLiveEvent({ type: 'message.delta', session_id: 'live-1', seq: 1 } as any);
+    h.open('historyHeld'); // attempt 1's history resolves; the isOpen check then fails the attempt
+    await flush(); // attempt 2 progresses up to its own fresh history hold
+    h.open('historyHeld'); // attempt 2's history resolves; isOpen is true again (fresh connect)
+    await run;
+    expect(h.deps.mintUrl).toHaveBeenCalledTimes(2);
+    expect(h.client.connect).toHaveBeenCalledTimes(2);
+    expect(h.applied).toEqual([]); // the dead attempt's parked frame never surfaces
+    expect(phases).toEqual(['attempt1', 'attempt2', 'ready']); // ready only after the redial
+  });
+
+  it('start() rejects when the socket dies before the flush (post-resume)', async () => {
+    const h = harness();
+    h.holdHistory();
+    h.results['session.resume'] = [resume({ running: false })];
+    const s = h.orch.start();
+    await flush();
+    h.client.isOpen = false;
+    h.open('historyHeld');
+    await expect(s).rejects.toThrow('socket lost during reconnect');
   });
 });
 
