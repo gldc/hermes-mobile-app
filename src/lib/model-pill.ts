@@ -37,7 +37,7 @@ export function withFallbackModel(s: ModelPillState, modelId: string | null | un
  * know rather than clobber the session slot back to the default. */
 export function withResumedModel(
   s: ModelPillState,
-  info: { model?: string; lazy?: boolean } | undefined,
+  info: { model?: string | null; lazy?: boolean | null } | null | undefined,
 ): ModelPillState {
   if (!info?.model || info.lazy) return s; // lazy / absent → nothing real to adopt
   return withSessionModel(s, info.model);

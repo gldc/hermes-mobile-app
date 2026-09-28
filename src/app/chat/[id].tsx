@@ -21,7 +21,7 @@ import {
   pillModelId,
 } from '@/lib/model-pill';
 import { withProfile } from '@/api/profiles';
-import type { GatewayEvent, SessionCreateResult, SessionResumeResult } from '@/api/types';
+import type { GatewayEvent } from '@/vendor/hermes-gateway';
 import { setAttachHandler } from '@/attach-bus';
 import { ApprovalCard } from '@/components/approval-card';
 import { Icon } from '@/components/icon';
@@ -226,17 +226,18 @@ export default function ChatScreen() {
    * last batch finalized / none exists). */
   function handleSubagentEvent(e: GatewayEvent) {
     const ts = Date.now();
+    const sub = { type: e.type, payload: e.payload as Record<string, unknown> | undefined };
     setItems((prev) => {
       const k = activeSubagentKeyRef.current;
       const idx = k ? prev.findIndex((it) => it.key === k) : -1;
       if (idx >= 0 && prev[idx].subagent && !prev[idx].subagent!.finalized) {
         const next = [...prev];
-        next[idx] = { ...prev[idx], subagent: reduceSubagentEvent(prev[idx].subagent!, e, ts) };
+        next[idx] = { ...prev[idx], subagent: reduceSubagentEvent(prev[idx].subagent!, sub, ts) };
         return next;
       }
       const key = nextKey();
       activeSubagentKeyRef.current = key;
-      return [...prev, { key, role: 'subagent', text: '', subagent: reduceSubagentEvent(emptyBatch(), e, ts) }];
+      return [...prev, { key, role: 'subagent', text: '', subagent: reduceSubagentEvent(emptyBatch(), sub, ts) }];
     });
     if (e.type === 'subagent.complete') {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
@@ -346,9 +347,10 @@ export default function ChatScreen() {
 
   function wireGateway(gw: GatewayClient) {
     const offEvent = gw.onEvent((e) => {
-      switch (e.type) {
+      const pl = e.payload as any; // transitional (Task 2): Task 8 types each event
+      switch (e.type as string) {
         case 'message.delta':
-          appendDelta(e.payload?.text ?? '');
+          appendDelta(pl?.text ?? '');
           break;
         case 'message.complete':
           finishAssistant();
@@ -361,24 +363,24 @@ export default function ChatScreen() {
         case 'tool.start':
           setWaiting(false);
           finishAssistant();
-          if (e.payload?.name === 'todo') break; // todo renders as TodoCard on complete
-          startTool(e.payload);
+          if (pl?.name === 'todo') break; // todo renders as TodoCard on complete
+          startTool(pl);
           break;
         case 'tool.complete':
-          if (e.payload?.name === 'todo') {
-            if (!upsertTodo(e.payload)) append('status', 'Todo update failed');
+          if (pl?.name === 'todo') {
+            if (!upsertTodo(pl)) append('status', 'Todo update failed');
             break;
           }
-          completeTool(e.payload);
+          completeTool(pl);
           break;
         case 'status.update':
-          if (e.payload?.text) append('status', e.payload.text);
+          if (pl?.text) append('status', pl.text);
           break;
         case 'approval.request':
           setWaiting(false);
           finishAssistant();
           Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          appendApproval(e.payload);
+          appendApproval(pl);
           break;
         case 'subagent.spawn_requested':
         case 'subagent.start':
@@ -389,18 +391,20 @@ export default function ChatScreen() {
           handleSubagentEvent(e);
           break;
         case 'session.info':
-          if (e.payload?.model) setPill((p) => withSessionModel(p, e.payload.model));
+          if (pl?.model) setPill((p) => withSessionModel(p, pl.model));
           break;
         case 'error':
           cancelPendingApprovals(); // gateway force-denies on interrupt/failure
           finalizeSubagents();
           setStreaming(false);
           setWaiting(false);
-          setError(e.payload?.message ?? 'agent error');
+          setError(pl?.message ?? 'agent error');
           break;
       }
     });
-    const offClose = gw.onClose(() => dropAndReconnect());
+    const offClose = gw.onState((state) => {
+      if (state === 'closed') dropAndReconnect();
+    });
     gwUnsubsRef.current = [offEvent, offClose];
   }
 
@@ -421,7 +425,7 @@ export default function ChatScreen() {
     gwRef.current = gw;
     wireGateway(gw);
     if (storedIdRef.current) {
-      const resumed = await gw.call<SessionResumeResult>(
+      const resumed = await gw.call(
         'session.resume',
         withProfile({ session_id: storedIdRef.current }, profileRef.current),
       );
@@ -643,7 +647,7 @@ export default function ChatScreen() {
       // Sessions are minted lazily on the first message so abandoned "new
       // chat" screens never create empty sessions server-side.
       if (!liveIdRef.current) {
-        const created = await gw.call<SessionCreateResult>(
+        const created = await gw.call(
           'session.create',
           withProfile({}, profileRef.current),
         );

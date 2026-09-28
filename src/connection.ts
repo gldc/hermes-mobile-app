@@ -220,11 +220,17 @@ export async function disconnect(): Promise<void> {
   rest = null;
 }
 
-/** Mint a fresh single-use ticket and open a gateway socket (tickets live 30s — always mint immediately before connecting). */
-export async function openGateway(): Promise<GatewayClient> {
+/** Mint a fresh single-use ticket and return the ws URL to dial (tickets live
+ * 30s — always mint immediately before connecting). */
+export async function mintGatewayUrl(): Promise<string> {
   const { ticket } = await withAuthRetry((r) => r.wsTicket());
-  const r = getRest();
-  const gw = new GatewayClient((url) => makeNativeSocket(url));
-  await gw.connect(r.wsUrl(ticket));
+  return getRest().wsUrl(ticket);
+}
+
+/** Transitional — deleted in Task 8 when the chat screen owns one client per screen. */
+export async function openGateway(): Promise<GatewayClient> {
+  const url = await mintGatewayUrl();
+  const gw = new GatewayClient({ socketFactory: makeNativeSocket });
+  await gw.connect(url);
   return gw;
 }

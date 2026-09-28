@@ -11,14 +11,6 @@
 import type { GatewayClient } from './gatewayClient';
 import { RpcError } from './gatewayClient';
 
-/** Gateway `config.set` reply shape for key:'model'. */
-export interface ConfigSetModelResult {
-  value?: string;
-  warning?: string;
-  confirm_required?: boolean;
-  confirm_message?: string;
-}
-
 export type SwitchOutcome =
   | { kind: 'ok'; model: string | null } // switched; `model` is the resolved id (if returned)
   | { kind: 'confirm'; message: string } // expensive-model gate — re-call with confirmExpensive
@@ -42,7 +34,7 @@ export async function switchSessionModel(
   args: { sessionId: string; provider: string; model: string; confirmExpensive?: boolean },
 ): Promise<SwitchOutcome> {
   try {
-    const res = await call<ConfigSetModelResult>('config.set', {
+    const res = await call('config.set', {
       session_id: args.sessionId,
       key: 'model',
       value: buildSessionModelValue(args.provider, args.model),
@@ -55,7 +47,7 @@ export async function switchSessionModel(
       };
     }
     if (res?.warning && BUSY_RE.test(res.warning)) return { kind: 'busy' };
-    return { kind: 'ok', model: res?.value ?? null };
+    return { kind: 'ok', model: typeof res?.value === 'string' ? res.value : null };
   } catch (e) {
     if (e instanceof RpcError && e.code === SESSION_BUSY_CODE) return { kind: 'busy' };
     const message = e instanceof Error ? e.message : String(e);
