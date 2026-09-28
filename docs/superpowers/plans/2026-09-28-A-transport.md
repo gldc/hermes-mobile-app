@@ -2,6 +2,24 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Revision log (review 2026-09-28)
+
+1. Task 8 `onNewCard`: the Warning haptic no longer fires for `vault-declined` cards (declined on arrival,
+   nothing to answer). One-line conditional; the verified code is otherwise unchanged.
+2. **Merge order** (all three app plans): A merges first (B is cut from A's merged `main`); C is
+   independent and merges before B (C and B both edit `composer.tsx`; B's plan is written against C's file).
+3. **Open finding, needs a decision (not patched here):** the in-flight replay uses the highest seq seen
+   as `last_seen`, and `loadHistory` replaces `items` before the replay. For a turn that was streaming
+   when the socket dropped, the text streamed *before* the drop is unpersisted, so the history replace
+   removes it and the replay (seq > watermark) does not bring it back — only text streamed during the gap
+   reappears. Spec §10.2 expects "reconnect mid-turn → the partial text is restored". Options for
+   Gianluca: (a) accept the loss and amend the spec; (b) track a second, per-turn watermark (the seq of the
+   last `message.complete`/`message.start` seen) and replay from it while `running`, so the batch holds the
+   whole unpersisted turn and the existing "apply after the last `message.complete`" rule dedupes it
+   (bounded by the server buffer — `truncated` still skips); (c) keep the trailing incomplete assistant
+   item across the history replace. (b) is the smallest change consistent with spec §7.4. Plan B Task 11
+   Step 8 item 2b records what actually happens on 0.21.5.
+
 **Goal:** Replace the hand-written WebSocket JSON-RPC client with the vendored upstream client behind a typed adapter, and move the chat screen to one persistent transport per screen. That transport includes server→client request routing, a server-driven turn controller, and a tested single-flight reconnect orchestrator (resume → history → in-flight replay). The result works on a 0.20.4 gateway (legacy approvals) and is ready for 0.21.5.
 
 **Architecture:** `src/vendor/hermes-gateway/` holds byte-pinned upstream files, reached only through an app-owned barrel. `src/api/gatewayClient.ts` adapts `JsonRpcGatewayClient`: it gates `connect()` on `gateway.ready` plus one tick, maps errors to `RpcError`, and runs with `replay:false`. Four pure modules in `src/lib/` hold the logic:
@@ -3480,10 +3498,13 @@ with:
 
   /** A request card appeared (live or replayed): close the streaming segment so later text
    * renders after the card; warn only for live arrivals (replays never fire haptics). */
-  function onNewCard(_card: RequestCardState, replayed: boolean) {
+  function onNewCard(card: RequestCardState, replayed: boolean) {
     setThinking(false);
     finishAssistant();
-    if (!replayed) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    // Vault prompts are declined on arrival (spec §6.3): nothing to answer, so no "needs you" haptic.
+    if (!replayed && card.kind !== 'vault-declined') {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    }
   }
 
   /** Transcript side of every gateway event (live and replayed). The transport has already

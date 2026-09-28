@@ -2,6 +2,34 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Revision log (review 2026-09-28)
+
+This plan was written before Plan A's final code existed. The adversarial review re-based it on A's
+actual code blocks (`2026-09-28-A-transport.md` Tasks 3–8). Changes:
+
+1. **Task 1** no longer re-implements D1/D2 (A's reducer already does `resolution`, re-delivery reset and
+   the `params.answers` merge). B only appends `composerMode` + `isApprovalActionable`; the D1/D2 tests stay
+   as regression tests against A's reducer. B's `answerRequest` was dropped (it removed A's "only open
+   cards can be answered" guard).
+2. **Task 2** uses A's `withStaleSessionRetry(sessionId, run, resume)` from `src/api/stale-session.ts`
+   instead of a second copy with a different signature; `resumeStored` now returns the fresh live id
+   (A's `ChatTransport.resumeStored()`). The 15 s stop fallback now re-enables Stop (`stop.failed`) if the
+   `stop-timeout` reconnect finds the turn still running (A keeps `stopping` on `resume.seeded{running}`).
+3. **Task 4** wiring rewritten against A's screen: `callGw()` null-safe helper (A's `gw()` is nullable),
+   `resumeStored` via A's transport, and the "Stopped" marker edited inside A's `applyEvent` (A has no
+   screen-level `dispatchTurn(event.message.complete)` and no `replayed` variable; it has `live`/`status`).
+4. **Task 7** keeps `tsc` green: it updates A's `renderRequest` approval branch to the new `ApprovalCard`
+   props and deletes A's `activeLegacyId`/`approvalInfo` — it must **not** delete A's `respondApproval`
+   (still used until Task 11).
+5. **Task 9** appends to the existing `__tests__/skills.test.ts` (the old step would have overwritten it).
+6. **Task 10** data test installs the fake `WebSocket` global (A's fixture contract).
+7. **Task 11** uses A's `mergeRequestRows`/`TranscriptRow`/`reversedRows` (B's `mergeTranscript` would
+   clash with A's `TranscriptRow` import and change orphan semantics); `transcript-rows.ts` now holds only
+   `rowIndexOf`. It replaces A's `renderRequest` and `respondApproval` instead of the FlatList props.
+8. **Merge order with Plan C** made explicit (C merges first; Task 4's composer edits are written
+   against C's file). Gate-then-commit made exit-code-safe. Setup moved to the top. A 0.21.5
+   "reconnect mid-turn → partial text restored" check added to Task 11 Step 8.
+
 **Goal:** Give the chat screen a Stop button, steer-while-running, and interactive cards for every
 mobile-supported server request (approval on both paths, clarify single + batch, sudo/secret secure
 entry behind Face ID, the vault-declined note), on top of Plan A's transport.
@@ -23,9 +51,17 @@ them). Evidence: `docs/research/2026-09-28-api-delta-0.21.5.md` §1–§2, `docs
 (M5, M8, M10, m9, m11, m12, m14, m15, m16).
 
 **Base:** Plan A (`2026-09-28-A-transport.md`) is **merged to `main` first**. This branch,
-`feat/turn-control-cards`, is cut from A's merged `main`. Plan C (polish) also edits
-`src/components/composer.tsx`; whichever merges second rebases and keeps both edits (C touches the
-`TextInput` height handling, B touches props, placeholder and the right-hand button cluster).
+`feat/turn-control-cards`, is cut from A's merged `main` — run the **Setup** step in "Branch
+verification and PR" (end of this plan) **before Task 1**.
+
+**Merge order with Plan C:** C (`fix/attach-sheet-composer-height`, independent, small) **merges before
+B**. Task 4's composer edits are written against C's resulting `composer.tsx`: C adds
+`import { useState } from 'react'`, the `composer-height` import, a `contentHeight`/`composerHeight` block
+right after the `canSend` line, and turns the `TextInput`'s one-line `style` into a multi-line object with
+`onContentSizeChange` + `height`. B's edits (the `canSend` line itself, props, placeholder, the right-hand
+button cluster) touch none of C's lines. Before Task 4, `git fetch && git rebase origin/main` so C is in the
+tree; if C has **not** merged yet, Task 4 still applies (every anchor below exists on both versions) and C
+rebases over B instead.
 
 ## Global Constraints
 
@@ -64,7 +100,9 @@ them). Evidence: `docs/research/2026-09-28-api-delta-0.21.5.md` §1–§2, `docs
   in `app.json` `plugins`. Adding it forces a **native rebuild** (`npx expo prebuild -p ios --clean && npx expo run:ios`).
 - Every new control has an `accessibilityRole` + `accessibilityLabel`; toggles expose `accessibilityState`.
 - Every task ends with `npx tsc --noEmit && npx jest` exiting 0 (there is no CI workflow in this repo;
-  gate on the exit code, never on tailed output), then a commit. PR-only; never push `main`.
+  gate on the exit code, never on tailed output), then a commit. PR-only; never push `main`. The
+  "Full gate + commit" blocks are **not** a script: run the gate line alone, confirm `echo $?` prints `0`,
+  and only then run `git add`/`git commit` (or chain them: `npx tsc --noEmit && npx jest && git add … && git commit …`).
 
 **Screenshot procedure** (run by every task that changes UI, with that task's `NAME`):
 
@@ -86,24 +124,29 @@ Open every PNG with the Read tool and check: text legible in both themes, border
 `colors.raised` in light, accent only on the primary action, nothing clipped at the large text size.
 Scroll the gallery (drag in Simulator) and repeat the loop if the task's section is below the fold.
 
-**Wiring assumptions about A's merged `src/app/chat/[id].tsx`** (Tasks 4 and 11). Before editing, run
-`grep -n -E "reduceTurn|createRequestRegistry|createReconnectOrchestrator|case 'message.complete'|resumeParams|function send" 'src/app/chat/[id].tsx'`
-and map these names to A's actual identifiers (use A's names; never add a second store or client):
+**A's merged `src/app/chat/[id].tsx`** (Tasks 4, 7 and 11) — these names come from A Task 8 (R3/R7/R9)
+and exist verbatim; verify with
+`grep -n -E "const gw = |const readTurn|const dispatchTurn|registryRef|orchestratorRef|transportRef|const resumeParams|function applyEvent|function respondApproval|function renderRequest|const reversedRows|type Row" 'src/app/chat/[id].tsx'`
+(never add a second store, client or registry):
 
-| name used here | meaning |
+| A's name | type / meaning |
 |---|---|
-| `gw()` | returns the screen's single `GatewayClient` (A: one per screen) |
-| `turn` | current `TurnModel` snapshot used for render |
-| `readTurn()` | synchronous read of the current `TurnModel` (store `getState`, or a ref mirrored each render) |
-| `dispatchTurn(a)` | dispatch a `TurnAction` into A's turn controller |
-| `registryRef.current` | A's `RequestRegistry` |
-| `orchestratorRef.current` | A's `ReconnectOrchestrator` |
-| `resumeParams()` | A's builder of `RpcMethods['session.resume']['params']` |
-| `send()` | A's idle submit (already `queued: true`) |
-| `liveIdRef`, `profileRef`, `items`, `setItems`, `nextKey`, `input`, `setInput`, `stagedImage`, `setStagedImage`, `setError`, `ready` | as on `main` today |
-
-If `readTurn` doesn't exist, add `const turnRef = useRef(turn); useEffect(() => { turnRef.current = turn; });`
-and use `() => turnRef.current`.
+| `gw()` | `GatewayClient \| null` — **nullable**; B code calls through `callGw()` (Task 4) |
+| `transportRef.current` | `ChatTransport \| null` — `.resumeStored(): Promise<string>` (resume the stored id, seeds the store, returns the fresh live id) |
+| `turn` | `TurnModel` React state (render snapshot, mirrored from the store) |
+| `readTurn()` | synchronous `store.getState()` |
+| `dispatchTurn(a)` | `store.dispatch(a)` |
+| `registryRef.current` | `RequestRegistry \| null` |
+| `orchestratorRef.current` | `ReconnectOrchestrator \| null` (`reconnect('stop-timeout')` exists) |
+| `resumeParams()` | `RpcMethods['session.resume']['params']` builder |
+| `busy` | `turn.turn !== 'idle'` |
+| `thinking` / `setThinking` | replaces `main`'s `waiting`/`setWaiting` (ThinkingDots) |
+| `applyEvent(e)` | the transcript sink; its `case 'message.complete'` has `p`, `status` (`CompleteStatus`) and `live` (= `!e.replayed`) in scope. The store update (`event.message.complete` with `status`/`replayed`) happens in A's transport, **not** in the screen |
+| `respondApproval(card, choice)` | A's interim approval answering (replaced in Task 11) |
+| `rows`, `reversedRows`, `type Row = TranscriptRow<ChatItem>` | A's merged transcript (`mergeRequestRows`), newest-first for the inverted `FlatList` |
+| `renderRequest(card)` | A's request-row renderer used by the `FlatList` `renderItem` (replaced in Task 11) |
+| `send()` | A's idle submit (already `prompt.submit {queued:true}`) |
+| `liveIdRef`, `profileRef`, `items`, `setItems`, `nextKey`, `append`, `input`, `setInput`, `stagedImage`, `setStagedImage`, `setError`, `ready` | as on `main` today |
 
 ## Review Focus
 
@@ -130,17 +173,17 @@ and use `() => turnRef.current`.
 
 | file | status | responsibility |
 |---|---|---|
-| `src/lib/turn-controller.ts` | modify (A's) | + `ComposerMode`, `composerMode`, `isApprovalActionable`, `receiveRequest`, `answerRequest`, `resolution` |
-| `src/lib/turn-commands.ts` | create | stop/steer/queued-submit, 4001/4010 rules, 15 s fallback, `restoreSteerText`, `completionEffects` |
+| `src/lib/turn-controller.ts` | modify (A's) | + `ComposerMode`, `composerMode`, `isApprovalActionable` (D1/D2 are A's) |
+| `src/lib/turn-commands.ts` | create | stop/steer/queued-submit, 4010 rule, 15 s fallback, `restoreSteerText`, `completionEffects` (4001 via A's `withStaleSessionRetry`) |
 | `src/lib/request-answers.ts` | create | contract result builders + `createRequestResponder` |
 | `src/lib/clarify.ts` | create | clarify view model, drafts, locked-answer labels |
 | `src/lib/secure-entry.ts` | create | timeouts, countdown, copy, skill name, provenance |
 | `src/lib/biometric.ts` | create | `confirmWithBiometrics` over `expo-local-authentication` |
-| `src/lib/transcript-rows.ts` | create | merge `items` + request cards by anchor, `rowIndexOf` |
+| `src/lib/transcript-rows.ts` | create | `rowIndexOf` over A's `TranscriptRow` (the merge itself is A's `mergeRequestRows`) |
 | `src/lib/approval.ts` | modify | + `approvalView(params)` for both approval shapes |
 | `src/lib/icon-map.ts` | modify | Android names for new SF symbols |
 | `src/api/skills.ts` | modify | `provenance` on `SkillInfo`; `listSkills(rest, profile?)` |
-| `src/components/composer.tsx` | modify | stop/steer UI driven by `ComposerMode` |
+| `src/components/composer.tsx` | modify (after C) | stop/steer UI driven by `ComposerMode` |
 | `src/components/message-row.tsx` | modify | "Stopped" marker, "Steered" caption; drop dead `approval` item |
 | `src/components/card-button.tsx` | create | shared card button |
 | `src/components/approval-card.tsx` | rewrite | renders a `RequestCardState` (both paths) |
@@ -162,10 +205,12 @@ and use `() => turnRef.current`.
 - Test: `src/lib/__tests__/turn-controller-b.test.ts`
 
 **Interfaces:**
-- Consumes (A): `TurnModel`, `TurnState`, `RequestCardState`, `RequestAction`, `TurnAction`, `initialTurnModel`, `reduceTurn`.
-- Produces: `ComposerMode`, `composerMode(model, hasText, hasImage)`, `isApprovalActionable(requests, id): boolean`,
-  `receiveRequest(requests, card): RequestCardState[]`, `answerRequest(requests, action): RequestCardState[]`,
-  `RequestCardState.resolution?: string`, `request.answered.resolution?: string` (contract deviation D1).
+- Consumes (A): `TurnModel`, `TurnState`, `RequestCardState` (already has `resolution?`, D1), `TurnAction`,
+  `initialTurnModel`, `reduceTurn` (already implements D2: re-delivery → `pending`, keeps `receivedAt`/`anchorKey`,
+  clears `cancelReason`/`resolution`, merges `params.answers`; `request.answered` only settles open cards).
+- Produces: `ComposerMode`, `composerMode(model, hasText, hasImage)`, `isApprovalActionable(requests, id): boolean`.
+  **Do not touch A's reducer cases.** The re-delivery tests below are regression tests pinning A's D1/D2
+  behaviour that B's cards rely on (Review Focus 2, 4).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -283,27 +328,13 @@ describe('request re-delivery and resolution (Review Focus 2, 4)', () => {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `npx jest src/lib/__tests__/turn-controller-b.test.ts`
-Expected: FAIL — `composerMode`/`isApprovalActionable` are not exported, and `resolution` is not a known property (ts-jest-free babel run still fails on the missing exports).
+Expected: FAIL — `composerMode is not a function` / `isApprovalActionable is not a function`. The
+"request re-delivery and resolution" tests already PASS (A implements D1/D2); if any of them FAILS, A's
+reducer drifted from contract §7 — stop and fix A's reducer first, with its own test.
 
 - [ ] **Step 3: Implement**
 
-In `src/lib/turn-controller.ts`:
-
-1. Add to `RequestCardState` (after `anchorKey`):
-
-```ts
-  /** Non-secret outcome label: the approval choice, or a clarify single's answer summary.
-   *  NEVER a secure-entry value (those cards only become answered/skipped). */
-  resolution?: string;
-```
-
-2. Change the `request.answered` member of `RequestAction` to:
-
-```ts
-  | { type: 'request.answered'; id: string; skipped?: boolean; resolution?: string } // optimistic (no ack at N:)
-```
-
-3. Append these exports (add `import type { ClarifyRequestParams } from '@/vendor/hermes-gateway';` to the imports if absent):
+Append to the end of `src/lib/turn-controller.ts` (no new imports; nothing else in the file changes):
 
 ```ts
 // ── Plan B: composer selectors and request-card semantics ───────────────────────────────────
@@ -336,65 +367,9 @@ export function isApprovalActionable(requests: RequestCardState[], id: string): 
   );
   return oldest?.id === id;
 }
-
-function replayedAnswers(card: Omit<RequestCardState, 'status'>): Record<string, unknown> {
-  if (card.method !== 'clarify') return {};
-  const answers = (card.params as ClarifyRequestParams | null)?.answers;
-  return answers && typeof answers === 'object' ? { ...answers } : {};
-}
-
-/** Dedupe by id (spec §6.0). A re-delivered id means the gateway still waits for it — any local
- *  optimistic answer never arrived — so it goes back to pending. `receivedAt` and `anchorKey` are
- *  kept (countdowns and placement stay stable); replayed clarify `answers` merge into local locks. */
-export function receiveRequest(
-  requests: RequestCardState[],
-  card: Omit<RequestCardState, 'status'>,
-): RequestCardState[] {
-  const i = requests.findIndex((r) => r.id === card.id);
-  if (i < 0) {
-    const locked = { ...(card.lockedAnswers ?? {}), ...replayedAnswers(card) };
-    return [...requests, { ...card, status: 'pending', ...(Object.keys(locked).length ? { lockedAnswers: locked } : {}) }];
-  }
-  const prev = requests[i];
-  const locked = { ...(prev.lockedAnswers ?? {}), ...(card.lockedAnswers ?? {}), ...replayedAnswers(card) };
-  const next: RequestCardState = {
-    ...prev,
-    kind: card.kind,
-    method: card.method,
-    params: card.params,
-    legacy: card.legacy,
-    status: 'pending',
-    cancelReason: undefined,
-    resolution: undefined,
-    ...(Object.keys(locked).length ? { lockedAnswers: locked } : {}),
-  };
-  return requests.map((r, j) => (j === i ? next : r));
-}
-
-export function answerRequest(
-  requests: RequestCardState[],
-  action: Extract<RequestAction, { type: 'request.answered' }>,
-): RequestCardState[] {
-  return requests.map((r) =>
-    r.id === action.id
-      ? {
-          ...r,
-          status: action.skipped ? 'skipped' : 'answered',
-          ...(action.resolution !== undefined && !action.skipped ? { resolution: action.resolution } : {}),
-        }
-      : r,
-  );
-}
 ```
 
-4. In `reduceTurn`, replace the bodies of the `'request.received'` and `'request.answered'` cases with:
-
-```ts
-    case 'request.received':
-      return { ...model, requests: receiveRequest(model.requests, action.card) };
-    case 'request.answered':
-      return { ...model, requests: answerRequest(model.requests, action) };
-```
+(A's `[id].tsx` has an equivalent inline `activeLegacyId`; Task 7 replaces it with this selector.)
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -406,7 +381,7 @@ Expected: PASS (A's own suite stays green).
 ```bash
 npx tsc --noEmit && npx jest
 git add src/lib/turn-controller.ts src/lib/__tests__/turn-controller-b.test.ts
-git commit -m "feat(turn): composer mode, approval actionability, re-delivery semantics
+git commit -m "feat(turn): composer mode, approval actionability; pin re-delivery semantics
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -420,10 +395,13 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `__tests__/turn-commands.test.ts`
 
 **Interfaces:**
-- Consumes: `GatewayClient['call']`, `RpcError` (A, `src/api/gatewayClient.ts`); `TurnAction`, `TurnState`, `CompleteStatus` (A).
+- Consumes: `GatewayClient['call']`, `RpcError` (A, `src/api/gatewayClient.ts`);
+  `withStaleSessionRetry(sessionId, run: (sid) => Promise<T>, resume: () => Promise<string>)` (A, `src/api/stale-session.ts`
+  — the single 4001 rule, also used by A's `config.set`); `TurnAction`, `TurnState`, `CompleteStatus` (A).
 - Produces: `TurnCommandDeps`, `createTurnCommands(deps): TurnCommands` with `stop(): Promise<StopOutcome>`,
-  `steer(text): Promise<SteerOutcome>`, `dispose()`; `withStaleSessionRetry`, `restoreSteerText(current, failed)`,
-  `completionEffects(status, replayed)`, constants `STALE_SESSION_CODE=4001`, `AGENT_BUILDING_CODE=4010`, `STOP_FALLBACK_MS=15000`.
+  `steer(text): Promise<SteerOutcome>`, `dispose()`; `restoreSteerText(current, failed)`,
+  `completionEffects(status, replayed)`, constants `AGENT_BUILDING_CODE=4010`, `STOP_FALLBACK_MS=15000`.
+  (No second `withStaleSessionRetry`/`STALE_SESSION_CODE` — import A's.)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -465,6 +443,7 @@ function harness() {
     turnState: () => state,
     resumeStored: jest.fn(async () => {
       live = 'live-2';
+      return live; // A's ChatTransport.resumeStored() resolves the fresh live id
     }),
     reconnect: jest.fn(async () => {}),
     setTimer: (fn, ms) => {
@@ -531,6 +510,21 @@ describe('stop', () => {
     h2.setState('idle'); // message.complete{interrupted} arrived
     h2.timers[0].fn();
     expect(h2.deps.reconnect).not.toHaveBeenCalled();
+  });
+  it('after the stop-timeout reconnect, a turn still "stopping" re-enables Stop (never stuck on Stopping…)', async () => {
+    // A keeps `stopping` on resume.seeded{running:true} (A deviation 6), so if the interrupt never
+    // landed the composer would otherwise stay disabled forever.
+    const h = harness();
+    await createTurnCommands(h.deps).stop();
+    h.timers[0].fn();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h.actions.at(-1)).toEqual({ type: 'stop.failed' });
+    const h2 = harness();
+    await createTurnCommands(h2.deps).stop();
+    (h2.deps.reconnect as jest.Mock).mockImplementationOnce(async () => h2.setState('idle')); // resume: not running
+    h2.timers[0].fn();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(h2.actions).toEqual([{ type: 'stop.sent' }]);
   });
   it('a new stop cancels the previous timer; dispose cancels the current one', async () => {
     const h = harness();
@@ -633,9 +627,9 @@ Expected: FAIL — `Cannot find module '../src/lib/turn-commands'`.
 // Stop and steer decisions (spec §5.3), pure with injected I/O. The chat screen supplies the
 // gateway call, the turn dispatch and the reconnect trigger; nothing here touches React.
 import { RpcError, type GatewayClient } from '@/api/gatewayClient';
+import { withStaleSessionRetry } from '@/api/stale-session'; // A: the one 4001 rule (resume + retry once)
 import type { CompleteStatus, TurnAction, TurnState } from '@/lib/turn-controller';
 
-export const STALE_SESSION_CODE = 4001; // runtime session id is stale → resume the stored id
 export const AGENT_BUILDING_CODE = 4010; // steer while the agent is still being built
 export const STOP_FALLBACK_MS = 15_000;
 
@@ -644,8 +638,9 @@ export interface TurnCommandDeps {
   dispatch: (a: TurnAction) => void;
   liveSessionId: () => string | null;
   turnState: () => TurnState;
-  /** `session.resume` on the stored id over the current socket; updates the live id. */
-  resumeStored: () => Promise<void>;
+  /** A's `ChatTransport.resumeStored()`: `session.resume` on the stored id over the current socket;
+   *  updates the live id + seeds the store; resolves the fresh live id. */
+  resumeStored: () => Promise<string>;
   reconnect: (trigger: 'stop-timeout') => Promise<void>;
   /** setTimeout wrapper returning a canceller (injected for tests). */
   setTimer: (fn: () => void, ms: number) => () => void;
@@ -662,20 +657,6 @@ export interface TurnCommands {
 
 function messageOf(e: unknown, fallback: string): string {
   return e instanceof Error && e.message ? e.message : fallback;
-}
-
-/** Run `op`; on 4001 resume the stored id and run it exactly once more (spec §5.3, review m10). */
-export async function withStaleSessionRetry<T>(
-  deps: Pick<TurnCommandDeps, 'resumeStored'>,
-  op: () => Promise<T>,
-): Promise<T> {
-  try {
-    return await op();
-  } catch (e) {
-    if (!(e instanceof RpcError) || e.code !== STALE_SESSION_CODE) throw e;
-    await deps.resumeStored();
-    return op();
-  }
 }
 
 /** Failed steer: its text goes back in the input, ahead of anything typed since. */
@@ -706,10 +687,13 @@ export function createTurnCommands(deps: TurnCommandDeps): TurnCommands {
     return id;
   }
 
+  /** Run `op` on the live id; a 4001 resumes the stored id and retries ONCE on the fresh id (A's rule). */
+  function onLiveSession<T>(op: (sid: string) => Promise<T>): Promise<T> {
+    return withStaleSessionRetry(liveId(), op, deps.resumeStored);
+  }
+
   async function submitQueued(text: string): Promise<void> {
-    await withStaleSessionRetry(deps, () =>
-      deps.call('prompt.submit', { session_id: liveId(), text, queued: true }),
-    );
+    await onLiveSession((sid) => deps.call('prompt.submit', { session_id: sid, text, queued: true }));
     deps.dispatch({ type: 'submit.sent' });
   }
 
@@ -719,7 +703,7 @@ export function createTurnCommands(deps: TurnCommandDeps): TurnCommands {
     deps.dispatch({ type: 'stop.sent' });
     try {
       // The result is ignored: it reports "interrupted" even for an idle session.
-      await withStaleSessionRetry(deps, () => deps.call('session.interrupt', { session_id: liveId() }));
+      await onLiveSession((sid) => deps.call('session.interrupt', { session_id: sid }));
     } catch (e) {
       deps.dispatch({ type: 'stop.failed' });
       return { ok: false, message: messageOf(e, 'Could not stop the response.') };
@@ -727,7 +711,12 @@ export function createTurnCommands(deps: TurnCommandDeps): TurnCommands {
     clearFallback();
     cancelFallback = deps.setTimer(() => {
       cancelFallback = null;
-      if (deps.turnState() === 'stopping') void deps.reconnect('stop-timeout');
+      if (deps.turnState() !== 'stopping') return;
+      void deps.reconnect('stop-timeout').then(() => {
+        // The reconnect re-seeds from session.resume. A keeps `stopping` while the server still
+        // reports the turn running (A deviation 6), so re-enable Stop rather than leave it stuck.
+        if (deps.turnState() === 'stopping') deps.dispatch({ type: 'stop.failed' });
+      });
     }, STOP_FALLBACK_MS);
     return { ok: true };
   }
@@ -735,9 +724,7 @@ export function createTurnCommands(deps: TurnCommandDeps): TurnCommands {
   async function steer(text: string): Promise<SteerOutcome> {
     let status: string;
     try {
-      const res = await withStaleSessionRetry(deps, () =>
-        deps.call('session.steer', { session_id: liveId(), text }),
-      );
+      const res = await onLiveSession((sid) => deps.call('session.steer', { session_id: sid, text }));
       status = res.status;
     } catch (e) {
       if (!(e instanceof RpcError) || e.code !== AGENT_BUILDING_CODE) {
@@ -768,7 +755,7 @@ Expected: PASS (18 tests).
 ```bash
 npx tsc --noEmit && npx jest
 git add src/lib/turn-commands.ts __tests__/turn-commands.test.ts
-git commit -m "feat(turn): stop and steer commands with 4001/4010 rules and 15s fallback
+git commit -m "feat(turn): stop and steer commands (A's 4001 rule, 4010, 15s fallback that re-enables Stop)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -792,6 +779,10 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 npm install --save-dev @testing-library/react-native@14.0.1 test-renderer@1.2.0
 ```
 
+A adds neither RNTL nor `jest.setup.ts` (A's Tech Stack line), so B owns them (contract R6). A leaves
+the `"jest"` block exactly as on `main` (`{"preset": "jest-expo", "testMatch": ["**/__tests__/**/*.test.ts"]}`);
+the new block below keeps that pattern (so A's `src/**/__tests__/*.test.ts` suites and the non-test fixtures
+under `src/api/__tests__/fixtures/` behave as before) and adds `.test.tsx` plus the setup file.
 In `package.json` replace the `"jest"` block with:
 
 ```json
@@ -1075,10 +1066,12 @@ Expected: FAIL — no "Stop response" button, placeholder is "Hermes is respondi
 
 - [ ] **Step 3: Implement the composer**
 
-In `src/components/composer.tsx`:
+In `src/components/composer.tsx` (after Plan C merged — see "Merge order with Plan C"; keep every line C
+added: the `useState` and `composer-height` imports, the `contentHeight`/`composerHeight` block after
+`canSend`, and the `TextInput`'s `onContentSizeChange` + multi-line `style` with `height`/`maxHeight`):
 
-1. Imports: `import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';` and
-   add `import type { ComposerMode } from '@/lib/turn-controller';`.
+1. Imports: change the `react-native` import to `import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';` and
+   add `import type { ComposerMode } from '@/lib/turn-controller';` (C's `useState` import stays).
 2. In `ComposerProps` replace the `streaming?: boolean;` member (and its comment) with:
 
 ```ts
@@ -1090,7 +1083,8 @@ In `src/components/composer.tsx`:
   onSteer: () => void;
 ```
 
-3. In the destructuring replace `streaming,` with `mode, onStop, onSteer,`, and replace the `canSend` line with:
+3. In the destructuring replace `streaming,` with `mode, onStop, onSteer,`, and replace **only** the
+   `const canSend = !disabled && !streaming && …;` line (C's block right after it stays) with:
 
 ```ts
   const running = mode.kind === 'stop+steer';
@@ -1112,7 +1106,10 @@ In `src/components/composer.tsx`:
             ) : null}
 ```
 
-5. `TextInput`: change only the placeholder prop to `placeholder={running ? 'Steer Hermes…' : 'Chat with Hermes'}`.
+5. `TextInput`: change only the placeholder prop (`placeholder={streaming ? 'Hermes is responding…' : 'Chat with Hermes'}`,
+   unchanged by C) to `placeholder={running ? 'Steer Hermes…' : 'Chat with Hermes'}`. Leave C's
+   `onContentSizeChange` and `style` untouched. Afterwards `grep -n streaming src/components/composer.tsx`
+   must print nothing (exit 1).
 6. Replace the whole Send `<Pressable accessibilityLabel="Send message" …>…</Pressable>` with:
 
 ```tsx
@@ -1198,30 +1195,42 @@ Expected: PASS (7 tests). `npx tsc --noEmit` now FAILS in `src/app/chat/[id].tsx
 
 - [ ] **Step 5: Wire stop/steer into the chat screen**
 
-Map A's names first (header grep). In `src/app/chat/[id].tsx`:
+Verify A's names first (header grep). In `src/app/chat/[id].tsx`:
 
-Imports (merge with A's existing imports from the same modules):
+Imports (merge into A's existing import statements from the same modules — do not add duplicate
+import lines):
+
+- add `composerMode` to A's `import { cancelLabel, completeStatus, … } from '@/lib/turn-controller';` list;
+- change A's `import { makeNativeSocket, type GatewayClient } from '@/api/gatewayClient';` to
+  `import { RpcError, makeNativeSocket, type GatewayClient } from '@/api/gatewayClient';`;
+- change A's `import type { GatewayEvent, GatewayEventMap } from '@/vendor/hermes-gateway';` to
+  `import type { GatewayEvent, GatewayEventMap, RpcMethods } from '@/vendor/hermes-gateway';`;
+- add `import { completionEffects, createTurnCommands, restoreSteerText } from '@/lib/turn-commands';`.
+
+Inside `ChatScreen`, directly after A's `const resumeParams = () => …;` line (end of A's R3 block):
 
 ```ts
-import { composerMode } from '@/lib/turn-controller';
-import { completionEffects, createTurnCommands, restoreSteerText } from '@/lib/turn-commands';
-```
+  /** Typed call on this screen's single client. A's `gw()` is null before mount/after unmount;
+   *  this rejects (never throws synchronously) so command/answer code can treat it as a failure. */
+  function callGw<M extends keyof RpcMethods>(
+    method: M,
+    params: RpcMethods[M]['params'],
+  ): Promise<RpcMethods[M]['result']> {
+    const client = gw();
+    return client ? client.call(method, params) : Promise.reject(new RpcError('Not connected.', -1));
+  }
 
-Inside `ChatScreen`, after A's turn/registry/orchestrator setup:
-
-```ts
   // Stop / steer (spec §5.3). Created once; every dep reads refs at call time.
   const [commands] = useState(() =>
     createTurnCommands({
-      call: (method, params) => gw().call(method, params),
+      call: callGw,
       dispatch: (a) => dispatchTurn(a),
       liveSessionId: () => liveIdRef.current,
       turnState: () => readTurn().turn,
-      resumeStored: async () => {
-        const resumed = await gw().call('session.resume', resumeParams());
-        liveIdRef.current = resumed.session_id;
-      },
-      reconnect: (trigger) => orchestratorRef.current!.reconnect(trigger),
+      // A's transport: session.resume on the stored id, updates liveIdRef + seeds the store.
+      resumeStored: () =>
+        transportRef.current?.resumeStored() ?? Promise.reject(new RpcError('Not connected.', -1)),
+      reconnect: (trigger) => orchestratorRef.current?.reconnect(trigger) ?? Promise.resolve(),
       setTimer: (fn, ms) => {
         const t = setTimeout(fn, ms);
         return () => clearTimeout(t);
@@ -1255,22 +1264,28 @@ Inside `ChatScreen`, after A's turn/registry/orchestrator setup:
   }
 ```
 
-In A's `case 'message.complete':` branch, after A's `dispatchTurn({ type: 'event.message.complete', … })`,
-make the side effects exactly (delete any existing unconditional `Haptics.notificationAsync(…Success)`):
+In A's `applyEvent`, `case 'message.complete'` (the store transition itself already happened in A's
+transport sink via `turnActionFor`, with `status` and `replayed`), replace A's three lines
 
-```ts
-          {
-            const fx = completionEffects(e.payload?.status, replayed);
-            if (fx.stoppedMarker) {
-              setItems((prev) => [...prev, { key: nextKey(), role: 'status', text: 'Stopped', marker: 'stopped' }]);
-            }
-            if (fx.successHaptic) {
-              void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
-            }
-          }
+```tsx
+        if (status === 'interrupted') append('status', 'Stopped');
+        else if (status === 'error') setError(p?.error || 'The turn failed.');
+        else if (live) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
 ```
 
-Replace the `<Composer …/>` element with:
+with:
+
+```tsx
+        const fx = completionEffects(status, !live);
+        if (fx.stoppedMarker) {
+          setItems((prev) => [...prev, { key: nextKey(), role: 'status', text: 'Stopped', marker: 'stopped' }]);
+        } else if (status === 'error') {
+          setError(p?.error || 'The turn failed.');
+        }
+        if (fx.successHaptic) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+```
+
+Replace the `<Composer …/>` element (after A it carries `streaming={busy}`) with:
 
 ```tsx
       <Composer
@@ -1345,7 +1360,12 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `RequestRegistry` (A, `src/lib/request-registry.ts`), `RequestCardState`, `TurnAction` (A/Task 1),
-  `GatewayClient['call']`, `resolvedCount` (`src/lib/approval.ts`, present on `main` before A — if A removed it, restore it verbatim from commit `876225a`).
+  `GatewayClient['call']`, `resolvedCount` (`src/lib/approval.ts`, kept by A).
+- Ownership (vs A): A's router owns arrival (`request.received`, `registry.put`), `request.cancel`
+  (`request.cancelled` + `registry.drop`), the vault `-32601` + `request.answered{skipped}`, and the live-only
+  Warning haptic (`onNewCard`). This module owns **answering** only; it never dispatches `request.received`,
+  so nothing is dispatched twice. An answered 0.21.5 card leaves the registry (`respond` deletes it); a
+  reconnect re-delivery `put`s it back and A's reducer re-arms the card to `pending`.
 - Produces: contract helpers `approvalResult`, `clarifySingleResult`, `clarifySkipAllResult`, `valueResult`;
   `ClarifyAnswer = string | string[]`; `AnswerOutcome`; `LockOutcome = 'ok'|'resolved'|'expired'|'failed'`;
   `createRequestResponder(deps): RequestResponder` with `approve(card, choice): Promise<AnswerOutcome>`,
@@ -1919,7 +1939,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Rewrite: `src/components/approval-card.tsx`
-- Modify: `src/lib/approval.ts`, `src/components/message-row.tsx`, `src/lib/export.ts`, `__tests__/export.test.ts`, `src/app/dev-cards.tsx`, and (only if A left it) `src/app/chat/[id].tsx`
+- Modify: `src/lib/approval.ts`, `src/components/message-row.tsx`, `src/lib/export.ts`, `__tests__/export.test.ts`, `src/app/dev-cards.tsx`, and `src/app/chat/[id].tsx` (A's `renderRequest` approval branch — required, or `tsc` fails on the new props)
 - Test: `__tests__/approval-card.test.tsx`, `__tests__/approval.test.ts` (extend)
 
 **Interfaces:**
@@ -2187,8 +2207,32 @@ run `grep -n "approval" src/components/message-row.tsx src/lib/export.ts __tests
 ```
 
   and delete the test `'serializes approval command, description and status'`.
-- `[id].tsx`: delete any leftover `appendApproval`, `respondApproval`, `cancelPendingApprovals`,
-  `activeApprovalKey` and the `item.approval ? (<ApprovalCard …/>)` render branch (Task 11 renders cards).
+- `[id].tsx` (A already removed `appendApproval`, `cancelPendingApprovals`, `activeApprovalKey` and the
+  `item.approval` branch — contract R3). Keep `tsc` green against the new `ApprovalCard` props:
+  1. change A's `import { ApprovalCard, type ApprovalInfo } from '@/components/approval-card';` to
+     `import { ApprovalCard } from '@/components/approval-card';`;
+  2. change A's `import { parseApprovalRequest, resolvedCount, type ApprovalChoice } from '@/lib/approval';` to
+     `import { resolvedCount, type ApprovalChoice } from '@/lib/approval';` (A's `respondApproval` still uses both);
+  3. add `isApprovalActionable` to the `@/lib/turn-controller` import;
+  4. delete A's `activeLegacyId` constant (from `// Legacy (0.20.4) approvals are FIFO: only the oldest open legacy card is actionable.`
+     through its `)?.id;`) and A's whole `function approvalInfo(card: RequestCardState): ApprovalInfo | null { … }`;
+  5. in A's `renderRequest`, replace the `if (card.kind === 'approval') { … }` block with:
+
+```tsx
+    if (card.kind === 'approval') {
+      return (
+        <ApprovalCard
+          card={card}
+          actionable={isApprovalActionable(turn.requests, card.id)}
+          onRespond={(choice) => void respondApproval(card, choice)}
+        />
+      );
+    }
+```
+
+  **Do not delete A's `respondApproval`** here — Task 11 replaces it with the responder. Check:
+  `grep -n -E "ApprovalInfo|approvalInfo|activeLegacyId|parseApprovalRequest" 'src/app/chat/[id].tsx' src/components/message-row.tsx; echo "exit=$?"`
+  prints only `exit=1`.
 
 - [ ] **Step 6: Gallery section** — in `src/app/dev-cards.tsx` add
 `import { ApprovalCard } from '@/components/approval-card'; import type { RequestCardState } from '@/lib/turn-controller';`,
@@ -2749,27 +2793,26 @@ test('Face ID usage string comes from the expo-local-authentication config plugi
 });
 ```
 
+`__tests__/skills.test.ts` **already exists on `main`** (list/toggle/summary/filter/sort suites). Do not
+overwrite it: append this block at the end of the file, reusing its `fakeFetch`, `client` and `skill` helpers:
+
 ```ts
-// __tests__/skills.test.ts
-import { listSkills } from '../src/api/skills';
 
-function rest(body: unknown) {
-  return { get: jest.fn(async (_p: string) => body), put: jest.fn() } as unknown as Parameters<typeof listSkills>[0] & { get: jest.Mock };
-}
-
-test('no profile → unchanged path', async () => {
-  const r = rest([]);
-  await listSkills(r);
-  expect(r.get).toHaveBeenCalledWith('/api/skills');
-});
-test('profile is passed as an encoded query param', async () => {
-  const r = rest([]);
-  await listSkills(r, 'work & play');
-  expect(r.get).toHaveBeenCalledWith('/api/skills?profile=work%20%26%20play');
-});
-test('provenance passes through', async () => {
-  const r = rest([{ name: 'weather', description: '', category: '', enabled: true, provenance: 'agent' }]);
-  expect((await listSkills(r, null))[0].provenance).toBe('agent');
+describe('listSkills — profile scope + provenance (secure-entry cards, spec §6.4)', () => {
+  it('no profile → unchanged path', async () => {
+    const f = fakeFetch(200, []);
+    await listSkills(client(f));
+    expect(f.calls[0].url).toBe('http://h/api/skills');
+  });
+  it('profile is passed as an encoded query param', async () => {
+    const f = fakeFetch(200, []);
+    await listSkills(client(f), 'work & play');
+    expect(f.calls[0].url).toBe('http://h/api/skills?profile=work%20%26%20play');
+  });
+  it('provenance passes through', async () => {
+    const f = fakeFetch(200, [skill({ provenance: 'agent' })]);
+    expect((await listSkills(client(f), null))[0].provenance).toBe('agent');
+  });
 });
 ```
 
@@ -2858,7 +2901,7 @@ test('a thrown native error is a failure, never a send', async () => {
 - [ ] **Step 2: Run tests to verify they fail**
 
 Run: `npx jest __tests__/app-config.test.ts __tests__/skills.test.ts __tests__/secure-entry.test.ts __tests__/biometric.test.ts`
-Expected: FAIL — no `expo-local-authentication` plugin/dependency, missing `secure-entry`/`biometric` modules, and `listSkills` ignores the profile.
+Expected: FAIL — no `expo-local-authentication` plugin/dependency, missing `secure-entry`/`biometric` modules, and `listSkills` ignores the profile (the existing skills tests stay green).
 
 - [ ] **Step 3: Install the native dependency (SDK-matched) and add the config plugin**
 
@@ -2867,7 +2910,8 @@ npx expo install expo-local-authentication
 grep '"expo-local-authentication"' package.json   # expect "~56.0.5"
 ```
 
-In `app.json` `expo.plugins`, after the `"expo-image-picker"` entry, add:
+`npx expo install` may itself append a bare `"expo-local-authentication"` string to `expo.plugins`; if it
+did, replace that entry (never keep two). In `app.json` `expo.plugins`, after the `"expo-image-picker"` entry, add:
 
 ```json
       [
@@ -3208,11 +3252,19 @@ test('focusing the field asks the screen to scroll the card into view (Review Fo
 // Spec §6.4 data-handling rules, end to end through A's adapter: the value leaves only in the
 // response frame — never in dispatched actions, the turn model, or any console.* call (even in __DEV__).
 import { GatewayClient } from '../src/api/gatewayClient';
-import { FakeSocket } from '../src/api/__tests__/fixtures/fake-socket';
+import {
+  FakeSocket,
+  installFakeWebSocketGlobal,
+  restoreWebSocketGlobal,
+} from '../src/api/__tests__/fixtures/fake-socket';
 import { gatewayReady, serverRequest } from '../src/api/__tests__/fixtures/frames';
 import { createRequestResponder } from '../src/lib/request-answers';
 import { createRequestRegistry } from '../src/lib/request-registry';
 import { initialTurnModel, reduceTurn, type RequestCardState, type TurnAction } from '../src/lib/turn-controller';
+
+// Required by A's fixture contract: the vendored client reads the GLOBAL `WebSocket.OPEN`.
+beforeAll(installFakeWebSocketGlobal);
+afterAll(restoreWebSocketGlobal);
 
 const SECRET = 'hunter2-DO-NOT-LEAK';
 
@@ -3239,7 +3291,7 @@ test.each([
   const actions: TurnAction[] = [];
   const responder = createRequestResponder({
     registry,
-    call: (m, p) => client.call(m, p),
+    call: client.call.bind(client),
     dispatch: (a) => actions.push(a),
     liveSessionId: () => 'live-1',
   });
@@ -3534,39 +3586,36 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Test: `__tests__/transcript-rows.test.ts`, `__tests__/vault-declined-note.test.tsx`
 
 **Interfaces:**
-- Consumes: everything above; A's `turn.requests`, `registryRef`, `dispatchTurn`.
-- Produces: `TranscriptRow`, `mergeTranscript(items, requests)`, `rowIndexOf(rowsNewestFirst, cardId)`;
-  `VaultDeclinedNote()`, `VAULT_DECLINED_TEXT`.
+- Consumes: everything above; A's `mergeRequestRows`/`TranscriptRow` (`src/lib/turn-controller.ts`), and in
+  `[id].tsx` A's `turn.requests`, `registryRef`, `dispatchTurn`, `reversedRows`, `type Row`, `renderRequest`,
+  `respondApproval`, `VAULT_NOTE`/`UNSUPPORTED_NOTE`, plus Task 4's `callGw`.
+- Produces: `rowIndexOf(rowsNewestFirst, cardId)` (over A's `TranscriptRow<T>`); `VaultDeclinedNote()`,
+  `VAULT_DECLINED_TEXT`. **No second merge function**: A's `mergeRequestRows` is the one transcript merge
+  (it also defines the orphan rule — open cards whose anchor vanished in a history replace move to the end;
+  settled orphans are not re-rendered).
 
 - [ ] **Step 1: Write the failing tests**
 
 ```ts
 // __tests__/transcript-rows.test.ts
 import type { ChatItem } from '../src/components/message-row';
-import { mergeTranscript, rowIndexOf } from '../src/lib/transcript-rows';
-import type { RequestCardState } from '../src/lib/turn-controller';
+import { rowIndexOf } from '../src/lib/transcript-rows';
+import { mergeRequestRows, type RequestCardState } from '../src/lib/turn-controller';
 
 const item = (key: string): ChatItem => ({ key, role: 'assistant', text: key, complete: true });
 const req = (id: string, anchorKey: string | null): RequestCardState => ({
   id, kind: 'approval', method: 'approval', params: {}, status: 'pending', legacy: false, receivedAt: 0, anchorKey,
 });
-const keys = (rows: ReturnType<typeof mergeTranscript>) => rows.map((r) => r.key);
-
-test('a card renders right after its anchor item, in arrival order', () => {
-  expect(keys(mergeTranscript([item('i0'), item('i1'), item('i2')], [req('a', 'i0'), req('b', 'i0'), req('c', 'i1')])))
-    .toEqual(['i0', 'req:a', 'req:b', 'i1', 'req:c', 'i2']);
-});
-
-test('after a history replace (anchor gone) or with no anchor, cards go to the end — never dropped', () => {
-  expect(keys(mergeTranscript([item('h0'), item('h1')], [req('a', 'i7'), req('b', null)])))
-    .toEqual(['h0', 'h1', 'req:a', 'req:b']);
-  expect(keys(mergeTranscript([], [req('a', null)]))).toEqual(['req:a']);
-});
 
 test('rowIndexOf finds a card in the newest-first (inverted list) order', () => {
-  const rows = mergeTranscript([item('i0'), item('i1')], [req('a', 'i0')]).reverse();
+  const rows = mergeRequestRows([item('i0'), item('i1')], [req('a', 'i0')]).reverse();
   expect(rowIndexOf(rows, 'a')).toBe(1);
   expect(rowIndexOf(rows, 'zz')).toBe(-1);
+});
+
+test('an open card orphaned by a history replace is still findable (it sits at the newest end)', () => {
+  const rows = mergeRequestRows([item('h0'), item('h1')], [req('a', 'gone')]).reverse();
+  expect(rowIndexOf(rows, 'a')).toBe(0);
 });
 ```
 
@@ -3592,36 +3641,12 @@ Expected: FAIL — modules missing.
 - [ ] **Step 3: Implement**
 
 ```ts
-// src/lib/transcript-rows.ts — request cards live outside `items` (spec §6.0, review B1.3) and are
-// merged in at render time, so a history replace can never drop them.
-import type { ChatItem } from '@/components/message-row';
-import type { RequestCardState } from '@/lib/turn-controller';
+// src/lib/transcript-rows.ts — helpers over A's merged transcript rows. The merge itself is A's
+// `mergeRequestRows` (src/lib/turn-controller.ts): cards live outside `items` (spec §6.0, review B1.3).
+import type { TranscriptRow } from '@/lib/turn-controller';
 
-export type TranscriptRow =
-  | { kind: 'item'; key: string; item: ChatItem }
-  | { kind: 'request'; key: string; card: RequestCardState };
-
-export function mergeTranscript(items: ChatItem[], requests: RequestCardState[]): TranscriptRow[] {
-  const itemKeys = new Set(items.map((i) => i.key));
-  const anchored = new Map<string, RequestCardState[]>();
-  const tail: RequestCardState[] = [];
-  for (const r of requests) {
-    if (r.anchorKey && itemKeys.has(r.anchorKey)) {
-      anchored.set(r.anchorKey, [...(anchored.get(r.anchorKey) ?? []), r]);
-    } else {
-      tail.push(r);
-    }
-  }
-  const rows: TranscriptRow[] = [];
-  for (const item of items) {
-    rows.push({ kind: 'item', key: item.key, item });
-    for (const card of anchored.get(item.key) ?? []) rows.push({ kind: 'request', key: `req:${card.id}`, card });
-  }
-  for (const card of tail) rows.push({ kind: 'request', key: `req:${card.id}`, card });
-  return rows;
-}
-
-export function rowIndexOf(rowsNewestFirst: TranscriptRow[], cardId: string): number {
+/** Index of a request card in the newest-first rows the inverted FlatList renders, or -1. */
+export function rowIndexOf<T>(rowsNewestFirst: TranscriptRow<T>[], cardId: string): number {
   return rowsNewestFirst.findIndex((r) => r.kind === 'request' && r.card.id === cardId);
 }
 ```
@@ -3647,31 +3672,40 @@ export function VaultDeclinedNote() {
 
 - [ ] **Step 4: Run tests to verify they pass** — same command → PASS.
 
-- [ ] **Step 5: Wire cards into `src/app/chat/[id].tsx`** (map A's names first — header table)
+- [ ] **Step 5: Wire cards into `src/app/chat/[id].tsx`** (verify A's names first — header table)
 
-Imports (merge with existing):
+Imports (merge into A's existing statements; `ApprovalCard` and `isApprovalActionable` are already
+imported since Task 7, `RequestCardState` since A):
 
 ```ts
 import { listSkills, type SkillInfo } from '@/api/skills';
-import { ApprovalCard } from '@/components/approval-card';
 import { ClarifyCard } from '@/components/clarify-card';
 import { SecureEntryCard } from '@/components/secure-entry-card';
 import { VaultDeclinedNote } from '@/components/vault-declined-note';
 import { createRequestResponder } from '@/lib/request-answers';
 import { provenanceFor, skillNameOf } from '@/lib/secure-entry';
-import { mergeTranscript, rowIndexOf, type TranscriptRow } from '@/lib/transcript-rows';
-import { isApprovalActionable, type RequestCardState } from '@/lib/turn-controller';
-import type { SecretRequestParams } from '@/vendor/hermes-gateway';
+import { rowIndexOf } from '@/lib/transcript-rows';
 ```
 
-Inside `ChatScreen`, next to `commands`:
+and add `SecretRequestParams` to A's `import type { GatewayEvent, GatewayEventMap, RpcMethods } from '@/vendor/hermes-gateway';`.
+
+Delete A's interim pieces this task supersedes:
+- the whole `async function respondApproval(card: RequestCardState, choice: ApprovalChoice) { … }` (A's R7,
+  from its `/** Answer an approval card. 0.21.5: …` doc comment through its closing `}`), and then the
+  `import { resolvedCount, type ApprovalChoice } from '@/lib/approval';` line (now unused);
+- A's `VAULT_NOTE` and `UNSUPPORTED_NOTE` constants and their `/** Copy for request cards this build cannot
+  answer yet … */` comment (A's R2; keep `type Row = TranscriptRow<ChatItem>;`);
+- `cancelLabel` from the `@/lib/turn-controller` import if `tsc`/eslint reports it unused.
+
+Inside `ChatScreen`, next to `commands` (Task 4):
 
 ```ts
-  const listRef = useRef<FlatList<TranscriptRow>>(null);
+  const listRef = useRef<FlatList<Row>>(null);
   const [responder] = useState(() =>
     createRequestResponder({
-      registry: { respond: (id, result) => registryRef.current.respond(id, result) },
-      call: (method, params) => gw().call(method, params),
+      // A's registry is null only before mount / after unmount → "no longer open".
+      registry: { respond: (id, result) => registryRef.current?.respond(id, result) ?? false },
+      call: callGw,
       dispatch: (a) => dispatchTurn(a),
       liveSessionId: () => liveIdRef.current,
     }),
@@ -3700,18 +3734,25 @@ Inside `ChatScreen`, next to `commands`:
     return provenanceFor(skills.list, skillNameOf(card.params as SecretRequestParams));
   }
 
-  // Inverted list: index 0 is the visual bottom, so newest first.
-  const rows = mergeTranscript(items, turn.requests).reverse();
-
   function scrollCardIntoView(cardId: string) {
     // Wait for the keyboard inset (containerStyle paddingBottom) to apply, then bring the card up.
+    // A's `reversedRows` is the newest-first data the inverted FlatList renders.
     setTimeout(() => {
-      const index = rowIndexOf(rows, cardId);
+      const index = rowIndexOf(reversedRows, cardId);
       if (index >= 0) listRef.current?.scrollToIndex({ index, viewPosition: 0, animated: true });
     }, 300);
   }
+```
 
-  function renderCard(card: RequestCardState) {
+Replace A's whole `renderRequest` function (after Task 7 it runs from `function renderRequest(card: RequestCardState) {`
+through `return <MessageRow item={{ key: \`req:${card.id}\`, role: 'status', text }} />;` and its closing `}`)
+with the version below. It keeps the name `renderRequest`, so A's `FlatList` `renderItem`
+(`row.kind === 'request' ? renderRequest(row.card) : …`) stays as is. (`scrollCardIntoView` reads A's
+`reversedRows` only when it runs, after render, so the block above can sit next to `commands`; keep its
+`useState`/`useEffect` calls unconditional, above any early return.)
+
+```tsx
+  function renderRequest(card: RequestCardState) {
     const focus = () => scrollCardIntoView(card.id);
     switch (card.kind) {
       case 'approval':
@@ -3750,33 +3791,28 @@ Inside `ChatScreen`, next to `commands`:
   }
 ```
 
-Replace the `<FlatList … />` props `data`, `keyExtractor`, `renderItem` (keep every other prop) and add `ref` + `onScrollToIndexFailed`:
+In A's `<FlatList`, keep every prop (A's `data={reversedRows}`, `keyExtractor`, `renderItem`, …) and
+add two, replacing
+
+```tsx
+        <FlatList
+          data={reversedRows}
+          inverted
+```
+
+with
 
 ```tsx
         <FlatList
           ref={listRef}
-          data={rows}
+          data={reversedRows}
           inverted
-          keyExtractor={(r) => r.key}
           onScrollToIndexFailed={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
-          renderItem={({ item: row }) => (
-            <Animated.View entering={FadeIn.duration(180)}>
-              {row.kind === 'request' ? (
-                renderCard(row.card)
-              ) : row.item.subagent ? (
-                <SubagentMonitorCard batch={row.item.subagent} />
-              ) : row.item.todo ? (
-                <TodoCard items={row.item.todo} />
-              ) : (
-                <MessageRow item={row.item} />
-              )}
-            </Animated.View>
-          )}
 ```
 
-Delete the old `reversedItems` `useMemo` (and the `useMemo` import if now unused). Change
-`showGreeting` to `ready && items.length === 0 && turn.requests.length === 0 && !error` so a replayed
-card on an empty chat is visible.
+(A already merged the rows, deleted `reversedItems`, and made `showGreeting` include
+`turn.requests.length === 0` — nothing to do there.) Check:
+`grep -n -E "mergeTranscript|respondApproval|VAULT_NOTE|UNSUPPORTED_NOTE|approvalInfo" 'src/app/chat/[id].tsx'; echo "exit=$?"` prints only `exit=1`.
 
 - [ ] **Step 6: Gallery** — in `src/app/dev-cards.tsx` add `import { VaultDeclinedNote } from '@/components/vault-declined-note';` and before `{/* dev-cards:end */}`:
 
@@ -3802,6 +3838,13 @@ and the app connected to `http://127.0.0.1:19119`, in dark then light (`xcrun si
    Capture `chat-clarify-keyboard-{dark,light}.png`.
 2. Confirm one question, then kill Wi-Fi for 5 s (Simulator ▸ I/O ▸ … or `sudo ifconfig en0 down/up`
    on the Mac) → after reconnect the card is still there with that question locked; Submit all → answered.
+2b. Reconnect mid-turn on 0.21.5 (spec §10.2; A's smoke only covered 0.20.4, which has no replay): start
+   a long streamed answer, drop Wi-Fi for 5 s mid-stream → after reconnect the composer shows Stop (not
+   idle), no paragraph is duplicated, the text streamed *during* the drop appears (replay), and the turn
+   finishes with one success haptic. Also record whether the text streamed *before* the drop is still
+   there: with A's watermark (= highest seq seen) plus the history replace, it is expected to be **lost**
+   until the open finding "replay watermark vs history replace" (Plan A, Revision log item 3) is decided —
+   do not patch it ad hoc in B; record the result in the PR. Capture `chat-replay-{dark,light}.png`.
 3. "Run `rm -rf /tmp/hermes-b-test`" → approval card → Approve. Capture `chat-approval-{dark,light}.png`.
 4. A long answer → Stop mid-stream → "Stopping…" then "Stopped", no success haptic. Capture `chat-stopped-{dark,light}.png`.
 5. During a long tool run, type "also print the date" → steer → "Steered" bubble. Capture `chat-steered-{dark,light}.png`.
@@ -3888,12 +3931,13 @@ chat opens and the card is there (resume re-delivers it via `open_requests`).
 
 ## Branch verification and PR (after Task 12)
 
-- [ ] **Setup reminder (do this before Task 1):**
+- [ ] **Setup (do this before Task 1; referenced from "Base" at the top):**
 
 ```bash
 cd ~/Developer/hermes-mobile-app && git fetch origin
 test -f src/vendor/hermes-gateway/index.ts && test -f src/lib/request-registry.ts \
   && test -f src/lib/reconnect-orchestrator.ts && test -f src/api/__tests__/fixtures/fake-socket.ts \
+  && test -f src/api/stale-session.ts && test -f src/api/chat-transport.ts && test -f src/lib/turn-store.ts \
   || { echo "Plan A is not merged on origin/main — stop"; exit 1; }
 git worktree add .claude/worktrees/turn-control-cards -b feat/turn-control-cards origin/main
 cd .claude/worktrees/turn-control-cards && npm ci && npx tsc --noEmit && npx jest
@@ -3930,26 +3974,21 @@ EOF
 
 ---
 
-## Contract deviations / requests to A
+## Contract items — resolved against A's final plan (review 2026-09-28)
 
-- **D1 (additive):** `RequestCardState.resolution?: string` and `request.answered.resolution?: string`
-  (approval choice / clarify summary; never a secure value). Task 1 adds them.
-- **D2 (semantics):** `request.received` for an existing id returns the card to `pending`, keeps
-  `receivedAt`/`anchorKey`, clears `cancelReason`/`resolution`, merges `params.answers` into
-  `lockedAnswers`. Task 1 replaces A's two reducer cases with `receiveRequest`/`answerRequest`. If A's
-  tests assert a re-delivered card keeps `answered`, that assertion must change (the answer never arrived).
-- **R1:** in `[id].tsx`, expose the names in the header table (`gw()`, `turn`, `readTurn()`,
-  `dispatchTurn`, `registryRef`, `orchestratorRef`, `resumeParams()`, one `case 'message.complete'` that
-  has a `replayed` boolean in scope).
-- **R2:** `FakeSocket` fixture: zero-arg constructor, `open()` that sets `readyState = OPEN` and
-  dispatches `open`, `sent` as parsed objects (used by `__tests__/secure-entry-data.test.ts`).
-- **R3:** remove the item-based approval path from `[id].tsx` (`appendApproval`, `respondApproval`,
-  `cancelPendingApprovals`, `ApprovalCard` render); B renders cards (Task 7 deletes leftovers otherwise).
-- **R4:** fire the Warning haptic on **live** (`!req.replayed`) arrival of approval/clarify/secure-entry
-  cards in A's routing — B has no `replayed` signal per card.
-- **R5:** confirm A owns `config.set` 4001 → resume + retry once, `queued: true` on idle `send()`, and
-  dispatching `event.message.complete` with the payload `status`.
-- **R6:** if A already adds `@testing-library/react-native`/`jest.setup.ts`, Task 3 Step 1 becomes a no-op check.
-- **Ambiguity in the contract:** §3 says "B adds … the request-card reducers listed in §4", §4 says "A
-  defines the state and routing". This plan assumes A implements all `RequestAction` cases and B
-  overrides only `received`/`answered` (D2).
+- **D1/D2:** implemented by **A** (`turn-controller.ts` Task 3, with tests). B does not touch the reducer;
+  Task 1 keeps regression tests for them.
+- **R1:** A exposes every name in the header table; `event.message.complete` carries `status`/`replayed`
+  through A's transport (`turnActionFor`), and the screen's `applyEvent` has `status` + `live` in scope.
+  `gw()` is nullable → B's `callGw()`.
+- **R2:** `FakeSocket` has a zero-arg constructor, `open()`, parsed `sent`; tests must also call
+  `installFakeWebSocketGlobal()` (A deviation 7).
+- **R3:** A removes the item-based path from `[id].tsx`; B Task 7 removes the leftovers in `message-row`
+  and `export`, and replaces A's interim `respondApproval`/`renderRequest` in Task 11.
+- **R4:** A fires the Warning haptic from `onNewCard` only for `!replayed` (vault cards excluded after the
+  A revision); B adds no arrival haptic.
+- **R5:** A owns `config.set` 4001, `queued:true` on idle `send()`, and `status` in `event.message.complete`.
+  B reuses A's `withStaleSessionRetry` for stop/steer/fallback submit.
+- **R6:** A adds neither RNTL nor `jest.setup.ts`; B Task 3 owns both.
+- **Reducer ownership:** A implements every `RequestAction` case (incl. D2); B adds only selectors
+  (`composerMode`, `isApprovalActionable`).

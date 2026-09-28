@@ -2,6 +2,22 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+## Revision log (review 2026-09-28)
+
+Adversarial ops review; findings in the controller's scratchpad `plans-review-ops.md`. Changes:
+1. **Task 0 step 4** copied this plan from the session scratchpad, which is ephemeral and no longer the reviewed text. It now copies from the app repo's committed copy.
+2. **Review Focus 1: the evidence is corrected.** The spec and the assessment say flock "already works on shfs, per the Slack token lock". That lock is an `O_CREAT|O_EXCL` pid record (8.18 `gateway/status.py:1597`), not a flock. `/proc/locks` on dc1-1 shows no hermes flock on shfs (device `0:45`, `/mnt/user` = `fuse.shfs`). The only flock found there belongs to qdrant (`FLOCK ADVISORY WRITE … 00:2d:…`), so acquiring a flock on shfs does work. Whether it *excludes* another process has not been shown. Task 8's shfs run is the only proof, and it is mandatory.
+3. **Review Focus 3:** added the core-side evidence that `ProviderError` means 503 with the cookies kept, at both tags.
+4. **Task 3 `_locked`/`_flock`:** the thread-lock wait and the flock wait now share **one** deadline. Before, each got the full `lock_timeout`, so the worst case was 2× (20 s). At 8.18 the refresh runs on the dashboard's event loop, so that 20 s would freeze every dashboard request.
+5. **Task 5:** the cooldown comment is corrected. When no client is attached at all, 0.21.5 keeps the clarify waiting in `open_requests` (`tui_gateway/session_transports.py:38-47`). It resolves empty at once only when every attached client is a build that predates `client.capabilities`.
+6. **Task 8:**
+   - `mkdir -p /mnt/cache/compat` runs before the rsync, because rsync creates only the last path component;
+   - a docker-vdisk `df` gate;
+   - the old base is removed afterwards if this run pulled it;
+   - cleanup also runs on the failure path.
+7. **Task 8 step 6:** after the merge, plugin `main` is live on the box's **next restart**, even on 0.20.4, because boot pulls `main`. This is now stated in the PR body, with the one-line live check.
+8. **Global Constraints:** a note on ssh approvals, because 1Password prompts for each connection.
+
 **Goal:** Make `DeviceStore` safe against concurrent writers, both in-process and cross-process, before the 0.21.5 bump. Also stop duplicate pushes for coalesced approvals, and push a redacted, device-targeted "Hermes has a question" when the agent calls `clarify`. Everything must work on both hermes tags.
 
 **Architecture:**
@@ -42,6 +58,14 @@ Evidence:
 - "No push exists for sudo or secret" (spec §6.5). Do not add one.
 - No new dependency. Pushes stay redacted and routing-only in `data`, as in `push.py`.
 - Heavy Docker runs happen on dc1-1 (`ssh root@dc1-1.local`), never on the Mac.
+- ssh to dc1-1 signs through the **1Password agent**, which asks Gianluca to approve each connection. It will refuse (`agent refused operation`) while he is away. Before Task 8, message him to approve. Then open one master connection and reuse it. Afterwards, close it with `ssh -O exit -o ControlPath=… root@dc1-1.local`.
+
+  ```bash
+  ssh -o ControlMaster=auto -o ControlPersist=30m \
+      -o ControlPath="$HOME/.ssh/cm-%r@%h:%p" -fN root@dc1-1.local
+  ```
+
+  Every later `ssh root@dc1-1.local …` adds the same `-o ControlPath=…`. A refused signature is a STOP for him, never a retry loop.
 - Every commit ends with the trailer `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. The PR body ends with `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 - This repo has **no CI workflow and no CHANGELOG**. The merge gate is the explicit exit codes of the Task 8 runs, recorded in the PR body. Docs are updated in README.md and docs/CONTRACTS.md.
 - zsh gotcha: write `"${T}:path"`, never `"$T:path"`, because zsh treats `$T:h` as a modifier.
@@ -51,6 +75,11 @@ Evidence:
 1. **flock on Unraid shfs (FUSE).**
    - *Risk:* `/opt/data` is `/mnt/user/appdata/hermes/data`, which is shfs. flock may be unsupported there (`ENOLCK`), or it may not be released when a holder dies.
    - *Expected:* an unsupported flock degrades to the thread lock with a WARNING, and never fails a refresh. The real proof is the lock suite running on shfs as uid 10000.
+   - *Evidence (review 2026-09-28):*
+     - The spec's "per the Slack token lock" is **not** evidence: that lock is an `O_CREAT|O_EXCL` pid record, not a flock.
+     - On dc1-1, `stat -f` reports `fuse` for `/mnt/user/appdata/hermes/data`, and `/proc/locks` shows qdrant holding a `FLOCK` on a shfs inode (`00:2d:…`). So acquiring a flock on shfs works.
+     - Whether it *excludes* a second process is still unproven.
+     - A degraded flock cannot pass silently. `test_cross_process_writers_do_not_lose_updates` and `test_lock_held_by_a_killed_process_is_released` both fail if the flock is a no-op, and that is why Task 8's shfs run is the gate.
    - *Pinned by:* Task 3 `test_flock_unsupported_degrades_to_thread_lock`, the `HERMES_MOBILE_LOCKTEST_DIR` fixture, and Task 8's shfs run.
 2. **The CLI runs as root.** `docker exec` is root in this image (hermes-deploy STATE.md:206).
    - *Risk:* `docker exec hermes hermes mobile pair` writes a root-owned 0600 `devices.json` (a pre-existing hazard) and lock file. The uid-10000 dashboard then cannot open them, and every phone breaks.
@@ -59,6 +88,10 @@ Evidence:
 3. **A writer dies or hangs holding the lock** (SIGKILL or OOM mid-`pair`, or a wedged process).
    - *Expected:* there is no stale lock, because the kernel drops the flock. A waiter gives up after `lock_timeout` with `DeviceStoreError`, which the auth provider maps to a **transient** `ProviderError`, never `RefreshExpiredError`. A phone is never bounced to re-pair because of a lock.
    - *Pinned by:* Task 3 `test_lock_held_by_a_killed_process_is_released` and `test_refresh_lock_timeout_is_transient_not_repair`.
+   - *Core side, verified statically at both tags (review 2026-09-28):*
+     - The plugin maps any non-`RefreshTokenError` to `ProviderError` (`auth_provider.py:108-109`). `DeviceStoreError` is not a `RefreshTokenError`.
+     - 8.18 `hermes_cli/dashboard_auth/middleware.py:462-468`: a `ProviderError` from the refresh gives a 503 and the cookies are preserved.
+     - 9.24 `middleware.py:192-196`: the same, via `run_in_threadpool`. `refresh_singleflight.py:73`: `ProviderError` is deliberately **not** cached, so the phone's retry reaches the store again.
 4. **Push storm from clarify retries.**
    - *Risk:* at 0.21.5 a clarify with no capable client attached resolves empty at once, and the model may re-ask in a loop.
    - *Expected:* at most one clarify push per (device, route session) per 30 s. Other sessions are unaffected, and pushes resume after the window.
@@ -143,8 +176,10 @@ Expected: `155 passed` and `exit=0` for both.
 ```bash
 cd $HOME/Developer/hermes-mobile-plugin-worktrees/store-lock-and-pushes
 mkdir -p docs/superpowers/plans
-cp /private/tmp/claude-501/-Users-gldc-Developer/c27ce2fd-7a03-4b96-bdec-b4340f7064a1/scratchpad/plan-P-plugin.md \
-   docs/superpowers/plans/2026-09-28-plugin-store-lock-and-pushes.md
+# Source = the REVIEWED copy in the app repo (the session scratchpad is ephemeral and pre-review).
+SRC=$HOME/Developer/hermes-mobile-app/docs/superpowers/plans/cross-repo/2026-09-28-P-plugin-store-lock-and-pushes.md
+test -s "$SRC" && grep -q '^## Revision log (review 2026-09-28)' "$SRC" || { echo "STOP: reviewed plan not found"; exit 1; }
+cp "$SRC" docs/superpowers/plans/2026-09-28-plugin-store-lock-and-pushes.md
 git add docs/superpowers/plans/2026-09-28-plugin-store-lock-and-pushes.md
 git commit -m "docs: plan for DeviceStore locking, coalesced skip, clarify push" \
   -m "Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -781,7 +816,7 @@ git commit -m "fix(store): path-keyed module lock around every load-modify-save 
 - Produces:
   - `DeviceStore.lock_path -> Path`, which is `<store>.lock`, for example `devices.json.lock`, mode 0600;
   - `_match_dir_owner(path: Path, directory: Path) -> None`;
-  - `_locked()` now also holds `fcntl.flock(LOCK_EX)` on `lock_path`. The lock times out after `lock_timeout` with `DeviceStoreError("timed out …")`. An unopenable lock file, or an `OSError` other than EWOULDBLOCK from flock, degrades to thread-only locking and logs a WARNING containing `cross-process locking disabled`.
+  - `_locked()` now also holds `fcntl.flock(LOCK_EX)` on `lock_path`. The lock times out after `lock_timeout` with `DeviceStoreError("timed out …")`. The thread-lock wait and the flock wait share **one** deadline, so the total wait never exceeds `lock_timeout` (review 2026-09-28). At 8.18 the refresh runs on the dashboard event loop. An unopenable lock file, or an `OSError` other than EWOULDBLOCK from flock, degrades to thread-only locking and logs a WARNING containing `cross-process locking disabled`.
 
 - [ ] **Step 1: Write the failing tests**
 
