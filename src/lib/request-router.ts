@@ -21,10 +21,22 @@ export interface RequestRouterDeps {
 }
 
 export interface RequestRouter {
-  /** The ServerRequestHandler: true = accepted (no -32601), false = decline. */
+  /** The ServerRequestHandler: true = accepted, false = decline (the channel then answers
+   * -32601). The vault branch answers its own -32601 via `req.fail` before returning true. */
   handleRequest(req: ServerRequest): boolean;
   /** Consumes request.cancel and the legacy approval.request event. true = consumed. */
   handleEvent(e: GatewayEvent | { type: string; payload?: unknown; replayed?: boolean }): boolean;
+}
+
+/** Never let a dependency call escape: the vendored channel answers ANY onRequest handler
+ * throw with -32603, which withdraws an approval / blanks a clarify at 0.21.5 (review M3 /
+ * Review Focus 4). `fallback` is a thunk so it's only evaluated when `fn` actually throws. */
+function safely<T>(fn: () => T, fallback: () => T): T {
+  try {
+    return fn();
+  } catch {
+    return fallback();
+  }
 }
 
 export function createRequestRouter(deps: RequestRouterDeps): RequestRouter {
@@ -56,8 +68,8 @@ export function createRequestRouter(deps: RequestRouterDeps): RequestRouter {
           method: req.method,
           params: req.params,
           legacy: false,
-          receivedAt: now(),
-          anchorKey: deps.anchorKey(),
+          receivedAt: safely(now, Date.now),
+          anchorKey: safely(deps.anchorKey, () => null),
         },
         req.replayed === true,
       );
@@ -88,8 +100,8 @@ export function createRequestRouter(deps: RequestRouterDeps): RequestRouter {
               method: 'approval',
               params: payload,
               legacy: true,
-              receivedAt: now(),
-              anchorKey: deps.anchorKey(),
+              receivedAt: safely(now, Date.now),
+              anchorKey: safely(deps.anchorKey, () => null),
             },
             e.replayed === true,
           );

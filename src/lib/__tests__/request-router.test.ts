@@ -125,3 +125,51 @@ describe('shouldWarn', () => {
     expect(shouldWarn(card({ kind: 'vault-declined', status: 'skipped' }), false)).toBe(false);
   });
 });
+
+// Review Focus 4 / Important finding: a throwing dependency (anchorKey, now, onNewCard) must
+// never escape handleRequest/handleEvent — the vendored channel answers ANY onRequest handler
+// throw with -32603, which withdraws an approval / blanks a clarify at 0.21.5.
+describe('resilience against throwing deps', () => {
+  it('a throwing anchorKey: handleRequest still returns true, card exists with anchorKey null, nothing on the wire', () => {
+    const store = createTurnStore();
+    const registry = createRequestRegistry();
+    const router = createRequestRouter({
+      store, registry,
+      anchorKey: () => {
+        throw new Error('boom');
+      },
+    });
+    const { req, wire } = srq('srq-1', 'approval');
+    expect(router.handleRequest(req)).toBe(true);
+    expect(wire).toEqual([]);
+    expect(store.getState().requests[0]).toMatchObject({ id: 'srq-1', anchorKey: null });
+  });
+
+  it('a throwing anchorKey on the legacy approval.request path: handleEvent still returns true, card exists with anchorKey null', () => {
+    const store = createTurnStore();
+    const registry = createRequestRegistry();
+    const router = createRequestRouter({
+      store, registry,
+      anchorKey: () => {
+        throw new Error('boom');
+      },
+    });
+    expect(router.handleEvent({ type: 'approval.request', payload: { command: 'rm -rf a' } })).toBe(true);
+    expect(store.getState().requests[0]).toMatchObject({ id: 'legacy:1', anchorKey: null });
+  });
+
+  it('a throwing onNewCard: handleRequest still returns true and the card exists', () => {
+    const store = createTurnStore();
+    const registry = createRequestRegistry();
+    const router = createRequestRouter({
+      store, registry, anchorKey: () => 'i7',
+      onNewCard: () => {
+        throw new Error('boom');
+      },
+    });
+    const { req, wire } = srq('srq-1', 'approval');
+    expect(router.handleRequest(req)).toBe(true);
+    expect(wire).toEqual([]);
+    expect(store.getState().requests[0]).toMatchObject({ id: 'srq-1' });
+  });
+});
