@@ -8,7 +8,7 @@ import { ActivityIndicator, AppState, FlatList, Pressable, Share, Text, View } f
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createChatTransport, type ChatTransport } from '@/api/chat-transport';
-import { makeNativeSocket, type GatewayClient } from '@/api/gatewayClient';
+import { RpcError, makeNativeSocket, type GatewayClient } from '@/api/gatewayClient';
 import { getModelInfo } from '@/api/models';
 import { setSessionModelTarget } from '@/session-model-store';
 import { switchSessionModel, type SwitchOutcome } from '@/api/sessionModel';
@@ -22,7 +22,7 @@ import {
   pillModelId,
 } from '@/lib/model-pill';
 import { withProfile } from '@/api/profiles';
-import type { GatewayEvent, GatewayEventMap } from '@/vendor/hermes-gateway';
+import type { GatewayEvent, GatewayEventMap, RpcMethods } from '@/vendor/hermes-gateway';
 import { setAttachHandler } from '@/attach-bus';
 import { ApprovalCard, type ApprovalInfo } from '@/components/approval-card';
 import { Icon } from '@/components/icon';
@@ -46,9 +46,11 @@ import { shouldWarn } from '@/lib/request-router';
 import { emptyBatch, finalizeBatch, reduceSubagentEvent } from '@/lib/subagent-progress';
 import { parseTodoList } from '@/lib/todo';
 import { shouldReconnect } from '@/lib/reconnect';
+import { completionEffects, createTurnCommands, restoreSteerText, type TurnCommands } from '@/lib/turn-commands';
 import {
   cancelLabel,
   completeStatus,
+  composerMode,
   initialTurnModel,
   mergeRequestRows,
   type RequestCardState,
@@ -172,6 +174,65 @@ export default function ChatScreen() {
   const readTurn = (): TurnModel => transportRef.current?.store.getState() ?? initialTurnModel();
   const dispatchTurn = (a: TurnAction): void => transportRef.current?.store.dispatch(a);
   const resumeParams = () => withProfile({ session_id: storedIdRef.current ?? '' }, profileRef.current);
+
+  /** Typed call on this screen's single client. A's `gw()` is null before mount/after unmount;
+   *  this rejects (never throws synchronously) so command/answer code can treat it as a failure. */
+  function callGw<M extends keyof RpcMethods>(
+    method: M,
+    params: RpcMethods[M]['params'],
+  ): Promise<RpcMethods[M]['result']> {
+    const client = gw();
+    return client ? client.call(method, params) : Promise.reject(new RpcError('Not connected.', -1));
+  }
+
+  // Stop / steer (spec §5.3). Created once, on first use from a handler (never during render —
+  // its deps read refs, which the React Compiler forbids in render); every dep reads refs at call time.
+  const commandsRef = useRef<TurnCommands | null>(null);
+  function commands(): TurnCommands {
+    commandsRef.current ??= createTurnCommands({
+      call: callGw,
+      dispatch: (a) => dispatchTurn(a),
+      liveSessionId: () => liveIdRef.current,
+      turnState: () => readTurn().turn,
+      // A's transport: session.resume on the stored id, updates liveIdRef + seeds the store.
+      resumeStored: () =>
+        transportRef.current?.resumeStored() ?? Promise.reject(new RpcError('Not connected.', -1)),
+      reconnect: (trigger) => orchestratorRef.current?.reconnect(trigger) ?? Promise.resolve(),
+      setTimer: (fn, ms) => {
+        const t = setTimeout(fn, ms);
+        return () => clearTimeout(t);
+      },
+    });
+    return commandsRef.current;
+  }
+  // Unmount: cancel a pending 15 s stop fallback so it never reconnects a dead screen.
+  useEffect(() => () => commandsRef.current?.dispose(), []);
+
+  async function stop() {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
+    const out = await commands().stop();
+    if (!out.ok) setError(out.message);
+  }
+
+  async function steer() {
+    const text = input.trim();
+    if (!text) return;
+    setInput('');
+    setError(null);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
+    const out = await commands().steer(text);
+    if (out.kind === 'error') {
+      setError(out.message);
+      setInput((cur) => restoreSteerText(cur, text));
+      return;
+    }
+    setItems((prev) => [
+      ...prev,
+      { key: nextKey(), role: 'user', text, complete: true, ...(out.kind === 'steered' ? { steered: true } : {}) },
+    ]);
+    // F10: the fallback was a queued prompt.submit (turn → waiting), so show the dots like send().
+    if (out.kind === 'submitted') setThinking(true);
+  }
 
   function append(role: ChatItem['role'], text: string, complete = true) {
     setItems((prev) => [...prev, { key: nextKey(), role, text, complete }]);
@@ -390,9 +451,13 @@ export default function ChatScreen() {
         setThinking(false);
         finishAssistant();
         finalizeSubagents();
-        if (status === 'interrupted') append('status', 'Stopped');
-        else if (status === 'error') setError(p?.error || 'The turn failed.');
-        else if (live) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        const fx = completionEffects(status, !live);
+        if (fx.stoppedMarker) {
+          setItems((prev) => [...prev, { key: nextKey(), role: 'status', text: 'Stopped', marker: 'stopped' }]);
+        } else if (status === 'error') {
+          setError(p?.error || 'The turn failed.');
+        }
+        if (fx.successHaptic) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
         break;
       }
       case 'tool.start': {
@@ -900,9 +965,11 @@ export default function ChatScreen() {
       <Composer
         value={input}
         onChangeText={setInput}
+        mode={composerMode(turn, input.trim().length > 0, Boolean(stagedImage))}
         onSend={send}
+        onStop={() => void stop()}
+        onSteer={() => void steer()}
         disabled={!ready}
-        streaming={busy}
         stagedImageUri={stagedImage?.uri ?? null}
         onAttachPress={() => router.push('/attach')}
         onRemoveImage={() => setStagedImage(null)}

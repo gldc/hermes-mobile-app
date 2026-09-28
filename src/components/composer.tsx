@@ -1,9 +1,10 @@
-import { useLayoutEffect, useState } from 'react';
-import { Pressable, Text, TextInput, View } from 'react-native';
+import { useLayoutEffect, useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { Icon } from '@/components/icon';
-import { composerMinHeight } from '@/lib/composer-height';
+import { composerMinHeight, valueSetFromJs } from '@/lib/composer-height';
+import type { ComposerMode } from '@/lib/turn-controller';
 import { useTheme } from '@/theme';
 
 interface ComposerProps {
@@ -12,8 +13,12 @@ interface ComposerProps {
   onSend: () => void;
   /** Input disabled entirely (e.g. session not ready). */
   disabled?: boolean;
-  /** Agent is responding; send is held but typing stays available. */
-  streaming?: boolean;
+  /** From `composerMode(turn, hasText, hasImage)` — spec §5.2. */
+  mode: ComposerMode;
+  /** Running turn: `session.interrupt`. */
+  onStop: () => void;
+  /** Running turn: `session.steer` with the current text. */
+  onSteer: () => void;
   /** Local uri of the staged photo, shown as a removable chip above the input. */
   stagedImageUri?: string | null;
   /** Open the Take Photo / Choose from Library sheet. */
@@ -33,7 +38,9 @@ export function Composer({
   onChangeText,
   onSend,
   disabled,
-  streaming,
+  mode,
+  onStop,
+  onSteer,
   stagedImageUri,
   onAttachPress,
   onRemoveImage,
@@ -41,16 +48,24 @@ export function Composer({
   onModelPress,
 }: ComposerProps) {
   const { colors, dark } = useTheme();
-  const canSend = !disabled && !streaming && (value.trim().length > 0 || Boolean(stagedImageUri));
+  const running = mode.kind === 'stop+steer';
+  const stopping = running && !mode.stopEnabled;
+  const canSend = !disabled && mode.kind === 'send' && mode.enabled;
+  const canStop = !disabled && running && mode.stopEnabled;
+  const canSteer = !disabled && running && mode.steerEnabled;
+  const hasText = value.trim().length > 0;
 
-  // Fabric measures a JS-cleared TextInput against its previous text, so after
-  // a send it would keep its grown height. Re-render once after an empty value
-  // is committed so composerMinHeight() can flip a layout-neutral prop and
-  // force a re-measure — see src/lib/composer-height.ts.
-  const [emptyCommitted, setEmptyCommitted] = useState(value === '');
+  // Fabric measures a JS-set TextInput against its previous text, so after a
+  // send it would keep its grown height and a failed steer's restore would
+  // show at one line. Re-render once after a JS-driven value is committed so
+  // composerMinHeight() can flip a layout-neutral prop and force a re-measure —
+  // see src/lib/composer-height.ts.
+  const lastEmittedRef = useRef<string | null>(null);
+  const [remeasure, setRemeasure] = useState(false);
   useLayoutEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- the follow-up commit IS the fix
-    setEmptyCommitted(value === '');
+    const fromJs = valueSetFromJs(value, lastEmittedRef.current);
+    lastEmittedRef.current = null; // consumed: a later JS set of the same text still flips
+    if (fromJs) setRemeasure((r) => !r); // the follow-up commit IS the fix
   }, [value]);
 
   return (
@@ -107,21 +122,29 @@ export function Composer({
                 <Icon sf="xmark" size={10} color={colors.text} />
               </Pressable>
             </View>
+            {running ? (
+              <Text style={{ color: colors.textFaint, fontSize: 12.5, alignSelf: 'center', marginLeft: 10, flexShrink: 1 }}>
+                Sends after Hermes finishes
+              </Text>
+            ) : null}
           </Animated.View>
         ) : null}
 
         <TextInput
           value={value}
-          onChangeText={onChangeText}
+          onChangeText={(t) => {
+            lastEmittedRef.current = t;
+            onChangeText(t);
+          }}
           editable={!disabled}
           multiline
-          placeholder={streaming ? 'Hermes is responding…' : 'Chat with Hermes'}
+          placeholder={running ? 'Steer Hermes…' : 'Chat with Hermes'}
           placeholderTextColor={colors.placeholder}
           style={{
             color: colors.text,
             fontSize: 17,
             lineHeight: 23,
-            minHeight: composerMinHeight(value, emptyCommitted),
+            minHeight: composerMinHeight(remeasure),
             maxHeight: 120,
             paddingTop: 10,
             paddingBottom: 2,
@@ -172,23 +195,79 @@ export function Composer({
 
           <View style={{ flex: 1 }} />
 
-          <Pressable
-            accessibilityRole="button"
-            accessibilityLabel="Send message"
-            onPress={onSend}
-            disabled={!canSend}
-            hitSlop={6}
-            style={({ pressed }) => ({
-              width: 36,
-              height: 36,
-              borderRadius: 18,
-              alignItems: 'center',
-              justifyContent: 'center',
-              backgroundColor: canSend ? (pressed ? colors.accentPressed : colors.accent) : colors.raised,
-            })}
-          >
-            <Icon sf="arrow.up" size={16} color={canSend ? colors.onAccent : colors.textFaint} />
-          </Pressable>
+          {running ? (
+            <>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel={stopping ? 'Stopping response' : 'Stop response'}
+                accessibilityState={{ disabled: !canStop, busy: stopping }}
+                onPress={onStop}
+                disabled={!canStop}
+                hitSlop={6}
+                style={({ pressed }) => ({
+                  height: 36,
+                  minWidth: 36,
+                  paddingHorizontal: stopping ? 12 : 0,
+                  borderRadius: 18,
+                  borderCurve: 'continuous',
+                  flexDirection: 'row',
+                  gap: 6,
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  backgroundColor: pressed ? colors.userBubble : colors.raised,
+                  opacity: !canStop && !stopping ? 0.5 : 1,
+                })}
+              >
+                {stopping ? (
+                  <>
+                    <ActivityIndicator size="small" color={colors.textDim} />
+                    <Text style={{ color: colors.textDim, fontSize: 14, fontWeight: '500' }}>Stopping…</Text>
+                  </>
+                ) : (
+                  <Icon sf="stop.fill" size={13} color={colors.text} />
+                )}
+              </Pressable>
+              {hasText ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Send steer message"
+                  accessibilityState={{ disabled: !canSteer }}
+                  onPress={onSteer}
+                  disabled={!canSteer}
+                  hitSlop={6}
+                  style={({ pressed }) => ({
+                    width: 36,
+                    height: 36,
+                    borderRadius: 18,
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    backgroundColor: canSteer ? (pressed ? colors.accentPressed : colors.accent) : colors.raised,
+                  })}
+                >
+                  <Icon sf="arrow.up" size={16} color={canSteer ? colors.onAccent : colors.textFaint} />
+                </Pressable>
+              ) : null}
+            </>
+          ) : (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="Send message"
+              accessibilityState={{ disabled: !canSend }}
+              onPress={onSend}
+              disabled={!canSend}
+              hitSlop={6}
+              style={({ pressed }) => ({
+                width: 36,
+                height: 36,
+                borderRadius: 18,
+                alignItems: 'center',
+                justifyContent: 'center',
+                backgroundColor: canSend ? (pressed ? colors.accentPressed : colors.accent) : colors.raised,
+              })}
+            >
+              <Icon sf="arrow.up" size={16} color={canSend ? colors.onAccent : colors.textFaint} />
+            </Pressable>
+          )}
         </View>
       </View>
     </View>

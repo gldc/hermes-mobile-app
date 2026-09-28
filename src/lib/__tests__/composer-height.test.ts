@@ -1,21 +1,26 @@
-import { composerMinHeight } from '../composer-height';
+import { composerMinHeight, valueSetFromJs } from '../composer-height';
 
-test('the commit that clears the value leaves minHeight unset', () => {
-  // The empty value has not been committed yet, so nothing flips on this commit.
-  expect(composerMinHeight('', false)).toBeUndefined();
+test('a JS-driven clear is a JS set (the value was never emitted by onChangeText)', () => {
+  expect(valueSetFromJs('', 'six lines of text')).toBe(true);
 });
 
-test('an empty value that has been committed (after a clear, or on mount) gets minHeight 0', () => {
-  expect(composerMinHeight('', true)).toBe(0);
+test('a JS-driven non-empty set (a failed steer restore) is a JS set', () => {
+  expect(valueSetFromJs('use tabs\nand spaces', '')).toBe(true);
+  // The emitted text is consumed per commit, so restoring text that was typed earlier still counts.
+  expect(valueSetFromJs('use tabs', null)).toBe(true);
 });
 
-test('a clear and the commit after it produce different minHeights (the re-measure trigger)', () => {
-  const onClear = composerMinHeight('', false);
-  const afterSettle = composerMinHeight('', true);
-  expect(afterSettle).not.toBe(onClear);
+test('a typed value echoed back by the parent is not a JS set', () => {
+  expect(valueSetFromJs('use tabs', 'use tabs')).toBe(false);
+  expect(valueSetFromJs('', '')).toBe(false); // typed all the way back to empty
 });
 
-test('a non-empty value never sets minHeight, so native auto-grow is untouched', () => {
-  expect(composerMinHeight('hello', false)).toBeUndefined();
-  expect(composerMinHeight('six lines of wrapped text '.repeat(10), true)).toBeUndefined();
+test('the follow-up flip always changes minHeight (the re-measure trigger)', () => {
+  expect(composerMinHeight(true)).not.toBe(composerMinHeight(false));
+});
+
+test('minHeight is never a constraint, so native auto-grow is untouched', () => {
+  // Rewritten from C's "a non-empty value never sets minHeight": the non-empty restore needs the
+  // same flip as a clear, so a non-empty value may now carry minHeight 0 — still layout-neutral.
+  for (const flip of [true, false]) expect([0, undefined]).toContain(composerMinHeight(flip));
 });
