@@ -349,6 +349,9 @@ export default function ChatScreen() {
       if (p.attempt === 1) finalizeSubagents(); // socket drop mid-delegation: seal the card
       setReconnectNote(`Connection lost — reconnecting (${p.attempt}/${p.max})…`);
     } else if (p.kind === 'ready') {
+      // A turn that finished while the socket was down never delivers message.complete
+      // (resume reports running:false, replay is skipped) — drop the stale thinking flag.
+      if (readTurn().turn === 'idle') setThinking(false);
       setReconnectNote(null);
       setError(null);
       setReady(true);
@@ -799,7 +802,8 @@ export default function ChatScreen() {
             </Animated.View>
           )}
           ListHeaderComponent={
-            thinking ? (
+            // Server-driven turn state is the authority: never show dots on an idle turn.
+            thinking && busy ? (
               <Animated.View entering={FadeIn.duration(200)}>
                 <ThinkingDots />
               </Animated.View>
