@@ -486,11 +486,20 @@ export default function ChatScreen() {
       try {
         await hydrateProfileStore(); // no-op when sessions screen already ran
         profileRef.current = getProfileState().selected;
+        let historyLoaded = false;
         if (id !== 'new') {
           storedIdRef.current = id;
-          await handlersRef.current!.loadHistory(id); // fast first paint, before the socket
+          try {
+            await handlersRef.current!.loadHistory(id); // fast first paint, before the socket
+            historyLoaded = true;
+          } catch {
+            // start() loads it instead, after resume
+          }
         }
-        await t.orchestrator.start(); // connect → resume → history (spec §7)
+        // connect → resume → history (spec §7). The first paint above already replaced the
+        // transcript, so the initial run skips a second load that would re-key and re-fade
+        // every row (review I1); reconnects still reload.
+        await t.orchestrator.start({ historyLoaded });
       } catch {
         if (!cancelledRef.current) setError('Could not open a live session. Check your VPN or Wi-Fi.');
       }

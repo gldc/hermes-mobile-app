@@ -6,7 +6,8 @@
 //      resolves only after gateway.ready (+1 tick), so capabilities precede resume.
 //   2. session.resume (open_requests are routed into cards by the channel before it resolves;
 //      running/status/inflight seed the turn state).
-//   3. history replace (cards live outside items, so they survive).
+//   3. history replace (cards live outside items, so they survive). start({historyLoaded:true})
+//      skips it on the initial run: the screen's first paint already loaded it (review I1).
 //   4. in-flight replay via session.events.since, from the turn anchor (fallback: the highest
 //      seq seen) so a running turn's whole unpersisted text returns after the history replace;
 //      apply only events after the batch's last message.complete; skip on truncated / no anchor.
@@ -42,10 +43,17 @@ export interface OrchestratorDeps {
   onPhase?: (p: ReconnectPhase) => void;
 }
 
+export interface StartOptions {
+  /** The screen already painted this session's history (first paint, before the socket): the
+   * initial run skips its history replace so the transcript is not fetched and re-keyed twice
+   * (review I1). Reconnect runs always load history. */
+  historyLoaded?: boolean;
+}
+
 export interface ReconnectOrchestrator {
   reconnect(trigger: ReconnectTrigger): Promise<void>;
   /** Additive: the initial connect — one attempt, no backoff, same single-flight slot. Rejects on failure. */
-  start(): Promise<void>;
+  start(opts?: StartOptions): Promise<void>;
   onLiveEvent(e: GatewayEvent): void;
   noteSeq(sessionId: string, seq: number): void;
   dispose(): void;
@@ -176,7 +184,7 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
     }
   }
 
-  async function runSequence(): Promise<void> {
+  async function runSequence(skipHistory = false): Promise<void> {
     parked = [];
     try {
       deps.client.invalidate(); // drop the old generation FIRST: its late frames/close are inert
@@ -189,8 +197,10 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
         const res = await deps.client.call('session.resume', deps.resumeParams());
         if (disposed) return;
         const running = seedFromResume(res, deps);
-        await deps.loadHistory(storedId);
-        if (disposed) return;
+        if (!skipHistory) {
+          await deps.loadHistory(storedId);
+          if (disposed) return;
+        }
         if (running) await replay(res.session_id);
         if (disposed) return;
       }
@@ -238,9 +248,9 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
         if (!disposed) deps.onPhase?.({ kind: 'failed' });
       });
     },
-    start() {
+    start(opts) {
       return singleFlight(async () => {
-        await runSequence();
+        await runSequence(opts?.historyLoaded === true);
         if (!disposed) deps.onPhase?.({ kind: 'ready' });
       });
     },

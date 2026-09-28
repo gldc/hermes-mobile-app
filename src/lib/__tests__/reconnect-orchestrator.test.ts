@@ -247,6 +247,34 @@ describe('single-flight', () => {
     expect(phases).toEqual(['attempt1', 'attempt2', 'attempt3', 'attempt4', 'attempt5', 'failed']);
   });
 
+  it('start({historyLoaded:true}) resumes without re-loading history (I1: first paint already did)', async () => {
+    const h = harness();
+    h.results['session.resume'] = [resume({ running: false })];
+    await h.orch.start({ historyLoaded: true });
+    expect(h.log).toEqual([
+      'invalidate', 'mint', 'connect:ws://gw/t1', 'call:session.resume', 'live:live-1', 'dispatch:resume.seeded',
+    ]);
+    expect(h.deps.loadHistory).not.toHaveBeenCalled();
+  });
+
+  it('start() without historyLoaded still loads history (first paint failed or was skipped)', async () => {
+    const h = harness();
+    h.results['session.resume'] = [resume({ running: false })];
+    await h.orch.start();
+    expect(h.deps.loadHistory).toHaveBeenCalledTimes(1);
+    expect(h.deps.loadHistory).toHaveBeenCalledWith('stored-1');
+  });
+
+  it('historyLoaded applies to the initial run only: a later reconnect still loads history', async () => {
+    const h = harness();
+    h.results['session.resume'] = [resume({ running: false }), resume({ running: false })];
+    await h.orch.start({ historyLoaded: true });
+    expect(h.deps.loadHistory).not.toHaveBeenCalled();
+    await h.orch.reconnect('close');
+    expect(h.deps.loadHistory).toHaveBeenCalledTimes(1);
+    expect(h.deps.loadHistory).toHaveBeenCalledWith('stored-1');
+  });
+
   it('start() is a single attempt and rejects on failure', async () => {
     const h = harness();
     h.results.connect = [new Error('offline')];
