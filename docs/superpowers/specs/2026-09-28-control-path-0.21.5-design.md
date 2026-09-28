@@ -456,8 +456,11 @@ heartbeat `closed`, or AppState foreground with a dead socket.
 3. **History:** `GET /api/sessions/{id}/messages` replaces `items`, as today. This is the proven source
    of persisted turns. Request cards are outside `items`, so they survive the replace.
 4. **In-flight replay,** only if the turn is running:
-   1. Call `session.events.since {session_id, last_seen}` with the app-tracked watermark (the highest
-      `seq` seen for this session, kept in the orchestrator and not reset across reconnects).
+   1. Call `session.events.since {session_id, last_seen}` from the **turn anchor**: the seq of the last
+      `message.complete` seen, or the seq just before the current `message.start`. If there is no anchor,
+      use the highest `seq` seen. This restores the text streamed before the drop, which the history
+      replace removed (Gianluca's decision, 2026-09-28). Watermarks are kept in the orchestrator and reset
+      only when `replay_epoch` changes.
    2. Apply only events **after the last `message.complete` in the replay batch**. Those belong to the
       still-unpersisted turn, so nothing duplicates history.
    3. `truncated:true`, **or no watermark yet** (a cold start or a fresh screen), → skip the replay;

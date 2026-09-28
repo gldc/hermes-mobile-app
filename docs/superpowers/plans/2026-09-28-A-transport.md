@@ -8,7 +8,9 @@
    nothing to answer). One-line conditional; the verified code is otherwise unchanged.
 2. **Merge order** (all three app plans): A merges first (B is cut from A's merged `main`); C is
    independent and merges before B (C and B both edit `composer.tsx`; B's plan is written against C's file).
-3. **Open finding, needs a decision (not patched here):** the in-flight replay uses the highest seq seen
+3. **RESOLVED 2026-09-28 — Gianluca chose (b); patched in Task 5 (turn anchor) with a new test. The
+   executor must adapt the new test to Task 5's real `harness`/`ev` helpers if their signatures differ; this
+   patch was not compiled with the rest of the verified code.** Original finding: the in-flight replay uses the highest seq seen
    as `last_seen`, and `loadHistory` replaces `items` before the replay. For a turn that was streaming
    when the socket dropped, the text streamed *before* the drop is unpersisted, so the history replace
    removes it and the replay (seq > watermark) does not bring it back — only text streamed during the gap
@@ -2199,6 +2201,34 @@ describe('sequence order', () => {
     ]);
   });
 
+  it('decision (b): a running turn replays from the turn anchor, restoring pre-drop text', async () => {
+    // RED first: before the turn anchor, last_seen is the highest seq seen (12), so the pre-drop
+    // deltas (11-12) that the history replace removed never come back.
+    const h = harness();
+    h.orch.onLiveEvent({ type: 'message.complete', session_id: 'live-1', seq: 9 } as any); // prior turn ends
+    h.orch.onLiveEvent({ type: 'message.start', session_id: 'live-1', seq: 10 } as any);
+    h.orch.onLiveEvent({ type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } } as any);
+    h.orch.onLiveEvent({ type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: '-drop' } } as any);
+    h.results['session.resume'] = [resume({ running: true })];
+    h.results['session.events.since'] = [
+      since([
+        { type: 'message.start', session_id: 'live-1', seq: 10 },
+        { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } },
+        { type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: '-drop' } },
+        { type: 'message.delta', session_id: 'live-1', seq: 13, payload: { text: ' gap' } },
+      ]),
+    ];
+    h.applied.length = 0;
+    await h.orch.reconnect('close');
+    expect(h.client.call).toHaveBeenCalledWith('session.events.since', { session_id: 'live-1', last_seen: 9 });
+    expect(h.applied.map((e) => [e.type, e.seq, e.replayed])).toEqual([
+      ['message.start', 10, true],
+      ['message.delta', 11, true],
+      ['message.delta', 12, true],
+      ['message.delta', 13, true],
+    ]);
+  });
+
   it('skips replay with no watermark yet (cold start / fresh screen)', async () => {
     const h = harness();
     h.results['session.resume'] = [resume({ running: true })];
@@ -2441,6 +2471,10 @@ function seqOf(e: GatewayEvent): number | null {
 
 export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOrchestrator {
   const watermarks = new Map<string, number>();
+  // Decision 2026-09-28 (option b): per-session turn anchor = seq just before the current turn.
+  // Replaying from it while a turn runs restores the pre-drop streamed text that the history
+  // replace removed; the "apply only after the batch's last message.complete" rule dedupes.
+  const turnAnchors = new Map<string, number>();
   let epoch: string | null = null;
   let inflight: Promise<void> | null = null;
   let parked: GatewayEvent[] | null = null;
@@ -2450,9 +2484,19 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
     if ((watermarks.get(sessionId) ?? 0) < seq) watermarks.set(sessionId, seq);
   }
 
+  function noteTurnAnchor(e: GatewayEvent, s: number | null): void {
+    if (!e.session_id || s === null) return;
+    if (e.type === 'message.complete') turnAnchors.set(e.session_id, s);
+    else if (e.type === 'message.start') {
+      const prev = turnAnchors.get(e.session_id);
+      if (prev === undefined || prev < s - 1) turnAnchors.set(e.session_id, s - 1);
+    }
+  }
+
   function applyLive(e: GatewayEvent): void {
     const s = seqOf(e);
     if (e.session_id && s !== null) noteSeq(e.session_id, s);
+    noteTurnAnchor(e, s);
     deps.applyReplayedEvent(e);
   }
 
@@ -2460,12 +2504,17 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
     const next = (e.payload as { replay_epoch?: unknown } | undefined)?.replay_epoch;
     if (typeof next !== 'string' || !next) return;
     // Backend restart: seq counters reset, old watermarks describe a numbering that no longer exists.
-    if (epoch !== null && epoch !== next) watermarks.clear();
+    if (epoch !== null && epoch !== next) {
+      watermarks.clear();
+      turnAnchors.clear();
+    }
     epoch = next;
   }
 
   async function replay(liveId: string): Promise<void> {
-    const last = watermarks.get(liveId);
+    // Prefer the turn anchor so the whole unpersisted turn is re-applied after the history replace;
+    // fall back to the highest seq seen (joined mid-turn: only the gap is recoverable).
+    const last = turnAnchors.get(liveId) ?? watermarks.get(liveId);
     if (last === undefined) return; // cold start / fresh screen: nothing to anchor a replay on
     let res: RpcMethods['session.events.since']['result'];
     try {
@@ -2476,6 +2525,7 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
     if (res.truncated) return;
     if (epoch !== null && res.epoch && res.epoch !== epoch) {
       watermarks.clear();
+      turnAnchors.clear();
       epoch = res.epoch;
       return;
     }
@@ -2488,6 +2538,7 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
       const e = events[i];
       const s = seqOf(e);
       if (s !== null) noteSeq(liveId, s); // history covers everything up to the last complete
+      if (e?.type) noteTurnAnchor({ ...e, session_id: e.session_id ?? liveId }, s);
       if (i > lastComplete && e?.type) deps.applyReplayedEvent({ ...e, replayed: true });
     }
   }
