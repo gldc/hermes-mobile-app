@@ -1,6 +1,6 @@
 import { router } from 'expo-router';
 import { useEffect, useState, useSyncExternalStore } from 'react';
-import { Pressable, ScrollView, Text, View } from 'react-native';
+import { Pressable, Text, View } from 'react-native';
 import { getModelInfo, modelDisplayName } from '@/api/models';
 import { requestAttach, type AttachAction } from '@/attach-bus';
 import { Icon } from '@/components/icon';
@@ -107,9 +107,13 @@ export default function AttachSheet() {
   };
 
   return (
-    <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      {/* Header: close + centered title */}
-      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 14, paddingBottom: 4 }}>
+    <View style={{ backgroundColor: colors.bg }}>
+      {/* Header: close + centered title. paddingTop clears the sheet's
+          grabber — with fitToContents the sheet sizes itself to this
+          view's natural height, so there's no flex:1 wrapper competing
+          with it for space (that competition was the root cause of the
+          missing header / dead space bug). */}
+      <View style={{ flexDirection: 'row', alignItems: 'center', paddingHorizontal: 14, paddingTop: 24, paddingBottom: 4 }}>
         <Pressable
           accessibilityRole="button"
           accessibilityLabel="Close"
@@ -135,7 +139,7 @@ export default function AttachSheet() {
         <View style={{ width: 34 }} />
       </View>
 
-      <ScrollView contentContainerStyle={{ padding: 14, gap: 14 }} alwaysBounceVertical={false}>
+      <View style={{ padding: 14, gap: 14 }}>
         <View style={{ flexDirection: 'row', gap: 10 }}>
           <Tile icon="camera.fill" label="Camera" onPress={() => attach('camera')} />
           <Tile icon="photo.on.rectangle" label="Photos" onPress={() => attach('library')} />
@@ -189,7 +193,7 @@ export default function AttachSheet() {
             onPress={() => go(() => router.push('/memory'))}
           />
         </View>
-      </ScrollView>
+      </View>
     </View>
   );
 }

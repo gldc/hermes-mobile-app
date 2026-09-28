@@ -48,7 +48,7 @@ export default function Layout() {
             options={{
               presentation: 'formSheet',
               sheetGrabberVisible: true,
-              sheetAllowedDetents: [0.6, 0.95],
+              sheetAllowedDetents: 'fitToContents',
               headerShown: false,
             }}
           />
