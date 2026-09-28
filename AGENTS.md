@@ -34,8 +34,13 @@ src/app/          expo-router routes — THIS is the router root, not a top-leve
 src/api/          transport, all unit-tested with injected fetch/socket
   cookieJar.ts    manual cookie store (RN fetch doesn't manage cookies)
   restClient.ts   login / ws-ticket / sessions / history
-  gatewayClient.ts JSON-RPC 2.0 over WebSocket
-src/connection.ts singleton glue: SecureStore persistence, withAuthRetry, openGateway
+  gatewayClient.ts adapter over the vendored upstream JsonRpcGatewayClient
+  chat-transport.ts one per chat screen: client + turn store + request router +
+                  reconnect orchestrator, all handlers registered before connect
+src/vendor/hermes-gateway/  upstream client + generated contract, pinned by
+                  VENDORED.json (re-vendor: scripts/sync-gateway-contract.sh <tag>)
+src/connection.ts singleton glue: SecureStore persistence, withAuthRetry, mintGatewayUrl
+                  (mints a fresh single-use ticket URL)
 src/components/   message rows, tool cards, composer, theme'd pieces
   sidebar-host.tsx Claude-style slide-over: wraps the Stack in root _layout;
                   custom Reanimated drawer (no @react-navigation/drawer — banned
@@ -54,9 +59,14 @@ src/theme.ts      single source of color truth (warm cream light / charcoal dark
   (refresh tokens rotate server-side).
 - WebSocket: mint single-use 30s ticket via `POST /api/auth/ws-ticket`, connect
   `ws(s)://host/api/ws?ticket=…`. A ticket can never be reused — reconnects mint fresh ones.
-- RPC: `session.create` (lazy, on first send), `session.resume` (continuation + reconnect),
-  `prompt.submit`. Events: `message.delta/complete`, `tool.start/complete` (payload key is
-  `name`, NOT `tool_name`), `status.update`, `error`.
+- RPC: types come ONLY from src/vendor/hermes-gateway (generated at v2026.9.24); an unknown
+  param key is a compile error. `session.create` (lazy), `session.resume` (after the
+  capability handshake), `prompt.submit {queued:true}` from idle. Server→client requests
+  (approval/clarify/sudo/secret) are answered on the socket; never -32601 them. 0.20.4's
+  `approval.request` event + `approval.respond` stay supported (src/api/legacy-approval.ts).
+- Events: `message.start/delta/complete` (complete carries `status`: complete|error|interrupted),
+  `tool.start/complete` (payload key is `name`, NOT `tool_name`), `status.update`, `error`;
+  server→client request cards arrive via the request router.
 - History: `GET /api/sessions/{id}/messages` returns raw session-DB rows — text lives in
   `content` (string or parts array), never `text`. Use `messageText()`.
 
