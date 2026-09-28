@@ -7,7 +7,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, AppState, FlatList, Pressable, Share, Text, View } from 'react-native';
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import type { GatewayClient } from '@/api/gatewayClient';
+import { createChatTransport, type ChatTransport } from '@/api/chat-transport';
+import { makeNativeSocket, type GatewayClient } from '@/api/gatewayClient';
 import { getModelInfo } from '@/api/models';
 import { setSessionModelTarget } from '@/session-model-store';
 import { switchSessionModel, type SwitchOutcome } from '@/api/sessionModel';
@@ -21,16 +22,16 @@ import {
   pillModelId,
 } from '@/lib/model-pill';
 import { withProfile } from '@/api/profiles';
-import type { GatewayEvent } from '@/vendor/hermes-gateway';
+import type { GatewayEvent, GatewayEventMap } from '@/vendor/hermes-gateway';
 import { setAttachHandler } from '@/attach-bus';
-import { ApprovalCard } from '@/components/approval-card';
+import { ApprovalCard, type ApprovalInfo } from '@/components/approval-card';
 import { Icon } from '@/components/icon';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { SubagentMonitorCard } from '@/components/subagent-monitor-card';
 import { ThinkingDots } from '@/components/thinking-dots';
 import { TodoCard } from '@/components/todo-card';
-import { openGateway, withAuthRetry } from '@/connection';
+import { mintGatewayUrl, withAuthRetry } from '@/connection';
 import { getProfileState, hydrateProfileStore } from '@/profile-store';
 import { openSidebar } from '@/sidebar-store';
 import { showActionSheet } from '@/lib/action-sheet';
@@ -39,9 +40,22 @@ import { exportAsJsonl, exportAsText } from '@/lib/export';
 import { greetingForHour } from '@/lib/greeting';
 import { historyToItems } from '@/lib/history';
 import { MAX_ATTACH_BYTES, base64ByteLength, buildAttachParams, type PickedImage } from '@/lib/image-attach';
+import type { ReconnectOrchestrator, ReconnectPhase } from '@/lib/reconnect-orchestrator';
+import type { RequestRegistry } from '@/lib/request-registry';
+import { shouldWarn } from '@/lib/request-router';
 import { emptyBatch, finalizeBatch, reduceSubagentEvent } from '@/lib/subagent-progress';
 import { parseTodoList } from '@/lib/todo';
-import { shouldReconnect, backoffMs, MAX_RECONNECT_ATTEMPTS } from '@/lib/reconnect';
+import { shouldReconnect } from '@/lib/reconnect';
+import {
+  cancelLabel,
+  completeStatus,
+  initialTurnModel,
+  mergeRequestRows,
+  type RequestCardState,
+  type TranscriptRow,
+  type TurnAction,
+  type TurnModel,
+} from '@/lib/turn-controller';
 import { serif, useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
@@ -105,6 +119,12 @@ function HeaderButton({
   );
 }
 
+/** Copy for request cards this build cannot answer yet (plan B adds the real cards). */
+const VAULT_NOTE = 'Hermes asked for a password-manager action — declined on the phone.';
+const UNSUPPORTED_NOTE = 'Hermes is waiting for an answer this version can’t show yet.';
+
+type Row = TranscriptRow<ChatItem>;
+
 export default function ChatScreen() {
   const { colors } = useTheme();
   const insets = useSafeAreaInsets();
@@ -112,8 +132,8 @@ export default function ChatScreen() {
   const [items, setItems] = useState<ChatItem[]>([]);
   const [input, setInput] = useState('');
   const [stagedImage, setStagedImage] = useState<PickedImage | null>(null);
-  const [streaming, setStreaming] = useState(false);
-  const [waiting, setWaiting] = useState(false); // sent, no tokens yet
+  const [thinking, setThinking] = useState(false); // sent / turn started, no tokens yet
+  const [turn, setTurn] = useState<TurnModel>(initialTurnModel); // server-driven (spec §5.1)
   const [error, setError] = useState<string | null>(null);
   const [reconnectNote, setReconnectNote] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
@@ -122,7 +142,12 @@ export default function ChatScreen() {
   );
   const modelName = pillLabel(pill);
   const currentModelId = pillModelId(pill);
-  const gwRef = useRef<GatewayClient | null>(null);
+  const busy = turn.turn !== 'idle';
+  // One transport per screen (spec §4.2): client + turn store + request router + reconnect
+  // orchestrator, all handlers registered at construction, reused across reconnects.
+  const transportRef = useRef<ChatTransport | null>(null);
+  const registryRef = useRef<RequestRegistry | null>(null);
+  const orchestratorRef = useRef<ReconnectOrchestrator | null>(null);
   const liveIdRef = useRef<string | null>(null); // gateway (live) session handle
   const storedIdRef = useRef<string | null>(null); // persistent id, survives reconnects
   const cancelledRef = useRef(false);
@@ -132,10 +157,21 @@ export default function ChatScreen() {
   const keyCounter = useRef(0);
   const activeSubagentKeyRef = useRef<string | null>(null);
   const todoKeyRef = useRef<string | null>(null);
-  const reconnectingRef = useRef(false); // single-flight guard for reconnect()
-  const gwUnsubsRef = useRef<Array<() => void>>([]); // current gw's onEvent/onClose detachers
+  const itemsRef = useRef<ChatItem[]>([]); // for request-card anchors (read off-render)
+  // Latest render's handlers, read by the transport's long-lived callbacks.
+  const handlersRef = useRef<{
+    applyEvent: (e: GatewayEvent) => void;
+    loadHistory: (storedId: string) => Promise<void>;
+    onPhase: (p: ReconnectPhase) => void;
+    onNewCard: (card: RequestCardState, replayed: boolean) => void;
+  } | null>(null);
 
   const nextKey = () => `i${keyCounter.current++}`;
+  // Names plan B builds on (contract R1).
+  const gw = (): GatewayClient | null => transportRef.current?.client ?? null;
+  const readTurn = (): TurnModel => transportRef.current?.store.getState() ?? initialTurnModel();
+  const dispatchTurn = (a: TurnAction): void => transportRef.current?.store.dispatch(a);
+  const resumeParams = () => withProfile({ session_id: storedIdRef.current ?? '' }, profileRef.current);
 
   function append(role: ChatItem['role'], text: string, complete = true) {
     setItems((prev) => [...prev, { key: nextKey(), role, text, complete }]);
@@ -143,7 +179,7 @@ export default function ChatScreen() {
 
   /** Append streamed text to the trailing assistant message (create if absent). */
   function appendDelta(text: string) {
-    setWaiting(false);
+    setThinking(false);
     setItems((prev) => {
       const last = prev[prev.length - 1];
       if (last?.role === 'assistant' && !last.complete) {
@@ -212,16 +248,6 @@ export default function ChatScreen() {
     });
   }
 
-  /** Append a pending approval card for a gateway `approval.request` event. */
-  function appendApproval(payload: any) {
-    const request = parseApprovalRequest(payload);
-    if (!request) return; // nothing displayable; gateway will deny on timeout
-    setItems((prev) => [
-      ...prev,
-      { key: nextKey(), role: 'approval', text: request.command, approval: { request, status: 'pending' } },
-    ]);
-  }
-
   /** Reduce a `subagent.*` event into the active batch item (create one if the
    * last batch finalized / none exists). */
   function handleSubagentEvent(e: GatewayEvent) {
@@ -239,7 +265,7 @@ export default function ChatScreen() {
       activeSubagentKeyRef.current = key;
       return [...prev, { key, role: 'subagent', text: '', subagent: reduceSubagentEvent(emptyBatch(), sub, ts) }];
     });
-    if (e.type === 'subagent.complete') {
+    if (e.type === 'subagent.complete' && !e.replayed) {
       void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light).catch(() => {});
     }
   }
@@ -273,51 +299,34 @@ export default function ChatScreen() {
     return true;
   }
 
-  /** Turn ended / interrupted / connection lost: the gateway force-denies
-   * pending approvals, so drop any still-interactive cards. */
-  function cancelPendingApprovals() {
-    setItems((prev) => {
-      if (!prev.some((it) => it.approval && it.approval.status !== 'approved' && it.approval.status !== 'denied' && it.approval.status !== 'cancelled')) {
-        return prev;
-      }
-      return prev.map((it) =>
-        it.approval && (it.approval.status === 'pending' || it.approval.status === 'answering')
-          ? { ...it, approval: { ...it.approval, status: 'cancelled' as const } }
-          : it,
+  /** Answer an approval card. 0.21.5: the response frame for THIS request id, marked answered
+   * optimistically (no ack exists — review M10). 0.20.4 legacy: approval.respond, which resolves
+   * the OLDEST pending approval (FIFO), so only the oldest legacy card is actionable. */
+  async function respondApproval(card: RequestCardState, choice: ApprovalChoice) {
+    const client = gw();
+    if (!client) return;
+    if (!card.legacy) {
+      const sent = registryRef.current?.respond(card.id, { choice }) ?? false;
+      dispatchTurn(
+        sent
+          ? { type: 'request.answered', id: card.id, resolution: choice }
+          : { type: 'request.cancelled', id: card.id, reason: 'resolved' },
       );
-    });
-  }
-
-  /** Send the verified approval.respond RPC. Approvals are FIFO per session,
-   * so only the oldest pending card is actionable and `key` is that card. */
-  async function respondApproval(key: string, choice: ApprovalChoice) {
-    const gw = gwRef.current;
+      return;
+    }
     const sid = liveIdRef.current;
-    if (!gw || !sid) return;
-    setItems((prev) =>
-      prev.map((it) =>
-        it.key === key && it.approval?.status === 'pending'
-          ? { ...it, approval: { ...it.approval, status: 'answering' as const } }
-          : it,
-      ),
-    );
+    if (!sid) return;
+    dispatchTurn({ type: 'request.answering', id: card.id });
     try {
-      const result = await gw.call('approval.respond', { session_id: sid, choice });
+      const result = await client.call('approval.respond', { session_id: sid, choice });
       // resolved=0 means nothing was pending server-side (stale/raced).
-      const resolved = resolvedCount(result) > 0;
-      const status = resolved ? (choice === 'deny' ? ('denied' as const) : ('approved' as const)) : ('cancelled' as const);
-      setItems((prev) =>
-        prev.map((it) => (it.key === key && it.approval ? { ...it, approval: { ...it.approval, status } } : it)),
+      dispatchTurn(
+        resolvedCount(result) > 0
+          ? { type: 'request.answered', id: card.id, resolution: choice }
+          : { type: 'request.cancelled', id: card.id, reason: 'resolved' },
       );
     } catch (e) {
-      // Re-arm the card so the user can retry.
-      setItems((prev) =>
-        prev.map((it) =>
-          it.key === key && it.approval?.status === 'answering'
-            ? { ...it, approval: { ...it.approval, status: 'pending' as const } }
-            : it,
-        ),
-      );
+      dispatchTurn({ type: 'request.failed', id: card.id }); // re-arm so the user can retry
       setError(e instanceof Error ? e.message : 'approval response failed');
     }
   }
@@ -328,191 +337,181 @@ export default function ChatScreen() {
     setItems(historyToItems(history.messages, nextKey));
     // historyToItems never emits subagent/todo rows; clear stale live-card keys
     // so a reconnect/history replace can't update a row that no longer exists.
+    // Request cards live in the turn store, NOT in items, so they survive this replace.
     activeSubagentKeyRef.current = null;
     todoKeyRef.current = null;
   }
 
-  /** Reset live UI to the disconnected state, then drive a guarded reconnect.
-   * Shared by the socket onClose path and the AppState foreground path so both
-   * converge on identical UI. Idempotent and cancelled-safe. */
-  function dropAndReconnect() {
+  function onPhase(p: ReconnectPhase) {
     if (cancelledRef.current) return;
-    setReady(false);
-    setStreaming(false);
-    setWaiting(false);
-    cancelPendingApprovals(); // can't answer across a dead socket
-    finalizeSubagents(); // socket drop mid-delegation: seal the card / stop the ticker
-    void reconnect();
+    if (p.kind === 'attempt') {
+      setReady(false);
+      if (p.attempt === 1) finalizeSubagents(); // socket drop mid-delegation: seal the card
+      setReconnectNote(`Connection lost — reconnecting (${p.attempt}/${p.max})…`);
+    } else if (p.kind === 'ready') {
+      setReconnectNote(null);
+      setError(null);
+      setReady(true);
+    } else {
+      setReconnectNote(null);
+      setError('Could not reconnect. Check your VPN or Wi-Fi, then reopen this chat.');
+    }
   }
 
-  function wireGateway(gw: GatewayClient) {
-    const offEvent = gw.onEvent((e) => {
-      const pl = e.payload as any; // transitional (Task 2): Task 8 types each event
-      switch (e.type as string) {
-        case 'message.delta':
-          appendDelta(pl?.text ?? '');
-          break;
-        case 'message.complete':
-          finishAssistant();
-          finalizeSubagents();
-          cancelPendingApprovals(); // gateway force-denies leftovers on turn end
-          setStreaming(false);
-          setWaiting(false);
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-          break;
-        case 'tool.start':
-          setWaiting(false);
-          finishAssistant();
-          if (pl?.name === 'todo') break; // todo renders as TodoCard on complete
-          startTool(pl);
-          break;
-        case 'tool.complete':
-          if (pl?.name === 'todo') {
-            if (!upsertTodo(pl)) append('status', 'Todo update failed');
-            break;
-          }
-          completeTool(pl);
-          break;
-        case 'status.update':
-          if (pl?.text) append('status', pl.text);
-          break;
-        case 'approval.request':
-          setWaiting(false);
-          finishAssistant();
-          Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-          appendApproval(pl);
-          break;
-        case 'subagent.spawn_requested':
-        case 'subagent.start':
-        case 'subagent.thinking':
-        case 'subagent.tool':
-        case 'subagent.progress':
-        case 'subagent.complete':
-          handleSubagentEvent(e);
-          break;
-        case 'session.info':
-          if (pl?.model) setPill((p) => withSessionModel(p, pl.model));
-          break;
-        case 'error':
-          cancelPendingApprovals(); // gateway force-denies on interrupt/failure
-          finalizeSubagents();
-          setStreaming(false);
-          setWaiting(false);
-          setError(pl?.message ?? 'agent error');
-          break;
+  /** A request card appeared (live or replayed): close the streaming segment so later text
+   * renders after the card; warn only for live arrivals (replays never fire haptics). */
+  function onNewCard(card: RequestCardState, replayed: boolean) {
+    setThinking(false);
+    finishAssistant();
+    // Live arrivals only, and not vault prompts — those are declined on arrival (spec §6.3),
+    // so there is nothing to answer and no "needs you" haptic.
+    if (shouldWarn(card, replayed)) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning).catch(() => {});
+    }
+  }
+
+  /** Transcript side of every gateway event (live and replayed). The transport has already
+   * updated the turn store (message.start/complete/error) and consumed request events. */
+  function applyEvent(e: GatewayEvent) {
+    const live = !e.replayed;
+    switch (e.type) {
+      case 'message.start':
+        setThinking(true);
+        break;
+      case 'message.delta':
+        appendDelta((e.payload as GatewayEventMap['message.delta'] | undefined)?.text ?? '');
+        break;
+      case 'message.complete': {
+        const p = e.payload as GatewayEventMap['message.complete'] | undefined;
+        const status = completeStatus(p);
+        setThinking(false);
+        finishAssistant();
+        finalizeSubagents();
+        if (status === 'interrupted') append('status', 'Stopped');
+        else if (status === 'error') setError(p?.error || 'The turn failed.');
+        else if (live) void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => {});
+        break;
       }
-    });
-    const offClose = gw.onState((state) => {
-      if (state === 'closed') dropAndReconnect();
-    });
-    gwUnsubsRef.current = [offEvent, offClose];
-  }
-
-  /** Open the gateway (fresh single-use ticket) and re-attach the persistent
-   * session, if there is one. */
-  async function establish(): Promise<void> {
-    const gw = await openGateway();
-    if (cancelledRef.current) {
-      gw.close();
-      throw new Error('cancelled');
-    }
-    // Tear down any previous client BEFORE adopting the new one: detach its
-    // handlers FIRST (so its later onclose can't fire a surviving reconnect),
-    // then close it. Idempotent — no-ops on the initial connect (no prev gw).
-    for (const off of gwUnsubsRef.current) off();
-    gwUnsubsRef.current = [];
-    gwRef.current?.close();
-    gwRef.current = gw;
-    wireGateway(gw);
-    if (storedIdRef.current) {
-      const resumed = await gw.call(
-        'session.resume',
-        withProfile({ session_id: storedIdRef.current }, profileRef.current),
-      );
-      liveIdRef.current = resumed.session_id;
-      // Only adopt a built (non-lazy) resume's model — a lazy reattach reports
-      // the gateway default, and an info-less resume omits it; neither must
-      // clobber the model we already know.
-      setPill((p) => withResumedModel(p, resumed.info));
-      // Best-effort: re-bind this device to the session (live id changes on
-      // resume) so session-stop push hooks can target it. Never block the flow.
-      void withAuthRetry((r) =>
-        r.claimSession(liveIdRef.current!, storedIdRef.current ?? liveIdRef.current!),
-      ).catch(() => {});
-    }
-  }
-
-  async function reconnect(): Promise<void> {
-    if (reconnectingRef.current) return; // single-flight: one loop across onClose + foreground
-    reconnectingRef.current = true;
-    try {
-      for (let attempt = 1; attempt <= MAX_RECONNECT_ATTEMPTS; attempt++) {
-        if (cancelledRef.current) return;
-        setReconnectNote(`Connection lost — reconnecting (${attempt}/${MAX_RECONNECT_ATTEMPTS})…`);
-        await new Promise((r) => setTimeout(r, backoffMs(attempt)));
-        if (cancelledRef.current) return;
-        try {
-          await establish();
-          // Resync from the store: anything streamed while offline never reached us.
-          if (storedIdRef.current) await loadHistory(storedIdRef.current);
-          if (cancelledRef.current) return;
-          setReconnectNote(null);
-          setError(null);
-          setReady(true);
-          return;
-        } catch {
-          // next attempt with longer backoff
+      case 'tool.start': {
+        const p = e.payload as GatewayEventMap['tool.start'] | undefined;
+        setThinking(false);
+        finishAssistant();
+        if (p?.name === 'todo') break; // todo renders as TodoCard on complete
+        startTool(p);
+        break;
+      }
+      case 'tool.complete': {
+        const p = e.payload as GatewayEventMap['tool.complete'] | undefined;
+        if (p?.name === 'todo') {
+          if (!upsertTodo(p)) append('status', 'Todo update failed');
+          break;
         }
+        completeTool(p);
+        break;
       }
-      if (!cancelledRef.current) {
-        setReconnectNote(null);
-        setError('Could not reconnect. Check your VPN or Wi-Fi, then reopen this chat.');
+      case 'status.update': {
+        const p = e.payload as GatewayEventMap['status.update'] | undefined;
+        if (p?.text) append('status', p.text);
+        break;
       }
-    } finally {
-      reconnectingRef.current = false; // clears on EVERY exit (success, cancel, exhaustion)
+      case 'subagent.spawn_requested':
+      case 'subagent.start':
+      case 'subagent.thinking':
+      case 'subagent.tool':
+      case 'subagent.progress':
+      case 'subagent.complete':
+        handleSubagentEvent(e);
+        break;
+      case 'session.info': {
+        const p = e.payload as GatewayEventMap['session.info'] | undefined;
+        if (p?.model) {
+          const m = p.model;
+          setPill((prev) => withSessionModel(prev, m));
+        }
+        break;
+      }
+      case 'error': {
+        // "Outside a turn" at 0.21.5: ends the turn only while waiting (the store already
+        // decided); in streaming it is an inline notice and the turn continues (review M6).
+        const p = e.payload as GatewayEventMap['error'] | undefined;
+        setThinking(false);
+        if (readTurn().turn === 'idle') finalizeSubagents();
+        setError(p?.message ?? 'agent error');
+        break;
+      }
     }
   }
 
   useEffect(() => {
+    itemsRef.current = items;
+  }, [items]);
+
+  // Keep the transport's long-lived callbacks pointed at this render's closures.
+  // Declared BEFORE the mount effect so it runs first.
+  useEffect(() => {
+    handlersRef.current = { applyEvent, loadHistory, onPhase, onNewCard };
+  });
+
+  useEffect(() => {
     cancelledRef.current = false;
-    reconnectingRef.current = true; // hold off foreground reconnects during the initial connect
+    const t = createChatTransport({
+      socketFactory: makeNativeSocket,
+      mintUrl: mintGatewayUrl,
+      storedSessionId: () => storedIdRef.current,
+      resumeParams: () => resumeParams(),
+      loadHistory: (sid) => handlersRef.current!.loadHistory(sid),
+      onLiveSessionId: (liveId) => {
+        liveIdRef.current = liveId;
+        // Best-effort: re-bind this device to the session (live id changes on
+        // resume) so session-stop push hooks can target it. Never block the flow.
+        void withAuthRetry((r) => r.claimSession(liveId, storedIdRef.current ?? liveId)).catch(() => {});
+      },
+      // Only adopt a built (non-lazy) resume's model — a lazy reattach reports the gateway
+      // default, and an info-less resume omits it; neither may clobber the known model.
+      onResumed: (res) => setPill((p) => withResumedModel(p, res.info)),
+      onPhase: (p) => handlersRef.current?.onPhase(p),
+      applyEvent: (e) => handlersRef.current?.applyEvent(e),
+      anchorKey: () => itemsRef.current[itemsRef.current.length - 1]?.key ?? null,
+      onNewCard: (card, replayed) => handlersRef.current?.onNewCard(card, replayed),
+    });
+    transportRef.current = t;
+    registryRef.current = t.registry;
+    orchestratorRef.current = t.orchestrator;
+    setTurn(t.store.getState());
+    const unsubStore = t.store.subscribe(() => setTurn(t.store.getState()));
     (async () => {
       try {
         await hydrateProfileStore(); // no-op when sessions screen already ran
         profileRef.current = getProfileState().selected;
         if (id !== 'new') {
           storedIdRef.current = id;
-          await loadHistory(id);
+          await handlersRef.current!.loadHistory(id); // fast first paint, before the socket
         }
-        await establish();
-        if (!cancelledRef.current) setReady(true);
+        await t.orchestrator.start(); // connect → resume → history (spec §7)
       } catch {
         if (!cancelledRef.current) setError('Could not open a live session. Check your VPN or Wi-Fi.');
-      } finally {
-        reconnectingRef.current = false;
       }
     })();
     // Foreground revival: iOS suspends the runtime and the OS tears the socket
-    // down without onclose firing. On return, if the socket is gone/not-open,
-    // reset live UI and reconnect; a healthy socket is left untouched.
+    // down without a close event. On return, if the socket is not OPEN, run the
+    // single-flight reconnect (it joins a heartbeat/close-triggered run).
     const sub = AppState.addEventListener('change', (next) => {
       if (cancelledRef.current) return;
-      if (
-        shouldReconnect({
-          hasSocket: !!gwRef.current,
-          isOpen: gwRef.current?.isOpen ?? false,
-          appState: next,
-        })
-      ) {
-        dropAndReconnect();
+      if (shouldReconnect({ hasSocket: true, isOpen: t.client.isOpen, appState: next })) {
+        void t.orchestrator.reconnect('foreground');
       }
     });
     return () => {
       cancelledRef.current = true;
       sub.remove();
-      gwRef.current?.close();
+      unsubStore();
+      t.dispose(); // orchestrator first, then the socket — no reconnect on unmount
+      if (transportRef.current === t) {
+        transportRef.current = null;
+        registryRef.current = null;
+        orchestratorRef.current = null;
+      }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
 
   // Composer model pill — best-effort, never blocks the chat.
@@ -540,18 +539,24 @@ export default function ChatScreen() {
     setSessionModelTarget({
       sessionId: liveIdRef.current ?? '',
       modelId: currentModelId,
-      streaming,
+      streaming: busy,
       switchModel: (provider, model, confirmExpensive) => {
-        const gw = gwRef.current;
+        const t = transportRef.current;
         const sid = liveIdRef.current;
-        if (!gw || !sid) {
+        if (!t || !sid) {
           return Promise.resolve({ kind: 'error', message: 'Not connected.' } as SwitchOutcome);
         }
-        return switchSessionModel(gw.call.bind(gw), { sessionId: sid, provider, model, confirmExpensive });
+        return switchSessionModel(t.client.call.bind(t.client), {
+          sessionId: sid,
+          provider,
+          model,
+          confirmExpensive,
+          resumeSession: () => t.resumeStored(), // 4001 → resume + retry once
+        });
       },
     });
     return () => setSessionModelTarget(null);
-  }, [id, currentModelId, streaming, ready]);
+  }, [id, currentModelId, busy, ready]);
 
   /** Photo picking — staged locally, uploaded via image.attach_bytes on send. */
   async function pickImage(source: 'camera' | 'library') {
@@ -623,8 +628,9 @@ export default function ChatScreen() {
   async function send() {
     const text = input.trim();
     const image = stagedImage;
-    const gw = gwRef.current;
-    if ((!text && !image) || !gw || !gw.isOpen || streaming) return;
+    const t = transportRef.current;
+    // Server-driven turn state: sending is only possible from idle (plan B adds steer).
+    if ((!text && !image) || !t || !t.client.isOpen || readTurn().turn !== 'idle') return;
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     setInput('');
     setStagedImage(null);
@@ -641,48 +647,82 @@ export default function ChatScreen() {
           : {}),
       },
     ]);
-    setStreaming(true);
-    setWaiting(true);
+    dispatchTurn({ type: 'submit.sent' });
+    setThinking(true);
     try {
       // Sessions are minted lazily on the first message so abandoned "new
       // chat" screens never create empty sessions server-side.
       if (!liveIdRef.current) {
-        const created = await gw.call(
-          'session.create',
-          withProfile({}, profileRef.current),
-        );
+        const created = await t.client.call('session.create', withProfile({}, profileRef.current));
         liveIdRef.current = created.session_id;
         setPill((p) => withResumedModel(p, created.info));
         if (created.stored_session_id) storedIdRef.current = created.stored_session_id;
         // Best-effort: bind this device to the new session so session-stop push
         // hooks can target it. Never block the send flow on the claim.
-        void withAuthRetry((r) =>
-          r.claimSession(liveIdRef.current!, storedIdRef.current ?? liveIdRef.current!),
-        ).catch(() => {});
+        const liveId = created.session_id;
+        void withAuthRetry((r) => r.claimSession(liveId, storedIdRef.current ?? liveId)).catch(() => {});
       }
+      const sid = liveIdRef.current;
       // prompt.submit has no image params — stage the photo server-side first;
       // the next submit drains the attached-images queue (docs/contracts/attachments.md).
-      if (image) {
-        await gw.call('image.attach_bytes', buildAttachParams(liveIdRef.current, image));
-      }
-      await gw.call('prompt.submit', { session_id: liveIdRef.current, text });
+      if (image) await t.client.call('image.attach_bytes', buildAttachParams(sid, image));
+      // queued:true — never redirects or interrupts a busy session, even if our view of
+      // the turn state is stale (dc1-1 runs busy_input_mode: interrupt; spec §5.1).
+      await t.client.call('prompt.submit', { session_id: sid, text, queued: true });
     } catch (e) {
-      setStreaming(false);
-      setWaiting(false);
+      dispatchTurn({ type: 'event.error', replayed: false }); // waiting → idle
+      setThinking(false);
       setError(e instanceof Error ? e.message : 'send failed');
     }
   }
 
+  // Request cards live in the turn store (outside items) and merge in after their anchor.
+  const rows = useMemo(() => mergeRequestRows(items, turn.requests), [items, turn.requests]);
   // Inverted list: index 0 renders at the visual bottom, so newest goes first.
-  const reversedItems = useMemo(() => [...items].reverse(), [items]);
+  const reversedRows = useMemo(() => [...rows].reverse(), [rows]);
 
-  // FIFO approvals: the oldest unresolved card is the only actionable one
-  // (the server resolves the oldest pending approval on respond).
-  const activeApprovalKey = items.find(
-    (it) => it.approval?.status === 'pending' || it.approval?.status === 'answering',
-  )?.key;
+  // Legacy (0.20.4) approvals are FIFO: only the oldest open legacy card is actionable.
+  // 0.21.5 approvals resolve per request id, so every pending one is actionable.
+  const activeLegacyId = turn.requests.find(
+    (r) => r.legacy && (r.status === 'pending' || r.status === 'answering'),
+  )?.id;
 
-  const showGreeting = ready && items.length === 0 && !error;
+  function approvalInfo(card: RequestCardState): ApprovalInfo | null {
+    const request = parseApprovalRequest(card.params);
+    if (!request) return null;
+    const status =
+      card.status === 'pending' || card.status === 'answering'
+        ? card.status
+        : card.status === 'answered'
+          ? card.resolution === 'deny'
+            ? ('denied' as const)
+            : ('approved' as const)
+          : ('cancelled' as const);
+    return { request, status };
+  }
+
+  function renderRequest(card: RequestCardState) {
+    if (card.kind === 'approval') {
+      const approval = approvalInfo(card);
+      if (!approval) return null;
+      return (
+        <ApprovalCard
+          approval={approval}
+          active={card.legacy ? card.id === activeLegacyId : card.status === 'pending'}
+          onRespond={(choice) => void respondApproval(card, choice)}
+        />
+      );
+    }
+    const text =
+      card.kind === 'vault-declined'
+        ? VAULT_NOTE
+        : card.status === 'cancelled' && card.cancelReason
+          ? `${UNSUPPORTED_NOTE} (${cancelLabel(card.cancelReason)})`
+          : UNSUPPORTED_NOTE;
+    return <MessageRow item={{ key: `req:${card.id}`, role: 'status', text }} />;
+  }
+
+  const showGreeting = ready && items.length === 0 && turn.requests.length === 0 && !error;
 
   // Per-frame keyboard tracking (UI thread) — the composer rides the keyboard
   // instead of jumping when it appears. One continuous function: home-indicator
@@ -731,9 +771,9 @@ export default function ChatScreen() {
         </Animated.View>
       ) : (
         <FlatList
-          data={reversedItems}
+          data={reversedRows}
           inverted
-          keyExtractor={(i) => i.key}
+          keyExtractor={(r: Row) => (r.kind === 'item' ? r.item.key : `req:${r.card.id}`)}
           // 'interactive' is iOS-only; Android ignores it, so fall back to on-drag.
           keyboardDismissMode={process.env.EXPO_OS === 'ios' ? 'interactive' : 'on-drag'}
           // Inverted list: contentContainer paddingBottom is the visual top —
@@ -743,27 +783,23 @@ export default function ChatScreen() {
             paddingTop: 12,
             paddingBottom: insets.top + 64,
           }}
-          renderItem={({ item }) => (
+          renderItem={({ item: row }) => (
             // Entering-only fade (exiting animations orphan views — see
             // sidebar-host). Streaming updates keep the key, so no re-runs.
             <Animated.View entering={FadeIn.duration(180)}>
-              {item.approval ? (
-                <ApprovalCard
-                  approval={item.approval}
-                  active={item.key === activeApprovalKey}
-                  onRespond={(choice) => respondApproval(item.key, choice)}
-                />
-              ) : item.subagent ? (
-                <SubagentMonitorCard batch={item.subagent} />
-              ) : item.todo ? (
-                <TodoCard items={item.todo} />
+              {row.kind === 'request' ? (
+                renderRequest(row.card)
+              ) : row.item.subagent ? (
+                <SubagentMonitorCard batch={row.item.subagent} />
+              ) : row.item.todo ? (
+                <TodoCard items={row.item.todo} />
               ) : (
-                <MessageRow item={item} />
+                <MessageRow item={row.item} />
               )}
             </Animated.View>
           )}
           ListHeaderComponent={
-            waiting ? (
+            thinking ? (
               <Animated.View entering={FadeIn.duration(200)}>
                 <ThinkingDots />
               </Animated.View>
@@ -847,7 +883,7 @@ export default function ChatScreen() {
         onChangeText={setInput}
         onSend={send}
         disabled={!ready}
-        streaming={streaming}
+        streaming={busy}
         stagedImageUri={stagedImage?.uri ?? null}
         onAttachPress={() => router.push('/attach')}
         onRemoveImage={() => setStagedImage(null)}

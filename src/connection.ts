@@ -1,7 +1,6 @@
 // src/connection.ts
 import * as SecureStore from 'expo-secure-store';
 import { CookieJar } from './api/cookieJar';
-import { GatewayClient, makeNativeSocket } from './api/gatewayClient';
 import { AuthError, RestClient } from './api/restClient';
 import {
   ConnectionMode,
@@ -225,12 +224,4 @@ export async function disconnect(): Promise<void> {
 export async function mintGatewayUrl(): Promise<string> {
   const { ticket } = await withAuthRetry((r) => r.wsTicket());
   return getRest().wsUrl(ticket);
-}
-
-/** Transitional — deleted in Task 8 when the chat screen owns one client per screen. */
-export async function openGateway(): Promise<GatewayClient> {
-  const url = await mintGatewayUrl();
-  const gw = new GatewayClient({ socketFactory: makeNativeSocket });
-  await gw.connect(url);
-  return gw;
 }
