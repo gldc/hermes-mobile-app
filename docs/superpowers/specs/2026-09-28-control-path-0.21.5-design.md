@@ -511,6 +511,12 @@ its grown height until the screen remounts.
 **Accept:** after sending a 6-line message the composer returns to one line, the keyboard stays up, and
 focus is kept.
 
+**As built (Plan C):** `onContentSizeChange` + an explicit `style.height` deadlocks on Fabric —
+`onContentSizeChange` is emitted only from `updateLayoutMetrics`, so a fixed height stops it firing again.
+Shipped instead: a layout-neutral `minHeight` flip after the empty value commits
+(`src/lib/composer-height.ts`), triggered one render after a JS-driven clear. Native auto-grow stays in
+place (Yoga still measures the TextInput's text), `maxHeight: 120` unchanged.
+
 ## 9. Server side
 
 ### 9.1 Plugin (`gldc/hermes-mobile-plugin`), merged **before** the bump

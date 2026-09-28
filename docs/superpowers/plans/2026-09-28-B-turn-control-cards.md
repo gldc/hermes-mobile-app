@@ -29,6 +29,14 @@ actual code blocks (`2026-09-28-A-transport.md` Tasks 3–8). Changes:
 8. **Merge order with Plan C** made explicit (C merges first; Task 4's composer edits are written
    against C's file). Gate-then-commit made exit-code-safe. Setup moved to the top. A 0.21.5
    "reconnect mid-turn → partial text restored" check added to Task 11 Step 8.
+9. **Re-anchored on Plan C's shipped code (2026-09-28 final review of C).** C's plan text changed mid-
+   implementation — the `onContentSizeChange`/`height`/`contentHeight` shape below never shipped. Task 4's
+   "Merge order with Plan C" note and Step 3 are corrected to C's actual `composer.tsx` at HEAD
+   (`useLayoutEffect, useState` import, `composerMinHeight` from `@/lib/composer-height`, the
+   `emptyCommitted` state + `useLayoutEffect` block, and `minHeight`/`maxHeight` in `style` — no
+   `onContentSizeChange`, no `style.height`). Task 4 also gets a new requirement: C's fix only re-measures a
+   JS-driven clear, not the steer-failure restore this plan adds, so Task 4 must add its own follow-up-commit
+   trigger for that case.
 
 **Goal:** Give the chat screen a Stop button, steer-while-running, and interactive cards for every
 mobile-supported server request (approval on both paths, clarify single + batch, sudo/secret secure
@@ -55,13 +63,23 @@ them). Evidence: `docs/research/2026-09-28-api-delta-0.21.5.md` §1–§2, `docs
 verification and PR" (end of this plan) **before Task 1**.
 
 **Merge order with Plan C:** C (`fix/attach-sheet-composer-height`, independent, small) **merges before
-B**. Task 4's composer edits are written against C's resulting `composer.tsx`: C adds
-`import { useState } from 'react'`, the `composer-height` import, a `contentHeight`/`composerHeight` block
-right after the `canSend` line, and turns the `TextInput`'s one-line `style` into a multi-line object with
-`onContentSizeChange` + `height`. B's edits (the `canSend` line itself, props, placeholder, the right-hand
-button cluster) touch none of C's lines. Before Task 4, `git fetch && git rebase origin/main` so C is in the
-tree; if C has **not** merged yet, Task 4 still applies (every anchor below exists on both versions) and C
-rebases over B instead.
+B**. Task 4's composer edits are written against C's resulting `composer.tsx` — re-anchored 2026-09-28 on
+what C actually shipped (C's plan text changed mid-implementation; see
+`.superpowers/sdd/2026-09-28-C-polish/task-5-report.md` "Rework (opus)" and `final-review.md` Important #1):
+C adds `import { useLayoutEffect, useState } from 'react'`, imports `composerMinHeight` from
+`@/lib/composer-height`, and right after the `canSend` line adds an `emptyCommitted` state plus a
+`useLayoutEffect(() => setEmptyCommitted(value === ''), [value])`. The `TextInput`'s `style` stays one
+object, gaining `minHeight: composerMinHeight(value, emptyCommitted)` and `maxHeight: 120` — there is no
+`contentHeight`/`composerHeight` block, no `onContentSizeChange`, and no `style.height`. B's edits (the
+`canSend` line itself, props, placeholder, the right-hand button cluster) touch none of C's lines. Before
+Task 4, `git fetch && git rebase origin/main` so C is in the tree; if C has **not** merged yet, Task 4 still
+applies (every anchor below exists on both versions) and C rebases over B instead.
+
+**Known gap this plan must close:** C's fix only re-measures a JS-driven **clear** (`value -> ''`) — see
+`src/lib/composer-height.ts`'s header comment. Task 4's steer-failure restore
+(`setInput((cur) => restoreSteerText(cur, text))`, Step 5) is a JS-driven **non-empty** set and hits the
+same one-commit measure lag: a failed multi-line steer would restore at one-line height until the next
+keystroke. Task 4 adds the follow-up-commit trigger for that case (see the requirement in Task 4 below).
 
 ## Global Constraints
 
@@ -989,6 +1007,17 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Consumes: `ComposerMode`, `composerMode` (Task 1); `createTurnCommands`, `restoreSteerText`, `completionEffects` (Task 2); wiring names (header table).
 - Produces: `Composer` props `mode: ComposerMode`, `onSend`, `onStop`, `onSteer` (the `streaming` prop is removed).
 
+**Requirement — composer-height follow-up trigger for steer restore (added in the 2026-09-28 re-anchor):**
+Plan C's `composerMinHeight` (`src/lib/composer-height.ts`) only re-measures a JS-driven **clear**; its
+header comment says so explicitly. Step 5's `setInput((cur) => restoreSteerText(cur, text))` on a failed
+steer is a JS-driven **non-empty** set and hits the same one-commit measure lag — the restored text would
+render at whatever height was current when the restore committed (typically one line), not at the height
+the restored multi-line text needs. This task must add its own follow-up-commit trigger for non-empty
+programmatic sets, following the approach sketched in `composer-height.ts`'s header (record the last
+`onChangeText` text in a ref; in the `value` `useLayoutEffect`, flip a boolean when
+`value !== lastEmittedRef.current`, not just on `value === ''`). Step 7's device check must confirm a
+failed multi-line steer restores the composer at full height, not one line.
+
 - [ ] **Step 1: Write the failing test**
 
 ```tsx
@@ -1067,11 +1096,13 @@ Expected: FAIL — no "Stop response" button, placeholder is "Hermes is respondi
 - [ ] **Step 3: Implement the composer**
 
 In `src/components/composer.tsx` (after Plan C merged — see "Merge order with Plan C"; keep every line C
-added: the `useState` and `composer-height` imports, the `contentHeight`/`composerHeight` block after
-`canSend`, and the `TextInput`'s `onContentSizeChange` + multi-line `style` with `height`/`maxHeight`):
+added: the `useLayoutEffect, useState` import, the `composerMinHeight` import from `@/lib/composer-height`,
+the `emptyCommitted` state + its `useLayoutEffect` block after `canSend`, and the TextInput `style`'s
+`minHeight: composerMinHeight(value, emptyCommitted)` + `maxHeight: 120` — plus the follow-up-commit
+trigger for non-empty sets required above):
 
 1. Imports: change the `react-native` import to `import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';` and
-   add `import type { ComposerMode } from '@/lib/turn-controller';` (C's `useState` import stays).
+   add `import type { ComposerMode } from '@/lib/turn-controller';` (C's `useLayoutEffect, useState` import stays).
 2. In `ComposerProps` replace the `streaming?: boolean;` member (and its comment) with:
 
 ```ts
@@ -1107,8 +1138,9 @@ added: the `useState` and `composer-height` imports, the `contentHeight`/`compos
 ```
 
 5. `TextInput`: change only the placeholder prop (`placeholder={streaming ? 'Hermes is responding…' : 'Chat with Hermes'}`,
-   unchanged by C) to `placeholder={running ? 'Steer Hermes…' : 'Chat with Hermes'}`. Leave C's
-   `onContentSizeChange` and `style` untouched. Afterwards `grep -n streaming src/components/composer.tsx`
+   unchanged by C) to `placeholder={running ? 'Steer Hermes…' : 'Chat with Hermes'}`. Leave C's `style`
+   (the `minHeight: composerMinHeight(value, emptyCommitted)` / `maxHeight: 120` pair, plus this task's
+   follow-up-commit trigger) untouched here. Afterwards `grep -n streaming src/components/composer.tsx`
    must print nothing (exit 1).
 6. Replace the whole Send `<Pressable accessibilityLabel="Send message" …>…</Pressable>` with:
 
@@ -1339,6 +1371,8 @@ and before `{/* dev-cards:end */}`:
 
 - [ ] **Step 7: Screenshots** — Screenshot procedure with `NAME=composer`. Check: Stop is a neutral
 `raised` circle (not accent) in both themes, steer arrow is accent, "Stopping…" pill fits, chip caption wraps.
+Also device-check the composer-height requirement above: send a failed multi-line steer and confirm the
+composer restores at full height (not one line).
 
 - [ ] **Step 8: Full gate + commit**
 

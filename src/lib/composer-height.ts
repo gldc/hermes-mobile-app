@@ -20,6 +20,18 @@
 // supplies that change: a layout-neutral `minHeight` that flips from
 // `undefined` to 0 on the commit after the empty value was committed. The
 // one-line height itself stays native, so it tracks Dynamic Type.
+//
+// Scope: this only handles JS-driven CLEARS (value -> ''). Any JS-driven
+// NON-EMPTY set hits the same one-commit measure lag and is NOT covered —
+// e.g. Plan B's steer-failure restore (`setInput((cur) =>
+// restoreSteerText(cur, text))`), or a future draft restore. Each needs its
+// own follow-up-commit trigger. One approach: record the last `onChangeText`
+// text in a ref, and in the `value` layout effect flip a boolean when
+// `value !== lastEmittedRef.current` instead of just `value === ''`.
+//
+// This also relies on an RN 0.85 Fabric ordering detail: TextInput is
+// measured from state before layout() runs updateStateIfNeeded. Re-verify
+// this on every React Native upgrade.
 
 /**
  * `minHeight` for the composer TextInput. `emptyCommitted` is whether an empty
