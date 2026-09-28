@@ -622,8 +622,9 @@ codes alone):
     STATE.md.
 - **Exposure:**
   - listeners: only `127.0.0.1:8642` is new;
-  - `/opt/data/.env` is 0600 and holds only `API_SERVER_KEY` (plus any secret entered later through
-    §6.4).
+  - `/opt/data/.env` is 0600. It holds the set seeded from upstream's `.env.example` (captured on the
+    throwaway container) plus `API_SERVER_KEY` and no compose env name, plus any secret entered later
+    through §6.4 (Plan D, contradiction 1).
 - **Logs:** no `UnscopedSecretError` or `compat` lines.
 - **Skills:**
   - `hermes skills list` shows the disabled set;
