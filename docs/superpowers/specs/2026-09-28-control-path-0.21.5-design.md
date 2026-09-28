@@ -434,7 +434,9 @@ vendored client uses `addEventListener`.
 - **Today:** the plugin pushes only on `pre_approval_request` and at session end.
 - **This round adds:**
   - a push when the agent calls **`clarify`**, through the plugin's `pre_tool_call` hook (kwargs include
-    `session_id`; the hook is observe-only and returns no block);
+    `tool_name` and `session_id`). At 0.21.5 a `pre_tool_call` callback that raises or exceeds the 30 s
+    hook timeout **becomes a block directive**, so the handler must catch everything, push on a background
+    thread, and return `None`. It is rate-limited to one push per device and session every 30 s;
   - device-targeted like the session-stop push, with a redacted body: "Hermes has a question";
   - a tap deep-links to the session, where resume brings the card back (§7).
 - **No push exists for sudo or secret** (there is no hook for them). It is documented as a known gap;
@@ -535,8 +537,13 @@ The CLI `pair`/`revoke` commands write from another process. The fix:
 **Coalesced approvals:** `if kwargs.get("coalesced"): return` in the `pre_approval_request` handler,
 RED first.
 
-**Clarify push (§6.5):** a `pre_tool_call` handler that, for `function_name == "clarify"`, sends the
-device-targeted redacted push. Observe-only; it never blocks. RED first.
+**Clarify push (§6.5):** a `pre_tool_call` handler that, for `tool_name == "clarify"`, sends the
+device-targeted redacted push (`data.type = "clarify_request"`). It catches every exception and pushes on
+a background thread, so it can never become a block directive (§6.5). RED first. The app adds
+`clarify_request` to `SUPPRESSIBLE_PUSH_TYPES` (Plan B).
+
+**`docker exec` runs as root:** any file the store or lock creates when root runs it is chowned back to
+the store directory's owner (uid 10000).
 
 **Deploy:** merge to `main`. The bump step pulls it explicitly (§9.2 step 5).
 
