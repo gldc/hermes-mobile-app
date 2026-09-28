@@ -1,7 +1,9 @@
+import { useState } from 'react';
 import { Pressable, Text, TextInput, View } from 'react-native';
 import { Image } from 'expo-image';
 import Animated, { FadeIn } from 'react-native-reanimated';
 import { Icon } from '@/components/icon';
+import { COMPOSER_MAX_HEIGHT, nextComposerHeight } from '@/lib/composer-height';
 import { useTheme } from '@/theme';
 
 interface ComposerProps {
@@ -40,6 +42,13 @@ export function Composer({
 }: ComposerProps) {
   const { colors, dark } = useTheme();
   const canSend = !disabled && !streaming && (value.trim().length > 0 || Boolean(stagedImageUri));
+
+  // Tracks the TextInput's own reported content height. nextComposerHeight()
+  // clears the height override once `value` is empty again, so a send
+  // (which clears `value` in the parent) snaps the input back to one line —
+  // see src/lib/composer-height.ts.
+  const [contentHeight, setContentHeight] = useState(0);
+  const composerHeight = nextComposerHeight(contentHeight, value);
 
   return (
     // Bottom spacing is owned by the chat screen, which tracks the keyboard
@@ -101,11 +110,20 @@ export function Composer({
         <TextInput
           value={value}
           onChangeText={onChangeText}
+          onContentSizeChange={(e) => setContentHeight(e.nativeEvent.contentSize.height)}
           editable={!disabled}
           multiline
           placeholder={streaming ? 'Hermes is responding…' : 'Chat with Hermes'}
           placeholderTextColor={colors.placeholder}
-          style={{ color: colors.text, fontSize: 17, lineHeight: 23, maxHeight: 120, paddingTop: 10, paddingBottom: 2 }}
+          style={{
+            color: colors.text,
+            fontSize: 17,
+            lineHeight: 23,
+            height: composerHeight,
+            maxHeight: COMPOSER_MAX_HEIGHT,
+            paddingTop: 10,
+            paddingBottom: 2,
+          }}
         />
 
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
