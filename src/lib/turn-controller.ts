@@ -45,7 +45,9 @@ export type TurnAction =
   | { type: 'event.error'; replayed: boolean }
   | { type: 'stop.sent' }
   | { type: 'stop.failed' }
-  | { type: 'resume.seeded'; running: boolean }
+  /** `openRequestIds` (additive): ids this same resume re-delivered via `open_requests`. The
+   * channel delivers them BEFORE the resume resolves, so they are already pending again here. */
+  | { type: 'resume.seeded'; running: boolean; openRequestIds?: readonly string[] }
   | { type: 'socket.lost' }
   | RequestAction;
 
@@ -62,6 +64,16 @@ function closeLegacy(requests: RequestCardState[], reason: CancelReason): Reques
   return requests.map((r) =>
     r.legacy && OPEN.has(r.status) ? { ...r, status: 'cancelled', cancelReason: reason } : r,
   );
+}
+
+/** `resume.seeded{running:false}`: no server request can be open on an idle session (0.21.5's
+ * live status is 'waiting' while any prompt is pending, and that seeds running), so every open
+ * 0.21.5 card was withdrawn while the socket was down (review I2). Cards re-delivered by this
+ * same resume stay open; legacy cards are socket.lost's job; settled cards keep their outcome. */
+function closeWithdrawn(requests: RequestCardState[], keep: readonly string[] = []): RequestCardState[] {
+  const withdrawn = (r: RequestCardState) => !r.legacy && OPEN.has(r.status) && !keep.includes(r.id);
+  if (!requests.some(withdrawn)) return requests;
+  return requests.map((r) => (withdrawn(r) ? { ...r, status: 'cancelled', cancelReason: 'session_closed' } : r));
 }
 
 function mapCard(
@@ -160,7 +172,9 @@ export function reduceTurn(model: TurnModel, action: TurnAction): TurnModel {
     case 'stop.failed':
       return model.turn === 'stopping' ? { ...model, turn: 'streaming' } : model;
     case 'resume.seeded':
-      if (!action.running) return { ...model, turn: 'idle' };
+      if (!action.running) {
+        return { ...model, turn: 'idle', requests: closeWithdrawn(model.requests, action.openRequestIds) };
+      }
       // A Stop already in flight stays 'stopping' until message.complete arrives.
       return { ...model, turn: model.turn === 'stopping' ? 'stopping' : 'streaming' };
     case 'socket.lost':

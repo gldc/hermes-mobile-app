@@ -76,7 +76,9 @@ export function seedFromResume(
   sink.onLiveSessionId(res.session_id);
   sink.onResumed?.(res);
   const running = resumeRunning(res);
-  sink.dispatch({ type: 'resume.seeded', running });
+  // The channel re-delivered these as cards before the resume resolved: they stay open (I2).
+  const openRequestIds = Array.isArray(res.open_requests) ? res.open_requests.map((r) => r.id) : undefined;
+  sink.dispatch({ type: 'resume.seeded', running, openRequestIds });
   return running;
 }
 

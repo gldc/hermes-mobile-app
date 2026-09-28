@@ -193,6 +193,46 @@ describe('reconnect mid-clarify (review B1)', () => {
   });
 });
 
+describe('turn ended during a drop (review I2)', () => {
+  it('0.21.5 clarify + approval open → drop → resume running:false, no open_requests → cards closed as session_closed', async () => {
+    const { gw, t } = setup();
+    await t.orchestrator.start();
+    gw.current().serverSend(serverRequest('srq-c', 'clarify', CLARIFY));
+    gw.current().serverSend(serverRequest('srq-a', 'approval', { session_id: 'live-1', request_id: 'r1', command: 'rm -rf x' }));
+    expect(t.store.getState().requests.map((c) => c.status)).toEqual(['pending', 'pending']);
+    gw.responders['session.resume'] = () => ({
+      session_id: 'live-1', message_count: 0, messages: [], info: {}, running: false, status: 'idle',
+    });
+    gw.current().drop();
+    await settle();
+    expect(gw.sockets).toHaveLength(2);
+    expect(t.store.getState().turn).toBe('idle');
+    expect(t.store.getState().requests.map((c) => [c.id, c.status, c.cancelReason])).toEqual([
+      ['srq-c', 'cancelled', 'session_closed'],
+      ['srq-a', 'cancelled', 'session_closed'],
+    ]);
+  });
+
+  it('a card re-delivered by that same running:false resume stays open (channel delivers open_requests first)', async () => {
+    const { gw, t } = setup();
+    await t.orchestrator.start();
+    gw.current().serverSend(serverRequest('srq-c', 'clarify', CLARIFY));
+    gw.current().serverSend(serverRequest('srq-a', 'approval', { session_id: 'live-1', request_id: 'r1', command: 'rm -rf x' }));
+    gw.responders['session.resume'] = () => ({
+      session_id: 'live-1', message_count: 0, messages: [], info: {}, running: false,
+      open_requests: [{ id: 'srq-c', method: 'clarify', params: CLARIFY }],
+    });
+    gw.current().drop();
+    await settle();
+    expect(t.store.getState().requests.map((c) => [c.id, c.status, c.cancelReason])).toEqual([
+      ['srq-c', 'pending', undefined],
+      ['srq-a', 'cancelled', 'session_closed'],
+    ]);
+    expect(t.registry.respond('srq-c', { answers: { q0: 'a' } })).toBe(true);
+    expect(gw.current().sent.find((f) => f.id === 'srq-c')).toEqual({ jsonrpc: '2.0', id: 'srq-c', result: { answers: { q0: 'a' } } });
+  });
+});
+
 describe('teardown order (PR #22 hardening)', () => {
   it("the old socket's late close after a successful reconnect starts no second run", async () => {
     const { gw, t } = setup();

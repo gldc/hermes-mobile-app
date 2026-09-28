@@ -151,6 +151,52 @@ describe('request cards (spec §6.0)', () => {
     ]);
     expect(reduceTurn(m, { type: 'socket.lost' }).requests[0]).toMatchObject({ status: 'cancelled', cancelReason: 'session_closed' });
   });
+  it('resume.seeded running:false closes every open NON-legacy card as session_closed (review I2)', () => {
+    let m = run([
+      { type: 'request.received', card: card({ id: 'srq-pending' }) },
+      { type: 'request.received', card: card({ id: 'srq-answering', kind: 'clarify', method: 'clarify' }) },
+      { type: 'request.answering', id: 'srq-answering' },
+      { type: 'request.received', card: card({ id: 'srq-answered' }) },
+      { type: 'request.answered', id: 'srq-answered', resolution: 'once' },
+      { type: 'request.received', card: card({ id: 'srq-timeout' }) },
+      { type: 'request.cancelled', id: 'srq-timeout', reason: 'timeout' },
+      { type: 'request.received', card: card({ id: 'legacy:1', legacy: true }) },
+    ]);
+    m = reduceTurn(m, { type: 'resume.seeded', running: false });
+    expect(m.turn).toBe('idle');
+    expect(m.requests.map((r) => [r.id, r.status, r.cancelReason, r.resolution])).toEqual([
+      ['srq-pending', 'cancelled', 'session_closed', undefined],
+      ['srq-answering', 'cancelled', 'session_closed', undefined],
+      ['srq-answered', 'answered', undefined, 'once'], // settled: untouched
+      ['srq-timeout', 'cancelled', 'timeout', undefined], // settled: reason kept
+      ['legacy:1', 'pending', undefined, undefined], // legacy: socket.lost's job, not this rule
+    ]);
+    expect(cancelLabel(m.requests[0].cancelReason!)).toBe('Closed');
+  });
+  it('resume.seeded running:false keeps a card the same resume re-delivered (openRequestIds)', () => {
+    // The channel delivers the resume's open_requests BEFORE the resume promise resolves, so the
+    // re-delivered card is already pending again when resume.seeded arrives: it must stay open.
+    const m = run([
+      { type: 'request.received', card: card({ id: 'srq-kept' }) },
+      { type: 'request.received', card: card({ id: 'srq-gone' }) },
+      { type: 'resume.seeded', running: false, openRequestIds: ['srq-kept'] },
+    ]);
+    expect(m.requests.map((r) => [r.id, r.status, r.cancelReason])).toEqual([
+      ['srq-kept', 'pending', undefined],
+      ['srq-gone', 'cancelled', 'session_closed'],
+    ]);
+  });
+  it('resume.seeded running:true leaves open cards (and a stopping turn) alone', () => {
+    const m = run([
+      { type: 'event.message.start', replayed: false },
+      { type: 'request.received', card: card() },
+      { type: 'stop.sent' },
+      { type: 'resume.seeded', running: true },
+    ]);
+    expect(m.turn).toBe('stopping');
+    expect(m.requests[0]).toMatchObject({ status: 'pending' });
+    expect(m.requests[0].cancelReason).toBeUndefined();
+  });
   it('toCancelReason maps unknown wire reasons to session_closed', () => {
     expect(toCancelReason('timeout')).toBe('timeout');
     expect(toCancelReason('bogus')).toBe('session_closed');

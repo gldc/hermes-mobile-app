@@ -415,6 +415,13 @@ describe('seedFromResume', () => {
     expect(dispatched).toEqual([{ type: 'resume.seeded', running: true }]);
   });
 
+  it("forwards the resume's open_requests ids so a card it re-delivered is not closed (I2)", () => {
+    const dispatched: TurnAction[] = [];
+    const res = resume({ running: false, open_requests: [{ id: 'srq-a', method: 'approval', params: {} }] });
+    seedFromResume(res as any, { onLiveSessionId: () => {}, dispatch: (a) => dispatched.push(a) });
+    expect(dispatched).toEqual([{ type: 'resume.seeded', running: false, openRequestIds: ['srq-a'] }]);
+  });
+
   it('returns false and works without onResumed (optional)', () => {
     const dispatched: TurnAction[] = [];
     const running = seedFromResume(resume({ running: false }) as any, {
