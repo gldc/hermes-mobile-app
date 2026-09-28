@@ -82,6 +82,17 @@ describe('GatewayClient.connect', () => {
     expect(c.isOpen).toBe(true);
   });
 
+  it('replay:false holds — a reconnect after seeing {session_id, seq} never sends session.events.since', async () => {
+    // Replay is app-orchestrated (spec §7); the vendored auto-replay would race the orchestrator.
+    const c = make();
+    const first = await connected(c);
+    first.serverSend(event('message.delta', { text: 'hi' }, { session_id: 'live-1', seq: 7 }));
+    c.invalidate();
+    const second = await connected(c);
+    for (let i = 0; i < 5; i++) await new Promise((r) => setTimeout(r, 0));
+    expect(second.sent.map((f) => f.method)).not.toContain('session.events.since');
+  });
+
   it('connect() on a zombie OPEN socket redials instead of short-circuiting', async () => {
     const c = make();
     const zombie = await connected(c);
