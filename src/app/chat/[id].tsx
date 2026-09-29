@@ -55,9 +55,9 @@ import { shouldReconnect } from '@/lib/reconnect';
 import {
   appendAfterStream,
   closeStreaming,
+  createCardPinner,
   createItemsMirror,
   offsetToReveal,
-  reanchorAfterReplace,
   withCardAnchors,
   type CardAnchors,
 } from '@/lib/transcript-rows';
@@ -148,8 +148,10 @@ export default function ChatScreen() {
   // A card's arrival closes the streaming segment (onNewCard), so the anchor is read after that close.
   const [itemsMirror] = useState(() => createItemsMirror<ChatItem>(setItems, closeStreaming));
   const updateItems = (fn: (prev: ChatItem[]) => ChatItem[]) => itemsMirror.update(fn);
-  // Cards that were open across a history replace, drawn under the reloaded last row (final review I1).
+  // Cards that were open across a history replace, drawn under the row that asked for them (final
+  // review I1, D1). The pinner records them at the reload and pins them when the reconnect ends.
   const [cardAnchors, setCardAnchors] = useState<CardAnchors>({});
+  const [cardPinner] = useState(createCardPinner);
   const [input, setInput] = useState('');
   const [stagedImage, setStagedImage] = useState<PickedImage | null>(null);
   const [thinking, setThinking] = useState(false); // sent / turn started, no tokens yet
@@ -183,6 +185,7 @@ export default function ChatScreen() {
     loadHistory: (storedId: string) => Promise<void>;
     onPhase: (p: ReconnectPhase) => void;
     onNewCard: (card: RequestCardState, replayed: boolean) => void;
+    pinCardsAfterSequence: () => void;
   } | null>(null);
 
   const nextKey = () => `i${keyCounter.current++}`;
@@ -421,10 +424,14 @@ export default function ChatScreen() {
     if (cancelledRef.current) return;
     const reloaded = historyToItems(history.messages, nextKey);
     updateItems(() => reloaded);
-    // The reload re-keyed every row: a card open now keeps its place under the new last row, so it is
-    // still drawn once it settles (final review I1). Settled cards are in the history (contract §8).
+    // The reload re-keyed every row, so a card open now lost its anchor. It is NOT pinned here: the
+    // replay that follows appends the running tool row that asked for it, and a pin under the reloaded
+    // last row put the card above that row (D1). Recorded instead, it draws at the tail until the
+    // sequence ends (onPhase), then is pinned under its requester row, so it is still drawn once it
+    // settles (final review I1). Settled cards are in the history (contract §8). Every pre-reload key
+    // is dead after the re-key, so no override survives: none are passed.
     const requests = readTurn().requests;
-    setCardAnchors((prev) => reanchorAfterReplace(requests, prev, reloaded));
+    setCardAnchors(cardPinner.onHistoryReplace(requests, {}, reloaded));
     // historyToItems never emits subagent/todo rows; clear stale live-card keys
     // so a reconnect/history replace can't update a row that no longer exists.
     // Request cards live in the turn store, NOT in items, so they survive this replace.
@@ -432,15 +439,24 @@ export default function ChatScreen() {
     todoKeyRef.current = null;
   }
 
+  /** The reconnect sequence ended (ready, failed, or start() rejected): pin the cards the pinner
+   *  recorded under their requester rows (D1). Inputs are read here, not in the updater (finding 7). */
+  function pinCardsAfterSequence() {
+    const pins = cardPinner.onSequenceEnd(readTurn().requests, itemsMirror.items(), itemsMirror.anchorKey());
+    if (pins) setCardAnchors((prev) => ({ ...prev, ...pins }));
+  }
+
   function onPhase(p: ReconnectPhase) {
     if (cancelledRef.current) return;
     if (p.kind === 'attempt') {
+      cardPinner.sequenceStarted();
       setReady(false);
       // A subagent card is NOT sealed here: when the replay ring no longer reaches the turn's
       // anchor, the reconnect keeps the screen and the gap's subagent.* events continue the same
       // card (A1). It is sealed below once we know the turn is over or the reconnect gave up.
       setReconnectNote(`Connection lost — reconnecting (${p.attempt}/${p.max})…`);
     } else if (p.kind === 'ready') {
+      pinCardsAfterSequence();
       // A turn that finished while the socket was down never delivers message.complete
       // (resume reports running:false, replay is skipped) — drop the stale thinking flag.
       if (readTurn().turn === 'idle') {
@@ -451,6 +467,7 @@ export default function ChatScreen() {
       setError(null);
       setReady(true);
     } else {
+      pinCardsAfterSequence();
       finalizeSubagents(); // gave up: nothing will update the card again
       setReconnectNote(null);
       setError('Could not reconnect. Check your VPN or Wi-Fi, then reopen this chat.');
@@ -460,6 +477,9 @@ export default function ChatScreen() {
   /** A request card appeared (live or replayed): close the streaming segment so later text
    * renders after the card; warn only for live arrivals (replays never fire haptics). */
   function onNewCard(card: RequestCardState, replayed: boolean) {
+    // A card first delivered mid-reconnect anchors before the replayed row that asked for it (review
+    // finding 5): the pinner moves it under that row when the sequence ends.
+    if (cardPinner.inSequence()) cardPinner.onCardCreatedDuringSequence(card.id);
     setThinking(false);
     finishAssistant();
     // Live arrivals only, and not vault prompts — those are declined on arrival (spec §6.3),
@@ -548,7 +568,7 @@ export default function ChatScreen() {
   // Keep the transport's long-lived callbacks pointed at this render's closures.
   // Declared BEFORE the mount effect so it runs first.
   useEffect(() => {
-    handlersRef.current = { applyEvent, loadHistory, onPhase, onNewCard };
+    handlersRef.current = { applyEvent, loadHistory, onPhase, onNewCard, pinCardsAfterSequence };
   });
 
   useEffect(() => {
@@ -600,9 +620,14 @@ export default function ChatScreen() {
         // transcript, so the initial run skips a second load that would re-key and re-fade
         // every row (review I1); reconnects still reload.
         started = true;
+        cardPinner.sequenceStarted();
         await t.orchestrator.start({ historyLoaded });
       } catch {
-        if (!cancelledRef.current) setError('Could not open a live session. Check your VPN or Wi-Fi.');
+        if (!cancelledRef.current) {
+          // start() never reports `failed`: a card its history load recorded is pinned here (finding 6).
+          handlersRef.current?.pinCardsAfterSequence();
+          setError('Could not open a live session. Check your VPN or Wi-Fi.');
+        }
       }
     })();
     // Foreground revival: iOS suspends the runtime and the OS tears the socket
@@ -626,7 +651,7 @@ export default function ChatScreen() {
         orchestratorRef.current = null;
       }
     };
-  }, [id, itemsMirror]); // itemsMirror is stable (useState)
+  }, [id, itemsMirror, cardPinner]); // itemsMirror and cardPinner are stable (useState)
 
   // Composer model pill — best-effort, never blocks the chat.
   useEffect(() => {

@@ -1,5 +1,6 @@
-import { createReconnectOrchestrator, seedFromResume, type OrchestratorDeps } from '../reconnect-orchestrator';
-import type { TurnAction } from '../turn-controller';
+import { createReconnectOrchestrator, seedFromResume, type OrchestratorDeps, type ReconnectPhase } from '../reconnect-orchestrator';
+import { closeStreaming, createCardPinner, createItemsMirror, withCardAnchors, type CardAnchors } from '../transcript-rows';
+import { mergeRequestRows, type RequestCardState, type TurnAction } from '../turn-controller';
 
 type Ev = { type: string; session_id?: string; seq?: number; payload?: unknown; replayed?: boolean };
 
@@ -673,5 +674,152 @@ describe('seedFromResume', () => {
     });
     expect(running).toBe(false);
     expect(dispatched).toEqual([{ type: 'resume.seeded', running: false }]);
+  });
+});
+
+// D1 (QA 2026-09-29 item 6): the screen pinned an open card under the reloaded history's last row at
+// the history replace, and the replay then appended the running clarify row BELOW the card. These
+// drive a real orchestrator through a stand-in for the chat screen that forwards to the card pinner
+// exactly as src/app/chat/[id].tsx does, so the timing (reload → replay → parked flush → ready) is
+// what is under test, not a hand-ordered call sequence.
+describe('D1: request cards across a reconnect (card pinner wiring)', () => {
+  type Row = { key: string; role: string; text: string; complete?: boolean; tool?: { id: string; name: string; running: boolean } };
+  const user = (key: string): Row => ({ key, role: 'user', text: key, complete: true });
+  const said = (key: string): Row => ({ key, role: 'assistant', text: key, complete: true });
+  const clarifyRow = (key: string, running: boolean): Row => ({ key, role: 'tool', text: 'clarify', tool: { id: key, name: 'clarify', running } });
+  const card = (status: RequestCardState['status'] = 'pending'): RequestCardState => ({
+    id: 'card', kind: 'clarify', method: 'clarify.request', params: {}, status, legacy: false, receivedAt: 0, anchorKey: 'i1',
+  });
+
+  /** The chat screen's side: transcript mirror, turn-store cards, overrides, and the pinner forwarding. */
+  function screen(histories: Row[][], afterReload: (n: number) => void = () => {}) {
+    let n = 100;
+    const mirror = createItemsMirror<Row>(() => {}, closeStreaming);
+    mirror.update(() => [user('i0'), said('i1')]); // the transcript before the socket dropped
+    const pinner = createCardPinner();
+    const s = {
+      requests: [card()],
+      anchors: {} as CardAnchors,
+      reloads: 0,
+      beforePin: [] as string[], // the order the screen drew just before the sequence ended
+      order: () => mergeRequestRows([...mirror.items()], withCardAnchors(s.requests, s.anchors)).map((r) => (r.kind === 'item' ? r.item.key : r.card.id)),
+      endSequence: () => {
+        s.beforePin = s.order();
+        const pins = pinner.onSequenceEnd(s.requests, mirror.items(), mirror.anchorKey());
+        if (pins) s.anchors = { ...s.anchors, ...pins };
+      },
+      pinner,
+    };
+    const deps: Partial<OrchestratorDeps> = {
+      loadHistory: jest.fn(async () => {
+        const reloaded = histories[s.reloads++];
+        mirror.update(() => reloaded);
+        s.anchors = pinner.onHistoryReplace(s.requests, {}, reloaded);
+        afterReload(s.reloads);
+      }),
+      applyReplayedEvent: (e) => {
+        const name = String((e.payload as { name?: unknown } | undefined)?.name ?? '');
+        if (e.type === 'tool.start') mirror.update((prev) => [...prev, { key: `i${n++}`, role: 'tool', text: name, tool: { id: name, name, running: true } }]);
+        else if (e.type === 'tool.complete') mirror.update((prev) => prev.map((r) => (r.tool?.running && r.tool.name === name ? { ...r, tool: { ...r.tool, running: false } } : r)));
+        else if (e.type === 'message.delta') mirror.update((prev) => [...prev, { key: `i${n++}`, role: 'assistant', text: 'more', complete: false }]);
+      },
+      onPhase: (p: ReconnectPhase) => {
+        if (p.kind === 'attempt') pinner.sequenceStarted();
+        else s.endSequence();
+      },
+    };
+    return { s, deps };
+  }
+
+  const ev = (type: string, seq: number, payload?: object) => ({ type, session_id: 'live-1', seq, ...(payload ? { payload } : {}) });
+
+  it('the running clarify row replayed after the reload: the card ends up right under it', async () => {
+    const { s, deps } = screen([[user('i2'), said('i3')]]);
+    const h = harness(deps);
+    h.orch.noteSeq('live-1', 10);
+    h.results['session.resume'] = [resume({ running: true })];
+    const replay = since([ev('tool.start', 11, { name: 'clarify' })]);
+    h.results['session.events.since'] = [replay, replay];
+    await h.orch.reconnect('foreground');
+    expect(s.beforePin).toEqual(['i2', 'i3', 'i100', 'card']); // unpinned during the replay: drawn at the tail
+    expect(s.order()).toEqual(['i2', 'i3', 'i100', 'card']);
+    expect(s.anchors).toEqual({ card: 'i100' }); // pinned: it stays there once answered
+  });
+
+  it('answered in the window: the parked tool.complete and continuation land below the card, not above it', async () => {
+    const { s, deps } = screen([[user('i2'), said('i3')]], () => (s.requests = [card('answered')]));
+    const h = harness(deps);
+    h.orch.noteSeq('live-1', 10);
+    h.results['session.resume'] = [resume({ running: true })];
+    const replay = since([ev('tool.start', 11, { name: 'clarify' })]);
+    h.results['session.events.since'] = [replay, replay];
+    h.holdResume();
+    const run = h.orch.reconnect('close');
+    await flush();
+    // live frames racing the reconnect are parked, then flushed after the replay and before ready
+    h.orch.onLiveEvent(ev('tool.complete', 12, { name: 'clarify' }) as any);
+    h.orch.onLiveEvent(ev('message.delta', 13, { text: 'thanks' }) as any);
+    h.open('resumeHeld');
+    await run;
+    expect(s.order()).toEqual(['i2', 'i3', 'i100', 'card', 'i101']);
+  });
+
+  it('two reloads in one sequence (the turn completed meanwhile): a card that settled between them is still drawn', async () => {
+    const second = [user('i4'), said('i5'), clarifyRow('i6', false), said('i7')];
+    const { s, deps } = screen([[user('i2'), said('i3')], second], (k) => {
+      if (k === 1) s.requests = [card('answered')];
+    });
+    const h = harness(deps);
+    h.orch.onLiveEvent(ev('message.complete', 9) as any);
+    h.orch.onLiveEvent(ev('message.start', 10) as any);
+    h.results['session.resume'] = [resume({ running: true })];
+    h.results['session.events.since'] = [
+      since([ev('message.start', 10), ev('tool.start', 11, { name: 'clarify' })]),
+      since([], { truncated: true }),
+      since([ev('tool.complete', 12, { name: 'clarify' }), ev('message.complete', 13)]),
+    ];
+    await h.orch.reconnect('close');
+    expect(s.reloads).toBe(2);
+    expect(s.order()).toEqual(['i4', 'i5', 'i6', 'i7', 'card']);
+  });
+
+  it('a failed attempt then a retry: the record survives the attempt boundary', async () => {
+    let hh: ReturnType<typeof harness> | null = null;
+    const { s, deps } = screen([[user('i2'), said('i3')], [user('i4'), said('i5')]], (k) => {
+      if (k === 1) {
+        hh!.client.isOpen = false; // the socket died while history loaded: attempt 1 fails
+        s.requests = [card('answered')]; // …and the card settles before attempt 2 reloads
+      }
+    });
+    const h = (hh = harness(deps));
+    h.orch.noteSeq('live-1', 10);
+    h.results['session.resume'] = [resume({ running: true }), resume({ running: true })];
+    const replay = since([ev('tool.start', 11, { name: 'clarify' }), ev('tool.complete', 12, { name: 'clarify' })]);
+    h.results['session.events.since'] = [replay, replay, replay, replay]; // probe + replay per attempt
+    await h.orch.reconnect('close');
+    expect(h.deps.mintUrl).toHaveBeenCalledTimes(2);
+    expect(s.order()).toEqual(['i4', 'i5', 'i101', 'card']);
+  });
+
+  it('every attempt fails: the failed phase still pins the card, so it is drawn once it settles', async () => {
+    let hh: ReturnType<typeof harness> | null = null;
+    const { s, deps } = screen([[user('i2'), said('i3')]], () => (hh!.client.isOpen = false));
+    const h = (hh = harness(deps));
+    h.results['session.resume'] = [resume({ running: false })];
+    h.results.connect = [undefined, new Error('x'), new Error('x'), new Error('x'), new Error('x')];
+    await h.orch.reconnect('close');
+    s.requests = [card('cancelled')];
+    expect(s.order()).toEqual(['i2', 'i3', 'card']);
+  });
+
+  it('start() rejects after its history load: the screen\'s catch pins the card (finding 6)', async () => {
+    let hh: ReturnType<typeof harness> | null = null;
+    const { s, deps } = screen([[user('i2'), said('i3')]], () => (hh!.client.isOpen = false));
+    const h = (hh = harness(deps));
+    h.results['session.resume'] = [resume({ running: false })];
+    s.pinner.sequenceStarted();
+    await h.orch.start().catch(() => s.endSequence());
+    s.requests = [card('answered')];
+    expect(s.order()).toEqual(['i2', 'i3', 'card']);
   });
 });

@@ -1,11 +1,15 @@
 import type { ChatItem } from '../src/components/message-row';
 import {
   appendAfterStream,
+  cardsLosingAnchor,
   closeStreaming,
+  createCardPinner,
   createItemsMirror,
   offsetToReveal,
+  pinCards,
   reanchorAfterReplace,
   withCardAnchors,
+  type CardAnchors,
 } from '../src/lib/transcript-rows';
 import { mergeRequestRows, type RequestCardState } from '../src/lib/turn-controller';
 
@@ -190,5 +194,199 @@ describe('reanchorAfterReplace + withCardAnchors (I1)', () => {
     expect(withCardAnchors(list, {})).toBe(list);
     expect(withCardAnchors(list, { x: 'i8' })).toBe(list);
     expect(withCardAnchors(list, { b: 'i8' }).map((c) => c.anchorKey)).toEqual(['i1', 'i8']);
+  });
+});
+
+test('createItemsMirror().items() returns the latest list after update', () => {
+  const mirror = createItemsMirror<ChatItem>(() => {});
+  expect(mirror.items()).toEqual([]);
+  mirror.update(() => [item('i0')]);
+  mirror.update((prev) => [...prev, item('i1')]);
+  expect(mirror.items().map((i) => i.key)).toEqual(['i0', 'i1']);
+});
+
+// D1 (QA 2026-09-29 item 6): after a mid-turn reconnect the reload pinned an open card under the
+// reloaded history's last row, and the replay then appended the running clarify row BELOW the card.
+describe('cardsLosingAnchor + pinCards (D1)', () => {
+  const settle = (c: RequestCardState, status: RequestCardState['status']): RequestCardState => ({ ...c, status });
+  const reloaded = [item('i7'), item('i8')];
+
+  test('cardsLosingAnchor: open cards whose effective anchor is gone or null', () => {
+    const cards = [req('dead', 'i1'), req('live', 'i1'), settle(req('settled', 'i1'), 'answered'), req('early', null), req('kept', 'i7')];
+    expect(cardsLosingAnchor(cards, { live: 'i8' }, reloaded)).toEqual(['dead', 'early']);
+  });
+
+  test('pinCards pins to the last item and keeps a live override', () => {
+    expect(pinCards([req('a', 'i1'), req('b', 'i1')], { b: 'i7' }, reloaded, ['a'])).toEqual({ a: 'i8', b: 'i7' });
+  });
+
+  test('pinCards drops a dead override that is not being pinned', () => {
+    expect(pinCards([req('a', 'i1')], { a: 'i3' }, reloaded, [])).toEqual({});
+  });
+
+  test('pinCards drops an id whose card left the store, and never pins into an empty list', () => {
+    expect(pinCards([], {}, reloaded, ['gone'])).toEqual({});
+    expect(pinCards([req('a', 'i1')], {}, [], ['a'])).toEqual({});
+  });
+
+  test('pinCards walks the store, not the overrides: a live override of a card gone from the store drops (R9)', () => {
+    expect(pinCards([], { gone: 'i7' }, reloaded, [])).toEqual({});
+  });
+
+  test('reanchorAfterReplace is the composition of the two', () => {
+    const cards = [req('open', 'i1'), settle(req('done', 'i1'), 'answered'), req('kept', 'i1')];
+    const anchors = { done: 'i2', kept: 'i7' };
+    expect(reanchorAfterReplace(cards, anchors, reloaded)).toEqual(
+      pinCards(cards, anchors, reloaded, cardsLosingAnchor(cards, anchors, reloaded)),
+    );
+    expect(reanchorAfterReplace(cards, anchors, reloaded)).toEqual({ open: 'i8', kept: 'i7' });
+  });
+});
+
+describe('createCardPinner (D1: pin re-anchored cards at the end of the reconnect sequence)', () => {
+  const settle = (c: RequestCardState, status: RequestCardState['status']): RequestCardState => ({ ...c, status });
+  const user = (key: string): ChatItem => ({ key, role: 'user', text: key, complete: true });
+  const toolRow = (key: string, name: string, running: boolean): ChatItem => ({
+    key, role: 'tool', text: name, tool: { id: key, name, running },
+  });
+  const clarify = (anchorKey: string | null): RequestCardState => ({ ...req('card', anchorKey), kind: 'clarify', method: 'clarify.request' });
+  const orderOf = (items: ChatItem[], cards: RequestCardState[], anchors: CardAnchors) =>
+    keysOf(mergeRequestRows(items, withCardAnchors(cards, anchors)));
+  const lastKey = (items: ChatItem[]) => items[items.length - 1]?.key ?? null;
+
+  test('the D1 scenario: unpinned during the replay (drawn at the tail), pinned under the clarify row at the end', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const card = clarify('i1'); // pre-reconnect key, gone after the reload
+    const reloaded = [user('i2'), item('i3')];
+    let anchors: CardAnchors = pinner.onHistoryReplace([card], {}, reloaded);
+    expect(anchors).toEqual({});
+    const replayed = [...reloaded, toolRow('i4', 'clarify', true)];
+    expect(orderOf(replayed, [card], anchors)).toEqual(['i2', 'i3', 'i4', 'card']); // tail, not above i4
+    const pins = pinner.onSequenceEnd([card], replayed, lastKey(replayed));
+    expect(pins).toEqual({ card: 'i4' });
+    anchors = { ...anchors, ...pins };
+    expect(orderOf(replayed, [card], anchors)).toEqual(['i2', 'i3', 'i4', 'card']);
+    const later = [...replayed, item('i5')];
+    expect(orderOf(later, [settle(card, 'answered')], anchors)).toEqual(['i2', 'i3', 'i4', 'card', 'i5']);
+    expect(pinner.inSequence()).toBe(false);
+  });
+
+  test('a card that settles before the sequence ends is still pinned (not dropped)', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const card = clarify('i1');
+    const reloaded = [user('i2'), item('i3')];
+    pinner.onHistoryReplace([card], {}, reloaded);
+    const replayed = [...reloaded, toolRow('i4', 'clarify', true)];
+    const answered = settle(card, 'answered');
+    const pins = pinner.onSequenceEnd([answered], replayed, lastKey(replayed));
+    expect(orderOf(replayed, [answered], { ...pins })).toEqual(['i2', 'i3', 'i4', 'card']);
+  });
+
+  test('R1: settled in the window, then tool.complete and a continuation row: the card stays under its clarify row', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const card = clarify('i1');
+    const reloaded = [user('i2'), item('i3')];
+    pinner.onHistoryReplace([card], {}, reloaded);
+    const items = [...reloaded, toolRow('i4', 'clarify', false), item('i5')];
+    const answered = settle(card, 'answered');
+    const pins = pinner.onSequenceEnd([answered], items, lastKey(items));
+    expect(pins).toEqual({ card: 'i4' });
+    expect(orderOf(items, [answered], { ...pins })).toEqual(['i2', 'i3', 'i4', 'card', 'i5']);
+  });
+
+  test('R1 rule 2: a non-clarify card goes under the last running tool row', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const card = req('card', 'i1'); // approval
+    const reloaded = [user('i2')];
+    pinner.onHistoryReplace([card], {}, reloaded);
+    const items = [...reloaded, toolRow('i3', 'terminal', true), toolRow('i4', 'read_file', false)];
+    expect(pinner.onSequenceEnd([card], items, lastKey(items))).toEqual({ card: 'i3' });
+  });
+
+  test('R1 rule 3: no requester row appended since the reload: the settled anchor (today\'s behaviour)', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const card = clarify('i1');
+    // An OLD clarify row from an earlier turn is in the reloaded history: never a requester candidate.
+    const reloaded = [user('i2'), toolRow('i3', 'clarify', false), item('i4')];
+    pinner.onHistoryReplace([card], {}, reloaded);
+    expect(pinner.onSequenceEnd([card], reloaded, 'i4')).toEqual({ card: 'i4' });
+  });
+
+  test('pins use the settled anchor passed in, not the raw last item (finding 7)', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const card = req('card', 'i1');
+    const reloaded = [user('i2'), item('i3')];
+    pinner.onHistoryReplace([card], {}, reloaded);
+    const items = [...reloaded, streaming('i4', ' ')];
+    expect(pinner.onSequenceEnd([card], items, 'i3')).toEqual({ card: 'i3' });
+  });
+
+  test('two reloads in one sequence union the record: a card that settled between them is still pinned', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const card = clarify('i1');
+    pinner.onHistoryReplace([card], {}, [user('i2'), item('i3')]);
+    const answered = settle(card, 'answered');
+    const second = [user('i4'), item('i5'), toolRow('i6', 'clarify', false), item('i7')];
+    expect(pinner.onHistoryReplace([answered], {}, second)).toEqual({}); // settled: not recorded again
+    const pins = pinner.onSequenceEnd([answered], second, 'i7');
+    expect(pins).toEqual({ card: 'i7' });
+    expect(orderOf(second, [answered], { ...pins })).toContain('card');
+  });
+
+  test('a card first delivered during the sequence is recorded and pinned under its requester row (finding 5)', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const reloaded = [user('i2'), item('i3')];
+    pinner.onHistoryReplace([], {}, reloaded);
+    const card = clarify('i3'); // anchored to the reloaded last row, which is still live
+    expect(pinner.inSequence()).toBe(true);
+    pinner.onCardCreatedDuringSequence(card.id);
+    const items = [...reloaded, toolRow('i4', 'clarify', true)];
+    expect(pinner.onSequenceEnd([card], items, 'i4')).toEqual({ card: 'i4' });
+  });
+
+  test('a card created during the sequence with a live anchor and no requester row after it keeps its anchor', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const items = [user('i2'), toolRow('i3', 'terminal', true)];
+    const card = req('card', 'i3');
+    pinner.onCardCreatedDuringSequence(card.id);
+    const later = [...items, item('i4')];
+    expect(pinner.onSequenceEnd([card], later, 'i4')).toEqual({ card: 'i3' });
+  });
+
+  test('onSequenceEnd: null when nothing was recorded; the record is cleared after a pin', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    expect(pinner.onSequenceEnd([], [item('i0')], 'i0')).toBeNull();
+    pinner.sequenceStarted();
+    pinner.onHistoryReplace([req('a', 'i1')], {}, [item('i2')]);
+    expect(pinner.onSequenceEnd([req('a', 'i1')], [item('i2')], 'i2')).toEqual({ a: 'i2' });
+    expect(pinner.onSequenceEnd([req('a', 'i1')], [item('i2')], 'i2')).toBeNull();
+  });
+
+  test('a recorded card that left the store, or an empty transcript, pins nothing', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    pinner.onHistoryReplace([req('a', 'i1')], {}, []);
+    expect(pinner.onSequenceEnd([req('a', 'i1')], [], null)).toEqual({});
+    pinner.sequenceStarted();
+    pinner.onHistoryReplace([req('b', 'i1')], {}, [item('i2')]);
+    expect(pinner.onSequenceEnd([], [item('i2')], 'i2')).toEqual({});
+  });
+
+  test('onHistoryReplace keeps live overrides and drops dead or gone ones, pinning nothing yet', () => {
+    const pinner = createCardPinner();
+    pinner.sequenceStarted();
+    const reloaded = [item('i7'), item('i8')];
+    expect(pinner.onHistoryReplace([req('a', 'i1'), req('b', 'i1')], { a: 'i7', b: 'i3', gone: 'i8' }, reloaded)).toEqual({ a: 'i7' });
+    expect(pinner.onSequenceEnd([req('a', 'i1'), req('b', 'i1')], reloaded, 'i8')).toEqual({ b: 'i8' });
   });
 });
