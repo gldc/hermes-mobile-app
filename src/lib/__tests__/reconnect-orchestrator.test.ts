@@ -88,16 +88,20 @@ describe('sequence order', () => {
     const h = harness();
     h.orch.noteSeq('live-1', 10);
     h.results['session.resume'] = [resume({ running: true })];
-    h.results['session.events.since'] = [
-      since([
-        { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'old' } },
-        { type: 'message.complete', session_id: 'live-1', seq: 12 },
-        { type: 'message.start', session_id: 'live-1', seq: 13 },
-        { type: 'message.delta', session_id: 'live-1', seq: 14, payload: { text: 'new' } },
-      ]),
-    ];
+    const batch = since([
+      { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'old' } },
+      { type: 'message.complete', session_id: 'live-1', seq: 12 },
+      { type: 'message.start', session_id: 'live-1', seq: 13 },
+      { type: 'message.delta', session_id: 'live-1', seq: 14, payload: { text: 'new' } },
+    ]);
+    h.results['session.events.since'] = [batch, batch]; // probe, then the post-history replay
     await h.orch.reconnect('foreground');
-    expect(h.log.indexOf('history:stored-1')).toBeLessThan(h.log.indexOf('call:session.events.since'));
+    // A1: a probe decides whether the buffer still holds the turn, THEN history, THEN the replay
+    // that is applied (fetched after history so a turn finishing in between is not duplicated).
+    const sinceCalls = h.log.flatMap((l, i) => (l === 'call:session.events.since' ? [i] : []));
+    expect(sinceCalls).toHaveLength(2);
+    expect(sinceCalls[0]).toBeLessThan(h.log.indexOf('history:stored-1'));
+    expect(h.log.indexOf('history:stored-1')).toBeLessThan(sinceCalls[1]);
     expect(h.client.call).toHaveBeenCalledWith('session.events.since', { session_id: 'live-1', last_seen: 10 });
     expect(h.applied.map((e) => [e.type, e.seq, e.replayed])).toEqual([
       ['message.start', 13, true],
@@ -114,14 +118,13 @@ describe('sequence order', () => {
     h.orch.onLiveEvent({ type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } } as any);
     h.orch.onLiveEvent({ type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: '-drop' } } as any);
     h.results['session.resume'] = [resume({ running: true })];
-    h.results['session.events.since'] = [
-      since([
-        { type: 'message.start', session_id: 'live-1', seq: 10 },
-        { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } },
-        { type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: '-drop' } },
-        { type: 'message.delta', session_id: 'live-1', seq: 13, payload: { text: ' gap' } },
-      ]),
-    ];
+    const batch = since([
+      { type: 'message.start', session_id: 'live-1', seq: 10 },
+      { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } },
+      { type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: '-drop' } },
+      { type: 'message.delta', session_id: 'live-1', seq: 13, payload: { text: ' gap' } },
+    ]);
+    h.results['session.events.since'] = [batch, batch];
     h.applied.length = 0;
     await h.orch.reconnect('close');
     expect(h.client.call).toHaveBeenCalledWith('session.events.since', { session_id: 'live-1', last_seen: 9 });
@@ -141,12 +144,11 @@ describe('sequence order', () => {
     h.orch.onLiveEvent({ type: 'message.complete', session_id: 'live-1', seq: 12 } as any);
     h.applied.length = 0; // clear the priming complete's own live application
     h.results['session.resume'] = [resume({ running: true })];
-    h.results['session.events.since'] = [
-      since([
-        { type: 'message.start', session_id: 'live-1', seq: 13 },
-        { type: 'message.delta', session_id: 'live-1', seq: 14, payload: { text: 'x' } },
-      ]),
-    ];
+    const batch = since([
+      { type: 'message.start', session_id: 'live-1', seq: 13 },
+      { type: 'message.delta', session_id: 'live-1', seq: 14, payload: { text: 'x' } },
+    ]);
+    h.results['session.events.since'] = [batch, batch];
     await h.orch.reconnect('close');
     expect(h.client.call).toHaveBeenCalledWith('session.events.since', { session_id: 'live-1', last_seen: 12 });
     expect(h.applied.map((e) => [e.type, e.seq, e.replayed])).toEqual([
@@ -163,13 +165,94 @@ describe('sequence order', () => {
     expect(h.actions).toContainEqual({ type: 'resume.seeded', running: true });
   });
 
-  it('skips replay when the result is truncated', async () => {
+  it('truncated with no shorter gap to ask for: history replace, nothing replayed', async () => {
     const h = harness();
-    h.orch.noteSeq('live-1', 3);
+    h.orch.noteSeq('live-1', 3); // anchor == watermark: the gap query would be the same query
     h.results['session.resume'] = [resume({ running: true })];
     h.results['session.events.since'] = [since([{ type: 'message.delta', session_id: 'live-1', seq: 900 }], { truncated: true })];
     await h.orch.reconnect('close');
+    expect(h.client.call).toHaveBeenCalledTimes(2); // resume + one events.since
+    expect(h.log).toContain('history:stored-1');
     expect(h.applied).toEqual([]);
+  });
+
+  describe('A1: the turn outgrew the replay ring (512 events)', () => {
+    // Prior turn ended at 9, the running turn started at 10 and was streamed live up to 700
+    // before the drop; the ring no longer reaches back to the anchor (9).
+    function longTurn() {
+      const h = harness();
+      h.orch.onLiveEvent({ type: 'message.complete', session_id: 'live-1', seq: 9 } as any);
+      h.orch.onLiveEvent({ type: 'message.start', session_id: 'live-1', seq: 10 } as any);
+      h.orch.onLiveEvent({ type: 'message.delta', session_id: 'live-1', seq: 700, payload: { text: 'pre-drop' } } as any);
+      h.applied.length = 0;
+      h.results['session.resume'] = [resume({ running: true })];
+      return h;
+    }
+
+    it('keeps the on-screen turn (no history replace) and replays only the gap after the watermark', async () => {
+      // RED: before the fix the truncated anchor replay returned early AFTER the history replace
+      // had removed the unpersisted row, so the turn restarted mid-sentence.
+      const h = longTurn();
+      h.results['session.events.since'] = [
+        since([{ type: 'message.delta', session_id: 'live-1', seq: 300 }], { truncated: true }),
+        since([
+          { type: 'message.delta', session_id: 'live-1', seq: 700, payload: { text: 'pre-drop' } },
+          { type: 'message.delta', session_id: 'live-1', seq: 701, payload: { text: ' gap' } },
+          { type: 'tool.start', session_id: 'live-1', seq: 702 },
+        ]),
+      ];
+      await h.orch.reconnect('close');
+      expect(h.client.call).toHaveBeenNthCalledWith(2, 'session.events.since', { session_id: 'live-1', last_seen: 9 });
+      expect(h.client.call).toHaveBeenNthCalledWith(3, 'session.events.since', { session_id: 'live-1', last_seen: 700 });
+      expect(h.log).not.toContain('history:stored-1');
+      expect(h.applied.map((e) => [e.type, e.seq, e.replayed])).toEqual([
+        ['message.delta', 701, true],
+        ['tool.start', 702, true],
+      ]);
+    });
+
+    it('gap events advance the watermark, so parked live duplicates are dropped', async () => {
+      const h = longTurn();
+      h.holdResume(); // park live frames: they arrive while the sequence is between resume and flush
+      h.results['session.events.since'] = [
+        since([], { truncated: true }),
+        since([{ type: 'message.delta', session_id: 'live-1', seq: 701, payload: { text: 'a' } }]),
+      ];
+      const run = h.orch.reconnect('close');
+      await flush();
+      h.orch.onLiveEvent({ type: 'message.delta', session_id: 'live-1', seq: 701, payload: { text: 'a' } } as any);
+      h.orch.onLiveEvent({ type: 'message.delta', session_id: 'live-1', seq: 702, payload: { text: 'b' } } as any);
+      expect(h.applied).toEqual([]);
+      h.open('resumeHeld');
+      await run;
+      expect(h.applied.map((e) => [e.seq, !!e.replayed])).toEqual([[701, true], [702, false]]);
+    });
+
+    it('the gap is truncated too: falls back to the history replace, nothing replayed', async () => {
+      const h = longTurn();
+      h.results['session.events.since'] = [since([], { truncated: true }), since([], { truncated: true })];
+      await h.orch.reconnect('close');
+      expect(h.log).toContain('history:stored-1');
+      expect(h.applied).toEqual([]);
+    });
+
+    it('the gap query fails: falls back to the history replace', async () => {
+      const h = longTurn();
+      h.results['session.events.since'] = [since([], { truncated: true }), new Error('transient')];
+      await h.orch.reconnect('close');
+      expect(h.log).toContain('history:stored-1');
+      expect(h.applied).toEqual([]);
+    });
+
+    it('a backend restart (epoch change) on the probe: history replace, watermarks reset, no replay', async () => {
+      const h = longTurn();
+      h.orch.onLiveEvent({ type: 'gateway.ready', payload: { replay_epoch: 'e1' } } as any);
+      h.results['session.events.since'] = [since([], { truncated: true, epoch: 'e2' })];
+      await h.orch.reconnect('close');
+      expect(h.client.call).toHaveBeenCalledTimes(2);
+      expect(h.log).toContain('history:stored-1');
+      expect(h.applied.filter((e) => e.type !== 'gateway.ready')).toEqual([]);
+    });
   });
 
   it('a replay failure (0.20.4 -32601) is swallowed and the run still succeeds', async () => {
@@ -180,6 +263,8 @@ describe('sequence order', () => {
     h.results['session.events.since'] = [new Error('unknown method')];
     await h.orch.reconnect('close');
     expect(phases).toEqual(['attempt', 'ready']);
+    expect(h.log).toContain('history:stored-1');
+    expect(h.client.call).toHaveBeenCalledTimes(2); // no second events.since after a -32601
   });
 
   it('seeds from inflight.streaming alone (0.20.4 shape)', async () => {
@@ -309,10 +394,11 @@ describe('parking live events during steps 2–4', () => {
     h.orch.noteSeq('live-1', 10);
     h.holdHistory();
     h.results['session.resume'] = [resume({ running: true })];
-    h.results['session.events.since'] = [since([
+    const batch = since([
       { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'a' } },
       { type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: 'b' } },
-    ])];
+    ]);
+    h.results['session.events.since'] = [batch, batch];
     const run = h.orch.reconnect('close');
     await flush();
     // live frames racing the reconnect: 12 duplicates the replay, 14 arrives before 13
