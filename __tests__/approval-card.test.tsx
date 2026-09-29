@@ -84,9 +84,18 @@ describe('V11: long description', () => {
     expect(screen.getByRole('button', { name: 'Show less of the description' })).toBeExpanded();
   });
 
+  // Review fix round 1: fail open — until the twin reports overflow (and if it never does on a device)
+  // the description is never clamped, so a security note can't be cut off with no way to read it.
+  test('before any text layout the description is unclamped and there is no toggle', async () => {
+    await render(<ApprovalCard card={card({ params: { session_id: 's', command: 'python x.py', description: long } })} actionable onRespond={jest.fn()} />);
+    expect(screen.getByText(long).props.numberOfLines).toBeUndefined();
+    expect(screen.queryByRole('button', { name: /of the description/ })).toBeNull();
+  });
+
   test('a description that fits in 4 lines has no toggle', async () => {
     await render(<ApprovalCard card={card()} actionable onRespond={jest.fn()} />);
     await fireEvent(measurer(), 'textLayout', layout(4));
     expect(screen.queryByRole('button', { name: /of the description/ })).toBeNull();
+    expect(screen.getByText('Recursive delete').props.numberOfLines).toBeUndefined();
   });
 });

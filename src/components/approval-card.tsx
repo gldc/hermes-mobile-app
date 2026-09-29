@@ -16,7 +16,9 @@ function Description({ text, colors }: { text: string; colors: ThemeColors }) {
   const style = { color: colors.textDim, fontSize: 13.5, lineHeight: 19 };
   return (
     <View style={{ gap: 4 }}>
-      <Text numberOfLines={expanded ? undefined : DESCRIPTION_LINES} style={style}>
+      {/* Fail open: clamp only once the twin has reported overflow, so a missing layout event can
+          never hide part of a security note with no way to read it. */}
+      <Text numberOfLines={overflows && !expanded ? DESCRIPTION_LINES : undefined} style={style}>
         {text}
       </Text>
       {/* Unclamped twin, laid out invisibly at the same width: its line count says whether the

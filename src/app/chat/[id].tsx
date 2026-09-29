@@ -771,6 +771,9 @@ export default function ChatScreen() {
   const rows = useMemo(() => mergeRequestRows(items, turn.requests), [items, turn.requests]);
   // Inverted list: index 0 renders at the visual bottom, so newest goes first.
   const reversedRows = useMemo(() => [...rows].reverse(), [rows]);
+  // Room kept under the floating header buttons: the list's visual-top padding, and the top of the
+  // band a focused card field is scrolled into.
+  const headerClearance = insets.top + 64;
 
   // Focusing a card's text field: wait for the keyboard inset (containerStyle paddingBottom) to
   // apply, then scroll the FIELD into the band between the header and the composer — a tall card's
@@ -791,7 +794,7 @@ export default function ChatScreen() {
             offset: scrollOffsetRef.current,
             fieldTop: fieldY,
             fieldBottom: fieldY + fieldH,
-            visibleTop: listY + insets.top + 64, // the list's header clearance (contentContainerStyle)
+            visibleTop: listY + headerClearance,
             visibleBottom: listY + listH, // the composer's top; the list shrinks with the keyboard
           });
           if (offset !== null) listRef.current?.scrollToOffset({ offset, animated: true });
@@ -902,7 +905,7 @@ export default function ChatScreen() {
           contentContainerStyle={{
             paddingHorizontal: 16,
             paddingTop: 12,
-            paddingBottom: insets.top + 64,
+            paddingBottom: headerClearance,
           }}
           renderItem={({ item: row }) => (
             // Entering-only fade (exiting animations orphan views — see
