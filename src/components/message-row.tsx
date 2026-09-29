@@ -99,7 +99,8 @@ function ToolCallCard({ tool }: { tool: ToolInfo }) {
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={`Tool ${tool.name}, ${tool.running ? 'running' : mark.label}${
-        tool.summary && !tool.running ? `, ${tool.summary}` : ''
+        // A summary's closing period would read ".," before the details hint (sim QA nit).
+        tool.summary && !tool.running ? `, ${hasDetail ? tool.summary.replace(/\.+$/, '') : tool.summary}` : ''
       }${hasDetail ? ', tap for details' : ''}`}
       onPress={
         hasDetail

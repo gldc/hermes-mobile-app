@@ -62,6 +62,15 @@ describe('tool row outcome', () => {
     expect(screen.getByLabelText(`Tool terminal, denied, ${summary}`)).toBeOnTheScreen();
   });
 
+  test("a summary's closing period does not run into the details hint", async () => {
+    const item = tool('denied');
+    const summary = 'You denied this command — it did not run.';
+    await render(<MessageRow item={{ ...item, tool: { ...item.tool, summary, detail: 'BLOCKED' } }} />);
+    expect(
+      screen.getByLabelText('Tool terminal, denied, You denied this command — it did not run, tap for details'),
+    ).toBeOnTheScreen();
+  });
+
   test('a running tool still says running', async () => {
     await render(<MessageRow item={{ ...tool(), tool: { id: 't1', name: 'terminal', running: true } }} />);
     expect(screen.getByLabelText('Tool terminal, running')).toBeOnTheScreen();
