@@ -7,6 +7,7 @@ import { useState, type ReactNode } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApprovalCard } from '@/components/approval-card';
+import { ClarifyCard } from '@/components/clarify-card';
 import { Composer } from '@/components/composer';
 import { MessageRow } from '@/components/message-row';
 import type { ComposerMode, RequestCardState } from '@/lib/turn-controller';
@@ -26,6 +27,20 @@ function devCard(over: Partial<RequestCardState> & Pick<RequestCardState, 'id' |
   return { status: 'pending', legacy: false, receivedAt: Date.now(), anchorKey: null, ...over };
 }
 const devApproval = { session_id: 's', request_id: 'r', command: 'rm -rf build/ dist/', description: 'Recursive delete of two directories' };
+const devClarifyResponder = {
+  clarifySingle: () => ({ ok: true as const }),
+  clarifyLock: async () => 'ok' as const,
+  clarifySubmitAll: async () => 'resolved' as const,
+  clarifySkipAll: () => ({ ok: true as const }),
+};
+const devBatch = {
+  session_id: 's',
+  questions: [
+    { qid: 'q0', question: 'Which environment should I deploy to?', choices: ['staging (Recommended)', 'production'], multi_select: false },
+    { qid: 'q1', question: 'Which checks should run first?', choices: ['unit', 'lint', 'e2e'], multi_select: true },
+    { qid: 'q2', question: 'Anything I should avoid?', choices: null, multi_select: false },
+  ],
+};
 
 function DevComposer({ mode, initial = '', image = false }: { mode: ComposerMode; initial?: string; image?: boolean }) {
   const [value, setValue] = useState(initial);
@@ -67,6 +82,20 @@ export default function DevCards() {
         <ApprovalCard card={devCard({ id: 'a2', kind: 'approval', method: 'approval', params: devApproval, legacy: true })} actionable={false} onRespond={() => {}} />
         <ApprovalCard card={devCard({ id: 'a3', kind: 'approval', method: 'approval', params: devApproval, status: 'answered', resolution: 'deny' })} actionable={false} onRespond={() => {}} />
         <ApprovalCard card={devCard({ id: 'a4', kind: 'approval', method: 'approval', params: devApproval, status: 'cancelled', cancelReason: 'interrupted' })} actionable={false} onRespond={() => {}} />
+      </Section>
+      <Section title="Clarify">
+        <ClarifyCard
+          card={devCard({ id: 'c1', kind: 'clarify', method: 'clarify', params: { session_id: 's', question: 'Tabs or spaces?', choices: ['Tabs (Recommended)', 'Spaces'] } })}
+          responder={devClarifyResponder}
+        />
+        <ClarifyCard
+          card={devCard({ id: 'c2', kind: 'clarify', method: 'clarify', params: devBatch, lockedAnswers: { q0: 'staging' } })}
+          responder={devClarifyResponder}
+        />
+        <ClarifyCard
+          card={devCard({ id: 'c3', kind: 'clarify', method: 'clarify', params: { session_id: 's', question: 'Why?', choices: null }, status: 'cancelled', cancelReason: 'timeout' })}
+          responder={devClarifyResponder}
+        />
       </Section>
       {/* dev-cards:end */}
     </ScrollView>
