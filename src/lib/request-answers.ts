@@ -35,6 +35,9 @@ export interface ResponderDeps {
   call: GatewayClient['call'];
   dispatch: (a: TurnAction) => void;
   liveSessionId: () => string | null;
+  /** The card as the turn store holds it NOW. A second press can still hold the card from an older
+   *  render (still `pending`), so every answer guards on this, never on the card it was handed (m1). */
+  current: (id: string) => RequestCardState | undefined;
 }
 
 export interface RequestResponder {
@@ -53,6 +56,9 @@ function summary(answer: ClarifyAnswer): string {
 }
 
 export function createRequestResponder(deps: ResponderDeps): RequestResponder {
+  /** Still answerable per the store: a card gone from it, answering, or settled is not (m1). */
+  const isPending = (card: RequestCardState) => deps.current(card.id)?.status === 'pending';
+
   /** Response frame via the latest delivery of this id; an unknown id means it's gone. */
   function respond(card: RequestCardState, result: Record<string, unknown>): boolean {
     if (deps.registry.respond(card.id, result)) return true;
@@ -84,7 +90,7 @@ export function createRequestResponder(deps: ResponderDeps): RequestResponder {
 
   return {
     async approve(card, choice) {
-      if (card.status !== 'pending') return { ok: true };
+      if (!isPending(card)) return { ok: true };
       if (!card.legacy) {
         if (!respond(card, { ...approvalResult(choice) })) return GONE;
         deps.dispatch({ type: 'request.answered', id: card.id, resolution: choice });
@@ -105,7 +111,7 @@ export function createRequestResponder(deps: ResponderDeps): RequestResponder {
     },
 
     clarifySingle(card, answer) {
-      if (card.status !== 'pending') return { ok: true };
+      if (!isPending(card)) return { ok: true };
       // ClarifyResult.answer is a string; the gateway parses a JSON array for multi-select.
       const wire = Array.isArray(answer) ? JSON.stringify(answer) : answer;
       if (!respond(card, { ...clarifySingleResult(wire) })) return GONE;
@@ -114,12 +120,12 @@ export function createRequestResponder(deps: ResponderDeps): RequestResponder {
     },
 
     async clarifyLock(card, qid, answer) {
-      if (card.status !== 'pending') return 'failed';
+      if (!isPending(card)) return 'failed';
       return lock(card, qid, answer);
     },
 
     async clarifySubmitAll(card, answers) {
-      if (card.status !== 'pending') return 'failed';
+      if (!isPending(card)) return 'failed';
       deps.dispatch({ type: 'request.answering', id: card.id });
       for (const { qid, answer } of answers) {
         const out = await lock(card, qid, answer);
@@ -135,14 +141,14 @@ export function createRequestResponder(deps: ResponderDeps): RequestResponder {
     },
 
     clarifySkipAll(card) {
-      if (card.status !== 'pending') return { ok: true };
+      if (!isPending(card)) return { ok: true };
       if (!respond(card, { ...clarifySkipAllResult() })) return GONE;
       deps.dispatch({ type: 'request.answered', id: card.id, skipped: true });
       return { ok: true };
     },
 
     value(card, value) {
-      if (card.status !== 'pending') return { ok: true };
+      if (!isPending(card)) return { ok: true };
       if (!respond(card, { ...valueResult(value) })) return GONE;
       deps.dispatch({ type: 'request.answered', id: card.id, skipped: value === '' });
       return { ok: true };

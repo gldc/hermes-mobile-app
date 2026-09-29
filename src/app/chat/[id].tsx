@@ -238,6 +238,7 @@ export default function ChatScreen() {
       call: callGw,
       dispatch: (a) => dispatchTurn(a),
       liveSessionId: () => liveIdRef.current,
+      current: (id) => readTurn().requests.find((r) => r.id === id),
     });
     return responderRef.current;
   }

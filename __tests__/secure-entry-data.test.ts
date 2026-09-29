@@ -39,13 +39,14 @@ test.each([
   sock.serverSend(serverRequest('srq-v1', method, params));
 
   const actions: TurnAction[] = [];
+  const fresh: Omit<RequestCardState, 'status'> = { id: 'srq-v1', kind: 'secure-entry', method, params, legacy: false, receivedAt: 0, anchorKey: null };
   const responder = createRequestResponder({
     registry,
     call: client.call.bind(client),
     dispatch: (a) => actions.push(a),
     liveSessionId: () => 'live-1',
+    current: (id) => (id === fresh.id ? { ...fresh, status: 'pending' } : undefined),
   });
-  const fresh: Omit<RequestCardState, 'status'> = { id: 'srq-v1', kind: 'secure-entry', method, params, legacy: false, receivedAt: 0, anchorKey: null };
   expect(responder.value({ ...fresh, status: 'pending' }, SECRET)).toEqual({ ok: true });
 
   expect(sock.sent).toContainEqual(expect.objectContaining({ id: 'srq-v1', result: { value: SECRET } }));
