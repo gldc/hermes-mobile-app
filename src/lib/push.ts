@@ -8,10 +8,12 @@ export const PUSH_TOKEN_ROUTE = '/api/plugins/mobile/push-token';
 export const MAILBOX_ROUTE = '/api/plugins/mobile/mailbox';
 export const SESSION_CLAIM_ROUTE = '/api/plugins/mobile/session-claim';
 
-export const SUPPRESSIBLE_PUSH_TYPES = ['session_end', 'approval_request'] as const;
+export const SUPPRESSIBLE_PUSH_TYPES = ['session_end', 'approval_request', 'clarify_request'] as const;
 
-/** Suppress the banner only for our session-stop pings while the app is the
- * active (foreground) app. Anything not clearly suppressible-while-active shows. */
+/** Suppress the banner for our session pings (stop, approval, clarify) while the app is the
+ * active (foreground) app — the open chat shows the card itself, but only when that session's
+ * chat is the one open; while a different chat or screen is foregrounded the banner is
+ * suppressed too (same as approval_request today). Anything else shows. */
 export function shouldSuppressForeground(data: unknown, appState: string): boolean {
   if (appState !== 'active') return false;
   if (typeof data !== 'object' || data === null) return false;

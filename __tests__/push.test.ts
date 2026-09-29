@@ -101,6 +101,11 @@ describe('shouldSuppressForeground', () => {
     expect(shouldSuppressForeground(undefined, 'active')).toBe(false);
     expect(shouldSuppressForeground({}, 'active')).toBe(false);
   });
+  it('suppresses the clarify push while the app is active, shows it otherwise', () => {
+    expect(shouldSuppressForeground({ type: 'clarify_request', session_id: 'S-1' }, 'active')).toBe(true);
+    expect(shouldSuppressForeground({ type: 'clarify_request', session_id: 'S-1' }, 'background')).toBe(false);
+    expect(shouldSuppressForeground({ type: 'clarify_request', session_id: 'S-1' }, 'inactive')).toBe(false);
+  });
 });
 
 describe('routeForPushData', () => {
@@ -121,6 +126,10 @@ describe('routeForPushData', () => {
   });
   it('trims a padded session_id', () => {
     expect(routeForPushData({ session_id: '  abc  ' })).toBe('/chat/abc');
+  });
+  it('a clarify push tap opens its session (resume then re-delivers the card, spec §7)', () => {
+    expect(routeForPushData({ type: 'clarify_request', session_id: 'S-9' })).toBe('/chat/S-9');
+    expect(routeForPushData({ type: 'clarify_request' })).toBe('/chat/new');
   });
 });
 
