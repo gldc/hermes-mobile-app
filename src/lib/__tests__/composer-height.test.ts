@@ -15,12 +15,10 @@ test('a typed value echoed back by the parent is not a JS set', () => {
   expect(valueSetFromJs('', '')).toBe(false); // typed all the way back to empty
 });
 
-test('the follow-up flip always changes minHeight (the re-measure trigger)', () => {
+test('the follow-up flip always changes minHeight, and never to a constraint', () => {
   expect(composerMinHeight(true)).not.toBe(composerMinHeight(false));
-});
-
-test('minHeight is never a constraint, so native auto-grow is untouched', () => {
   // Rewritten from C's "a non-empty value never sets minHeight": the non-empty restore needs the
-  // same flip as a clear, so a non-empty value may now carry minHeight 0 — still layout-neutral.
-  for (const flip of [true, false]) expect([0, undefined]).toContain(composerMinHeight(flip));
+  // same flip as a clear, so a non-empty value may carry minHeight 0 — still layout-neutral, so
+  // native auto-grow is untouched.
+  expect(new Set([composerMinHeight(true), composerMinHeight(false)])).toEqual(new Set([0, undefined]));
 });

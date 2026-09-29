@@ -97,8 +97,9 @@ test('a JS-driven non-empty set (failed steer restore) gets a follow-up commit t
   await view.rerender(m.el(multiLine)); // setInput((cur) => restoreSteerText(cur, text))
   // The value commit is measured against the old (empty) text; the follow-up must change a host
   // prop so Fabric re-measures the restored text.
-  const [valueCommit, followUp, ...rest] = m.commits();
-  expect(rest).toEqual([]);
+  const all = m.commits();
+  expect(all).toHaveLength(2); // the value commit + exactly one follow-up
+  const [valueCommit, followUp] = all;
   expect(followUp).not.toBe(valueCommit);
 });
 
@@ -111,8 +112,9 @@ test('restoring exactly the text the user had typed still counts as a JS set', a
   await view.rerender(m.el('')); // steer clears
   m.commits();
   await view.rerender(m.el('use tabs')); // steer failed: restore the identical text
-  const [valueCommit, followUp, ...rest] = m.commits();
-  expect(rest).toEqual([]);
+  const all = m.commits();
+  expect(all).toHaveLength(2); // the value commit + exactly one follow-up
+  const [valueCommit, followUp] = all;
   expect(followUp).not.toBe(valueCommit);
 });
 
@@ -124,8 +126,9 @@ test('a JS-driven clear still gets its follow-up commit (C behaviour kept)', asy
   await view.rerender(m.el(latest));
   m.commits();
   await view.rerender(m.el('')); // send / steer clears
-  const [valueCommit, followUp, ...rest] = m.commits();
-  expect(rest).toEqual([]);
+  const all = m.commits();
+  expect(all).toHaveLength(2); // the value commit + exactly one follow-up
+  const [valueCommit, followUp] = all;
   expect(followUp).not.toBe(valueCommit);
 });
 
