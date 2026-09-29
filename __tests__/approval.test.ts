@@ -9,6 +9,13 @@ describe('approvalView', () => {
     expect(approvalView({ command: 'rm -rf x', description: 'd', pattern_keys: ['recursive delete'] }))
       .toEqual({ command: 'rm -rf x', description: 'd', patternKey: 'recursive delete', toolName: '' });
   });
+  // Sim S1 §2 V8 / S2 §3: 0.21.5 sends description === pattern_key ("delete in root path"), which the
+  // card then showed twice (header key + description line).
+  it('drops a description that only repeats the pattern key', () => {
+    expect(approvalView({ command: 'rm -rf /', description: 'delete in root path', pattern_key: 'delete in root path' }))
+      .toEqual({ command: 'rm -rf /', description: '', patternKey: 'delete in root path', toolName: '' });
+    expect(approvalView({ command: 'rm -rf /', description: 'Delete in root path ', pattern_keys: ['delete in root path'] }).description).toBe('');
+  });
   it('tolerates garbage', () => {
     expect(approvalView(null)).toEqual({ command: '', description: '', patternKey: '', toolName: '' });
   });

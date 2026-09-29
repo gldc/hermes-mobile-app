@@ -1,10 +1,51 @@
 import * as Haptics from 'expo-haptics';
+import { useState } from 'react';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Icon } from '@/components/icon';
 import { approvalView } from '@/lib/approval';
 import { cancelLabel, type RequestCardState } from '@/lib/turn-controller';
 import { useTheme, type ThemeColors } from '@/theme';
 import type { ApprovalResult } from '@/vendor/hermes-gateway';
+
+/** Descriptions longer than this many lines (a Tirith scan runs ~10) clamp behind Show more (V11). */
+const DESCRIPTION_LINES = 4;
+
+function Description({ text, colors }: { text: string; colors: ThemeColors }) {
+  const [overflows, setOverflows] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+  const style = { color: colors.textDim, fontSize: 13.5, lineHeight: 19 };
+  return (
+    <View style={{ gap: 4 }}>
+      <Text numberOfLines={expanded ? undefined : DESCRIPTION_LINES} style={style}>
+        {text}
+      </Text>
+      {/* Unclamped twin, laid out invisibly at the same width: its line count says whether the
+          clamp hides anything (a clamped Text only reports the lines it shows). */}
+      <Text
+        testID="approval-description-measure"
+        accessibilityElementsHidden
+        importantForAccessibility="no-hide-descendants"
+        pointerEvents="none"
+        onTextLayout={(e) => setOverflows(e.nativeEvent.lines.length > DESCRIPTION_LINES)}
+        style={[style, { position: 'absolute', top: 0, left: 0, right: 0, opacity: 0 }]}
+      >
+        {text}
+      </Text>
+      {overflows ? (
+        <Pressable
+          accessibilityRole="button"
+          accessibilityLabel={expanded ? 'Show less of the description' : 'Show more of the description'}
+          accessibilityState={{ expanded }}
+          hitSlop={8}
+          onPress={() => setExpanded((x) => !x)}
+          style={{ alignSelf: 'flex-start' }}
+        >
+          <Text style={{ color: colors.text, fontSize: 13, fontWeight: '600' }}>{expanded ? 'Show less' : 'Show more'}</Text>
+        </Pressable>
+      ) : null}
+    </View>
+  );
+}
 
 function ResolvedRow({ card, colors }: { card: RequestCardState; colors: ThemeColors }) {
   const m =
@@ -70,9 +111,7 @@ export function ApprovalCard({
         ) : null}
       </View>
 
-      {view.description ? (
-        <Text style={{ color: colors.textDim, fontSize: 13.5, lineHeight: 19 }}>{view.description}</Text>
-      ) : null}
+      {view.description ? <Description text={view.description} colors={colors} /> : null}
 
       {view.command ? (
         <View style={{ backgroundColor: colors.surface, borderRadius: 10, borderCurve: 'continuous', padding: 10 }}>

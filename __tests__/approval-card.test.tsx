@@ -66,3 +66,27 @@ test('V7: a disabled Approve uses the legible disabled treatment, not a faded ac
   expect(approve.parent).not.toHaveStyle({ opacity: 0.45 }); // the row is no longer faded as a whole
   expect(screen.getByText('Approve')).toHaveStyle({ color: colors.textDim });
 });
+
+// Sim S2 §3 (V11): a Tirith security-scan description ran ~10 lines and made the card very tall.
+describe('V11: long description', () => {
+  const long = 'Tirith could not finish its analysis of this command. '.repeat(8).trim();
+  const layout = (lines: number) => ({ nativeEvent: { lines: Array.from({ length: lines }, () => ({})) } });
+  const measurer = () => screen.getByTestId('approval-description-measure', { includeHiddenElements: true });
+
+  test('clamps to 4 lines with a Show more / Show less toggle', async () => {
+    await render(<ApprovalCard card={card({ params: { session_id: 's', command: 'python x.py', description: long } })} actionable onRespond={jest.fn()} />);
+    await fireEvent(measurer(), 'textLayout', layout(10));
+    expect(screen.getByText(long).props.numberOfLines).toBe(4);
+    const more = screen.getByRole('button', { name: 'Show more of the description' });
+    expect(more).toBeCollapsed();
+    await fireEvent.press(more);
+    expect(screen.getByText(long).props.numberOfLines).toBeUndefined();
+    expect(screen.getByRole('button', { name: 'Show less of the description' })).toBeExpanded();
+  });
+
+  test('a description that fits in 4 lines has no toggle', async () => {
+    await render(<ApprovalCard card={card()} actionable onRespond={jest.fn()} />);
+    await fireEvent(measurer(), 'textLayout', layout(4));
+    expect(screen.queryByRole('button', { name: /of the description/ })).toBeNull();
+  });
+});

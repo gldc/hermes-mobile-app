@@ -21,10 +21,14 @@ export function approvalView(params: unknown): ApprovalView {
   const keys = Array.isArray(p.pattern_keys)
     ? p.pattern_keys.filter((k): k is string => typeof k === 'string' && k.length > 0)
     : [];
+  const patternKey = str(p.pattern_key) || keys[0] || '';
+  const description = str(p.description);
+  const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
   return {
     command: str(p.command),
-    description: str(p.description),
-    patternKey: str(p.pattern_key) || keys[0] || '',
+    // 0.21.5 often sends the pattern key as the description; the card already shows the key (V8).
+    description: patternKey && same(description, patternKey) ? '' : description,
+    patternKey,
     toolName: str(p.tool_name),
   };
 }
