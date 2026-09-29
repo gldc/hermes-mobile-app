@@ -1,6 +1,9 @@
 import { fireEvent, render, screen } from '@testing-library/react-native';
 import { ClarifyCard } from '../src/components/clarify-card';
 import type { RequestCardState } from '../src/lib/turn-controller';
+import { palettes } from '../src/theme';
+
+const colors = palettes.light; // jest's color scheme
 
 jest.mock('../src/components/icon', () => ({ Icon: () => null }));
 
@@ -165,4 +168,43 @@ test('batch: focusing question 2 hands over question 2\'s field, not the first o
   await render(<ClarifyCard card={card(batch)} responder={responder()} onInputFocus={onInputFocus} />);
   await fireEvent(screen.getByLabelText('Answer for question 2'), 'focus');
   expect(onInputFocus.mock.calls[0][0].props.accessibilityLabel).toBe('Answer for question 2');
+});
+
+// Sim S1 §2 visual defects.
+test('V1: the title shrinks instead of overflowing the card at accessibility sizes', async () => {
+  await render(<ClarifyCard card={card({ question: 'Why?', choices: null })} responder={responder()} />);
+  expect(screen.getByText('Hermes has a question')).toHaveStyle({ flexShrink: 1 });
+});
+
+test('V3: a settled batch shows only the summary — no fields, choices or buttons', async () => {
+  const c = card(batch, { status: 'cancelled', cancelReason: 'timeout', lockedAnswers: { q0: 'staging' } });
+  await render(<ClarifyCard card={c} responder={responder()} />);
+  expect(screen.getByText('Timed out')).toBeOnTheScreen();
+  expect(screen.getByText('staging')).toBeOnTheScreen(); // the locked answer stays
+  expect(screen.getByText('2. Anything else?')).toBeOnTheScreen(); // the unanswered question, as text
+  expect(screen.queryAllByRole('button')).toHaveLength(0);
+  expect(screen.queryAllByRole('radio')).toHaveLength(0);
+  expect(screen.queryByLabelText('Answer for question 2')).toBeNull();
+});
+
+test('V3: a settled single question draws no field', async () => {
+  const c = card({ question: 'Why?', choices: ['Speed'] }, { status: 'cancelled', cancelReason: 'timeout' });
+  await render(<ClarifyCard card={c} responder={responder()} />);
+  expect(screen.getByText('Why?')).toBeOnTheScreen();
+  expect(screen.queryByLabelText('Other answer')).toBeNull();
+  expect(screen.queryAllByRole('radio')).toHaveLength(0);
+});
+
+test('V4: one primary per batch card — per-question Confirm is secondary, Submit all is the accent', async () => {
+  await render(<ClarifyCard card={card(batch)} responder={responder()} />);
+  for (const confirm of screen.getAllByRole('button', { name: /^Confirm answer/ })) {
+    expect(confirm).not.toHaveStyle({ backgroundColor: colors.accent });
+  }
+  expect(screen.getByRole('button', { name: 'Submit all answers' })).toHaveStyle({ backgroundColor: colors.accent });
+});
+
+test('V5: a locked batch question keeps its number', async () => {
+  await render(<ClarifyCard card={card(batch, { lockedAnswers: { q0: 'staging' } })} responder={responder()} />);
+  expect(screen.getByText('1. Which env?')).toBeOnTheScreen();
+  expect(screen.getByText('2. Anything else?')).toBeOnTheScreen();
 });

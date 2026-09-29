@@ -84,21 +84,28 @@ function QuestionBlock(props: {
   onChange: (d: ClarifyDraft) => void;
   locked: boolean;
   lockedAnswer: unknown;
+  /** The card is no longer open: the question reads as a summary, with no field or buttons (V3). */
+  settled: boolean;
   disabled: boolean;
   onSkip: () => void;
   onConfirm: (answer: ClarifyAnswer) => void;
   onInputFocus?: (field: HostInstance) => void;
 }) {
-  const { q, index, batch, draft, onChange, locked, lockedAnswer, disabled, onSkip, onConfirm, onInputFocus } = props;
+  const { q, index, batch, draft, onChange, locked, lockedAnswer, settled, disabled, onSkip, onConfirm, onInputFocus } = props;
   const { colors } = useTheme();
   const inputRef = useRef<TextInput>(null);
   const n = index + 1;
   const forQ = batch ? ` for question ${n}` : '';
+  // Batch questions keep their number in every state (V5).
+  const heading = `${batch ? `${n}. ` : ''}${q.question}`;
+  if (settled && !locked) {
+    return <Text style={{ color: colors.textDim, fontSize: 14, lineHeight: 20 }}>{heading}</Text>;
+  }
   if (locked) {
     const label = lockedAnswerLabel(lockedAnswer);
     return (
       <View accessibilityLabel={`Question ${n} answered: ${label || 'skipped'}`} style={{ gap: 4 }}>
-        <Text style={{ color: colors.textDim, fontSize: 14, lineHeight: 20 }}>{q.question}</Text>
+        <Text style={{ color: colors.textDim, fontSize: 14, lineHeight: 20 }}>{heading}</Text>
         <View
           style={{
             flexDirection: 'row',
@@ -132,8 +139,7 @@ function QuestionBlock(props: {
           fontWeight: '600',
         }}
       >
-        {batch ? `${n}. ` : ''}
-        {q.question}
+        {heading}
       </Text>
       {q.choices?.map((c) => {
         const on = draft.selected.includes(c.label);
@@ -219,7 +225,6 @@ function QuestionBlock(props: {
             a11y={`Confirm answer to question ${n}`}
             onPress={() => answer !== null && onConfirm(answer)}
             disabled={disabled || answer === null}
-            primary
           />
         </View>
       ) : null}
@@ -297,7 +302,7 @@ export function ClarifyCard({
         }}
       >
         <Icon sf="questionmark.bubble" size={15} color={pending ? colors.accent : colors.textFaint} />
-        <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700' }}>{title}</Text>
+        <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>{title}</Text>
       </View>
       {view.questions.map((q, i) => (
         <QuestionBlock
@@ -309,6 +314,7 @@ export function ClarifyCard({
           onChange={(d) => setDraft(q.qid, d)}
           locked={view.batch && q.qid in locked}
           lockedAnswer={locked[q.qid]}
+          settled={!pending}
           disabled={!pending || busy}
           onSkip={() => void lock(q.qid, '')}
           onConfirm={(a) => void lock(q.qid, a)}
