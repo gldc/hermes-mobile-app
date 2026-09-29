@@ -83,7 +83,9 @@ src/theme.ts      single source of color truth (warm cream light / charcoal dark
 - Request cards live in the turn store, outside `items`, anchored to a transcript key. An OPEN
   card whose anchor a history reload removed draws at the tail until the reconnect sequence
   ends (ready / failed / `start()` rejected), then is pinned under its requester tool row
-  (`createCardPinner`, D1); settled ones are not redrawn.
+  (`createCardPinner`, D1). Cards already settled at the reload are not redrawn (the history
+  reflects them); a card that was open at the reload and settles during the window is still
+  pinned and drawn.
   Answer with the contract's own decline (clarify `{}` = cancel-all, sudo/secret
   `{value:""}`); malformed params render "can't be shown" + Skip — never throw in render.
 - Push: `clarify_request` joins `session_end`/`approval_request` as a foreground-suppressed

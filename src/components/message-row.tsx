@@ -98,7 +98,9 @@ function ToolCallCard({ tool }: { tool: ToolInfo }) {
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Tool ${tool.name}, ${tool.running ? 'running' : mark.label}${hasDetail ? ', tap for details' : ''}`}
+      accessibilityLabel={`Tool ${tool.name}, ${tool.running ? 'running' : mark.label}${
+        tool.summary && !tool.running ? `, ${tool.summary}` : ''
+      }${hasDetail ? ', tap for details' : ''}`}
       onPress={
         hasDetail
           ? () => {

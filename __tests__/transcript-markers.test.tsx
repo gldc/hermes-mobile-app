@@ -1,7 +1,9 @@
 import { render, screen } from '@testing-library/react-native';
 import { MessageRow } from '../src/components/message-row';
+import { useTheme, type ThemeColors } from '../src/theme';
 
-jest.mock('../src/components/icon', () => ({ Icon: () => null }));
+const mockIcon = jest.fn((_props: { sf: string; color?: string }) => null);
+jest.mock('../src/components/icon', () => ({ Icon: (props: { sf: string; color?: string }) => mockIcon(props) }));
 jest.mock('expo-haptics', () => ({ impactAsync: jest.fn(async () => {}), ImpactFeedbackStyle: { Light: 'light' } }));
 
 test('a steered user message shows a "Steered" caption and says so to VoiceOver', async () => {
@@ -27,15 +29,37 @@ describe('tool row outcome', () => {
     tool: { id: 't1', name: 'terminal', running: false, ...(outcome ? { outcome } : {}) },
   });
 
+  /** The theme the row renders with (the test scheme), read through the same hook. */
+  async function themeColors(): Promise<ThemeColors> {
+    let colors: ThemeColors | null = null;
+    function Probe() {
+      colors = useTheme().colors;
+      return null;
+    }
+    await render(<Probe />);
+    return colors!;
+  }
+
   test.each([
-    [undefined, 'Tool terminal, finished'],
-    ['ok', 'Tool terminal, finished'],
-    ['failed', 'Tool terminal, failed'],
-    ['denied', 'Tool terminal, denied'],
-    ['interrupted', 'Tool terminal, interrupted'],
-  ] as const)('outcome %s → "%s"', async (outcome, label) => {
+    [undefined, 'Tool terminal, finished', 'checkmark.circle.fill', 'success'],
+    ['ok', 'Tool terminal, finished', 'checkmark.circle.fill', 'success'],
+    ['failed', 'Tool terminal, failed', 'xmark.circle.fill', 'danger'],
+    ['denied', 'Tool terminal, denied', 'hand.raised.fill', 'textDim'],
+    ['interrupted', 'Tool terminal, interrupted', 'stop.circle.fill', 'textDim'],
+  ] as const)('outcome %s → "%s", %s in %s', async (outcome, label, sf, token) => {
+    const colors = await themeColors();
+    mockIcon.mockClear();
     await render(<MessageRow item={tool(outcome)} />);
     expect(screen.getByLabelText(label)).toBeOnTheScreen();
+    const marks = mockIcon.mock.calls.map(([p]) => p).filter((p) => p.sf !== 'hammer.fill');
+    expect(marks).toEqual([expect.objectContaining({ sf, color: colors[token] })]);
+  });
+
+  test('a finished row with a summary reads it out after the outcome', async () => {
+    const item = tool('denied');
+    const summary = 'No answer within 60s — the command did not run.';
+    await render(<MessageRow item={{ ...item, tool: { ...item.tool, summary } }} />);
+    expect(screen.getByLabelText(`Tool terminal, denied, ${summary}`)).toBeOnTheScreen();
   });
 
   test('a running tool still says running', async () => {

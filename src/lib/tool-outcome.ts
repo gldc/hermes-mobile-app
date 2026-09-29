@@ -37,6 +37,10 @@ function balancedPrefix(text: string): string | null {
   return null;
 }
 
+/** The only keys that can classify a result as anything but ok. A history reload classifies every
+ *  tool message, so a JSON text naming none of them is not parsed at all (review: reload jank). */
+const OUTCOME_KEYS = ['"status"', '"user_summary"', '"success"', '"ok"', '"error"', '"errors"', '"failure"', '"exception"', '"exit_code"'];
+
 /**
  * The result as an object: an object as is; a string that is a JSON object; or, when the agent
  * appended text after the JSON (a tool-loop warning `\n\n[…]`, or the subdirectory hints that only
@@ -45,7 +49,7 @@ function balancedPrefix(text: string): string | null {
 function resultObject(result: unknown): ResultObject | null {
   if (typeof result !== 'string') return asObject(result);
   const text = result.trim();
-  if (!text.startsWith('{')) return null;
+  if (!text.startsWith('{') || !OUTCOME_KEYS.some((k) => text.includes(k))) return null;
   const cut = text.indexOf('\n\n[');
   return parseObject(text) ?? parseObject(cut > 0 ? text.slice(0, cut) : null) ?? parseObject(balancedPrefix(text));
 }

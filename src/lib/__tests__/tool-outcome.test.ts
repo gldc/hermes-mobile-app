@@ -33,6 +33,8 @@ describe('toolOutcome', () => {
     ['error + a subdir hint appended (R4)', '{"error":"x"}\n\nSubdirectory context: web/AGENTS.md was loaded.', 'failed'],
     ['error + a bracketed notice appended (R4)', '{"error":"x"}\n\n[Tool loop hard stop: y]', 'failed'],
     ['brace inside a string before the appended text (R4)', '{"error":"a } b"}\n\ntrailing {', 'failed'],
+    ['escaped quote and brace inside a string before the appended text (R4)', '{"error":"a \\" } b"}\n\ntrail', 'failed'],
+    ['a large success object', JSON.stringify({ output_path: '/tmp/x', lines: 'y'.repeat(200_000) }), 'ok'],
     ['non-zero exit with error null is a normal completion', { error: null, exit_code: 2, output: 'x' }, 'ok'],
     ['empty error', { error: '' }, 'ok'],
     ['error "none"', { error: 'none' }, 'ok'],
@@ -62,6 +64,23 @@ describe('toolOutcome', () => {
   ];
   test.each(table)('%s', (_name, result, expected) => {
     expect(toolOutcome(result)).toBe(expected);
+  });
+});
+
+describe('toolOutcome pre-check (history reloads classify every tool message)', () => {
+  afterEach(() => jest.restoreAllMocks());
+
+  test('a JSON result with none of the keys that can classify non-ok is not parsed', () => {
+    const parse = jest.spyOn(JSON, 'parse');
+    expect(toolOutcome(JSON.stringify({ bytes_written: 5763, content: 'z'.repeat(100_000) }))).toBe('ok');
+    expect(toolOutcome('plain text')).toBe('ok');
+    expect(parse).not.toHaveBeenCalled();
+  });
+
+  test('a JSON result carrying one of those keys is still parsed and classified', () => {
+    const parse = jest.spyOn(JSON, 'parse');
+    expect(toolOutcome('{"exit_code": 130, "output": "[Command interrupted]"}')).toBe('interrupted');
+    expect(parse).toHaveBeenCalled();
   });
 });
 
