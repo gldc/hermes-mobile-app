@@ -6,6 +6,7 @@ import { Icon } from '@/components/icon';
 import { MarkdownView } from '@/components/markdown-view';
 import { bubbleImageSize } from '@/lib/image-attach';
 import type { SubagentBatch } from '@/lib/subagent-progress';
+import type { ToolOutcome } from '@/lib/tool-outcome';
 import type { TodoItem } from '@/lib/todo';
 import { useTheme } from '@/theme';
 
@@ -22,7 +23,17 @@ export interface ToolInfo {
   detail?: string;
   /** Inline diff for edit tools, when the gateway provides one. */
   diff?: string;
+  /** How the finished tool ended, read from its result (absent = ok). */
+  outcome?: ToolOutcome;
 }
+
+/** The finished-state glyph and what VoiceOver says for each outcome. */
+const OUTCOME_MARK = {
+  ok: { sf: 'checkmark.circle.fill', label: 'finished' },
+  failed: { sf: 'xmark.circle.fill', label: 'failed' },
+  denied: { sf: 'hand.raised.fill', label: 'denied' },
+  interrupted: { sf: 'stop.circle.fill', label: 'interrupted' },
+} as const;
 
 export interface ChatItem {
   key: string;
@@ -80,11 +91,14 @@ function ToolCallCard({ tool }: { tool: ToolInfo }) {
   const { colors } = useTheme();
   const [expanded, setExpanded] = useState(false);
   const hasDetail = Boolean(tool.detail || tool.diff);
+  const outcome = tool.outcome ?? 'ok';
+  const mark = OUTCOME_MARK[outcome];
+  const markColor = outcome === 'ok' ? colors.success : outcome === 'failed' ? colors.danger : colors.textDim;
 
   return (
     <Pressable
       accessibilityRole="button"
-      accessibilityLabel={`Tool ${tool.name}${tool.running ? ', running' : ', finished'}${hasDetail ? ', tap for details' : ''}`}
+      accessibilityLabel={`Tool ${tool.name}, ${tool.running ? 'running' : mark.label}${hasDetail ? ', tap for details' : ''}`}
       onPress={
         hasDetail
           ? () => {
@@ -121,7 +135,7 @@ function ToolCallCard({ tool }: { tool: ToolInfo }) {
                 {tool.durationS < 10 ? tool.durationS.toFixed(1) : Math.round(tool.durationS)}s
               </Text>
             ) : null}
-            <Icon sf="checkmark.circle.fill" size={13} color={colors.success} />
+            <Icon sf={mark.sf} size={13} color={markColor} />
             {hasDetail ? (
               <Icon sf={expanded ? 'chevron.up' : 'chevron.down'} size={11} color={colors.textFaint} />
             ) : null}

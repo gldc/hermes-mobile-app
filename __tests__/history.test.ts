@@ -83,6 +83,30 @@ describe('historyToItems', () => {
     expect(items[0].tool!.id).toBe(items[0].key);
   });
 
+  it('classifies a denied tool result: outcome denied, and its user_summary as the summary', () => {
+    const denied = JSON.stringify({
+      output: '',
+      exit_code: -1,
+      error: 'BLOCKED: User denied this command.',
+      status: 'blocked',
+      user_summary: 'You denied this command — it did not run.',
+    });
+    const items = historyToItems([msg({ role: 'tool', tool_name: 'terminal', tool_call_id: 'c1', content: denied })], keyer());
+    expect(items[0].tool).toMatchObject({ outcome: 'denied', summary: 'You denied this command — it did not run.' });
+  });
+
+  it('a normal tool result has no outcome (absent = ok)', () => {
+    const items = historyToItems([msg({ role: 'tool', tool_name: 'bash', tool_call_id: 'c1', content: '{"error":null,"exit_code":2}' })], keyer());
+    expect(items[0].tool!.outcome).toBeUndefined();
+  });
+
+  it('classifies the FULL result, not the 4000-char detail (a failure past the cut still counts)', () => {
+    const content = JSON.stringify({ output: 'x'.repeat(5000), error: 'boom' });
+    const items = historyToItems([msg({ role: 'tool', tool_name: 'bash', tool_call_id: 'c1', content })], keyer());
+    expect(items[0].tool!.detail).toHaveLength(4000);
+    expect(items[0].tool!.outcome).toBe('failed');
+  });
+
   it('truncates oversized tool results to 4000 chars', () => {
     const items = historyToItems(
       [msg({ role: 'tool', tool_name: 't', content: 'x'.repeat(5000) })],

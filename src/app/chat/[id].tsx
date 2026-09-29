@@ -51,6 +51,7 @@ import { shouldWarn } from '@/lib/request-router';
 import { provenanceForCard, type SkillsLookup } from '@/lib/secure-entry';
 import { emptyBatch, finalizeBatch, reduceSubagentEvent } from '@/lib/subagent-progress';
 import { parseTodoList } from '@/lib/todo';
+import { deniedSummary, toolOutcome } from '@/lib/tool-outcome';
 import { shouldReconnect } from '@/lib/reconnect';
 import {
   appendAfterStream,
@@ -354,11 +355,15 @@ export default function ChatScreen() {
             : result !== undefined && result !== null
               ? JSON.stringify(result, null, 2)
               : '';
+      const outcome = toolOutcome(result);
+      // A denial's own words ("You denied this command — it did not run.") when the gateway sent none.
+      const summary = payload?.summary ? String(payload.summary) : outcome === 'denied' ? deniedSummary(result) : undefined;
       const tool: ToolInfo = {
         ...prev[idx].tool!,
         running: false,
         ...(typeof payload?.duration_s === 'number' ? { durationS: payload.duration_s } : {}),
-        ...(payload?.summary ? { summary: String(payload.summary) } : {}),
+        ...(summary ? { summary } : {}),
+        ...(outcome !== 'ok' ? { outcome } : {}),
         ...(rawDetail ? { detail: rawDetail.slice(0, 4000) } : {}),
         ...(payload?.inline_diff ? { diff: String(payload.inline_diff).slice(0, 4000) } : {}),
       };

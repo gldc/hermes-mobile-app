@@ -4,6 +4,7 @@ import type { SessionMessage } from '@/api/types';
 import type { ChatItem, ToolInfo } from '@/components/message-row';
 import { messageText, reasoningText } from './message-text';
 import { toolContextFromArgs } from './tool-context';
+import { deniedSummary, toolOutcome } from './tool-outcome';
 
 /** Same cap the live tool.complete path applies to result text. */
 const MAX_TOOL_DETAIL = 4000;
@@ -42,17 +43,23 @@ export function historyToItems(messages: SessionMessage[], nextKey: () => string
       });
     } else if (m.role === 'tool') {
       const name = m.tool_name?.trim();
-      const detail = messageText(m).trim().slice(0, MAX_TOOL_DETAIL);
+      const result = messageText(m);
+      const detail = result.trim().slice(0, MAX_TOOL_DETAIL);
       if (!name && !detail) continue; // drop empty rows
       const key = nextKey();
       const inv = m.tool_call_id ? invocations.get(m.tool_call_id) : undefined;
       const context = inv ? toolContextFromArgs(inv.name ?? name ?? 'tool', inv.args) : undefined;
+      // Classified from the FULL stored text, like the live row (the detail is cut at 4000 chars).
+      const outcome = toolOutcome(result);
+      const summary = outcome === 'denied' ? deniedSummary(result) : undefined;
       const tool: ToolInfo = {
         id: m.tool_call_id || key,
         name: name || inv?.name || 'tool',
         running: false,
         ...(context ? { context } : {}),
         ...(detail ? { detail } : {}),
+        ...(outcome !== 'ok' ? { outcome } : {}),
+        ...(summary ? { summary } : {}),
       };
       items.push({ key, role: 'tool', text: tool.name, tool });
     }
