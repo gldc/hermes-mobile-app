@@ -198,7 +198,8 @@ export function SecureEntryCard({
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         <Icon sf="lock.fill" size={14} color={open ? colors.accent : colors.textFaint} />
-        <Text numberOfLines={2} style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>
+        {/* Never clamped: the env var name is the key fact on a secret card (sim S1 V2). */}
+        <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>
           {copy.title}
         </Text>
         <View style={{ flex: 1 }} />

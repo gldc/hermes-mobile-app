@@ -186,3 +186,10 @@ test('focusing the field hands the screen that field to scroll into view (Review
   expect(onInputFocus.mock.calls[0][0].props.accessibilityLabel).toBe('Value for OPENWEATHER_API_KEY');
   expect(typeof onInputFocus.mock.calls[0][0].measureInWindow).toBe('function');
 });
+
+// Sim S1 §2 V2: numberOfLines 2 cut the env var name ("Value for OPENWEATHER_A…") at accessibility
+// sizes; the name is the key fact on a secret card, so the title is never clamped.
+test('V2: the secret title is never truncated', async () => {
+  await render(<SecureEntryCard card={secret()} provenance="hub" onSend={jest.fn()} onSkip={jest.fn()} now={() => T0} />);
+  expect(screen.getByText('Value for OPENWEATHER_API_KEY').props.numberOfLines).toBeUndefined();
+});

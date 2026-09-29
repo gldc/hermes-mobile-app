@@ -18,6 +18,9 @@ export function CardButton({
   flex?: boolean;
 }) {
   const { colors } = useTheme();
+  // A disabled primary is not a faded accent — white on 45% accent is illegible in light (sim S1 V7).
+  const accent = primary && !disabled;
+  const disabledPrimary = primary && disabled;
   return (
     <Pressable
       accessibilityRole="button"
@@ -29,19 +32,26 @@ export function CardButton({
         flex: flex ? 1 : undefined,
         minHeight: 44,
         paddingHorizontal: 14,
+        paddingVertical: 8, // large text never touches the edges (V6)
         borderRadius: 12,
         borderCurve: 'continuous',
         alignItems: 'center',
         justifyContent: 'center',
-        backgroundColor: primary ? (pressed ? colors.accentPressed : colors.accent) : pressed ? colors.surface : 'transparent',
-        borderWidth: primary ? 0 : 1,
+        backgroundColor: accent
+          ? pressed
+            ? colors.accentPressed
+            : colors.accent
+          : disabledPrimary || pressed
+            ? colors.surface
+            : 'transparent',
+        borderWidth: accent ? 0 : 1,
         borderColor: colors.border,
-        opacity: disabled ? 0.45 : 1,
+        opacity: disabled && !primary ? 0.45 : 1,
       })}
     >
       <Text
         style={{
-          color: primary ? colors.onAccent : colors.text,
+          color: accent ? colors.onAccent : disabledPrimary ? colors.textDim : colors.text,
           fontSize: 15,
           fontWeight: primary ? '700' : '600',
         }}

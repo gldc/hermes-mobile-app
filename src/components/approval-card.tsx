@@ -89,7 +89,7 @@ export function ApprovalCard({
         </View>
       ) : card.status === 'pending' ? (
         <>
-          <View style={{ flexDirection: 'row', gap: 10, opacity: canAct ? 1 : 0.45 }}>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Deny, block this command"
@@ -97,13 +97,14 @@ export function ApprovalCard({
               disabled={!canAct}
               onPress={() => respond('deny')}
               style={({ pressed }) => ({
-                flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center',
+                flex: 1, minHeight: 44, paddingVertical: 8, alignItems: 'center', justifyContent: 'center',
                 borderRadius: 12, borderCurve: 'continuous', borderWidth: 1, borderColor: colors.danger,
-                opacity: pressed ? 0.6 : 1,
+                opacity: !canAct ? 0.45 : pressed ? 0.6 : 1,
               })}
             >
               <Text style={{ color: colors.danger, fontSize: 15.5, fontWeight: '600' }}>Deny</Text>
             </Pressable>
+            {/* Disabled (waiting its FIFO turn): surface + secondary text, not a faded accent (sim S1 V7). */}
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Approve, run this command once"
@@ -111,12 +112,13 @@ export function ApprovalCard({
               disabled={!canAct}
               onPress={() => respond('once')}
               style={({ pressed }) => ({
-                flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center',
+                flex: 1, minHeight: 44, paddingVertical: 8, alignItems: 'center', justifyContent: 'center',
                 borderRadius: 12, borderCurve: 'continuous',
-                backgroundColor: pressed ? colors.accentPressed : colors.accent,
+                borderWidth: canAct ? 0 : 1, borderColor: colors.border,
+                backgroundColor: !canAct ? colors.surface : pressed ? colors.accentPressed : colors.accent,
               })}
             >
-              <Text style={{ color: colors.onAccent, fontSize: 15.5, fontWeight: '700' }}>Approve</Text>
+              <Text style={{ color: canAct ? colors.onAccent : colors.textDim, fontSize: 15.5, fontWeight: '700' }}>Approve</Text>
             </Pressable>
           </View>
           {!canAct && card.legacy ? (
