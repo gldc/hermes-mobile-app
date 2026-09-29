@@ -28,31 +28,9 @@ describe('exportAsText', () => {
     expect(exportAsText(tools)).toBe('[tool] bash — ls -la\n\n[tool] read_file');
   });
 
-  it('renders status lines and approval lines with resolved status', () => {
-    const mixed: ChatItem[] = [
-      { key: 'a', role: 'status', text: 'Compacting context…' },
-      {
-        key: 'b',
-        role: 'approval',
-        text: 'rm -rf build',
-        approval: {
-          request: { command: 'rm -rf build', description: 'recursive delete', patternKey: 'recursive delete', patternKeys: ['recursive delete'] },
-          status: 'approved',
-        },
-      },
-      {
-        key: 'c',
-        role: 'approval',
-        text: 'rm -rf dist',
-        approval: {
-          request: { command: 'rm -rf dist', description: 'recursive delete', patternKey: 'recursive delete', patternKeys: ['recursive delete'] },
-          status: 'pending',
-        },
-      },
-    ];
-    expect(exportAsText(mixed)).toBe(
-      '[status] Compacting context…\n\n[approval (approved)] rm -rf build\n\n[approval] rm -rf dist',
-    );
+  it('renders status lines', () => {
+    const mixed: ChatItem[] = [{ key: 'a', role: 'status', text: 'Compacting context…' }];
+    expect(exportAsText(mixed)).toBe('[status] Compacting context…');
   });
 
   it('drops empty user/assistant/status rows and returns "" for no items', () => {
@@ -92,25 +70,6 @@ describe('exportAsJsonl', () => {
     const parsed = JSON.parse(exportAsJsonl(withImage));
     expect(parsed).toEqual({ role: 'user', text: 'look at this' });
     expect(exportAsJsonl(withImage)).not.toContain('i9');
-  });
-
-  it('serializes approval command, description and status', () => {
-    const approval: ChatItem[] = [
-      {
-        key: 'a',
-        role: 'approval',
-        text: 'rm -rf build',
-        approval: {
-          request: { command: 'rm -rf build', description: 'recursive delete', patternKey: 'recursive delete', patternKeys: ['recursive delete'] },
-          status: 'denied',
-        },
-      },
-    ];
-    expect(JSON.parse(exportAsJsonl(approval))).toEqual({
-      role: 'approval',
-      text: 'rm -rf build',
-      approval: { command: 'rm -rf build', description: 'recursive delete', status: 'denied' },
-    });
   });
 
   it('handles multi-line text safely (stays one line per item)', () => {

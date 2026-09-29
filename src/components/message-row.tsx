@@ -2,7 +2,6 @@ import { memo, useState } from 'react';
 import { ActivityIndicator, LayoutAnimation, Pressable, Share, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
-import type { ApprovalInfo } from '@/components/approval-card';
 import { Icon } from '@/components/icon';
 import { MarkdownView } from '@/components/markdown-view';
 import { bubbleImageSize } from '@/lib/image-attach';
@@ -27,7 +26,7 @@ export interface ToolInfo {
 
 export interface ChatItem {
   key: string;
-  role: 'user' | 'assistant' | 'tool' | 'status' | 'approval' | 'subagent' | 'todo';
+  role: 'user' | 'assistant' | 'tool' | 'status' | 'subagent' | 'todo';
   text: string;
   /** Assistant messages render plain text while streaming, markdown once complete. */
   complete?: boolean;
@@ -35,9 +34,6 @@ export interface ChatItem {
    * collapsible disclosure above the prose. History-only (no live event yet). */
   reasoning?: string;
   tool?: ToolInfo;
-  /** Gateway approval request, attached like ToolInfo. Rendered by the chat
-   * screen via ApprovalCard (it owns the respond callback), not MessageRow. */
-  approval?: ApprovalInfo;
   /** Live subagent batch — rendered by the chat screen via SubagentMonitorCard. */
   subagent?: SubagentBatch;
   /** Current todo list — rendered by the chat screen via TodoCard. */
@@ -246,7 +242,7 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
   }
 
   // Rendered by the chat screen (they own their components); render nothing here.
-  if (item.role === 'approval' || item.role === 'subagent' || item.role === 'todo') return null;
+  if (item.role === 'subagent' || item.role === 'todo') return null;
 
   // status
   if (item.marker === 'stopped') {

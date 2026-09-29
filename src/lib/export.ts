@@ -17,11 +17,6 @@ function textLine(item: ChatItem): string | null {
     }
     case 'status':
       return item.text.trim() ? `[status] ${item.text}` : null;
-    case 'approval': {
-      const status = item.approval?.status;
-      const suffix = status && status !== 'pending' && status !== 'answering' ? ` (${status})` : '';
-      return `[approval${suffix}] ${item.text}`;
-    }
     default:
       return null;
   }
@@ -50,13 +45,6 @@ function toRecord(item: ChatItem): Record<string, unknown> {
       ...(detail !== undefined ? { detail } : {}),
       ...(diff !== undefined ? { diff } : {}),
       ...(durationS !== undefined ? { duration_s: durationS } : {}),
-    };
-  }
-  if (item.approval) {
-    record.approval = {
-      command: item.approval.request.command,
-      description: item.approval.request.description,
-      status: item.approval.status,
     };
   }
   return record;

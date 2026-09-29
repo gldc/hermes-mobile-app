@@ -1,33 +1,20 @@
 import * as Haptics from 'expo-haptics';
 import { ActivityIndicator, Pressable, Text, View } from 'react-native';
 import { Icon } from '@/components/icon';
-import type { ApprovalChoice, ApprovalRequest } from '@/lib/approval';
+import { approvalView } from '@/lib/approval';
+import { cancelLabel, type RequestCardState } from '@/lib/turn-controller';
 import { useTheme, type ThemeColors } from '@/theme';
+import type { ApprovalResult } from '@/vendor/hermes-gateway';
 
-export type ApprovalStatus =
-  | 'pending' // waiting for the user
-  | 'answering' // approval.respond in flight
-  | 'approved' // resolved: allowed
-  | 'denied' // resolved: blocked
-  | 'cancelled'; // superseded — turn ended/interrupted/stale, gateway force-denied
-
-export interface ApprovalInfo {
-  request: ApprovalRequest;
-  status: ApprovalStatus;
-}
-
-function ResolvedRow({ status, colors }: { status: ApprovalStatus; colors: ThemeColors }) {
-  const map = {
-    approved: { icon: 'checkmark.circle.fill', tint: colors.success, label: 'Approved' },
-    denied: { icon: 'xmark.circle.fill', tint: colors.danger, label: 'Denied' },
-    cancelled: { icon: 'slash.circle', tint: colors.textFaint, label: 'No longer pending' },
-  } as const;
-  const m = map[status as 'approved' | 'denied' | 'cancelled'];
+function ResolvedRow({ card, colors }: { card: RequestCardState; colors: ThemeColors }) {
+  const m =
+    card.status === 'answered'
+      ? card.resolution === 'deny'
+        ? { icon: 'xmark.circle.fill', tint: colors.danger, label: 'Denied' }
+        : { icon: 'checkmark.circle.fill', tint: colors.success, label: 'Approved' }
+      : { icon: 'slash.circle', tint: colors.textFaint, label: card.cancelReason ? cancelLabel(card.cancelReason) : 'Closed' };
   return (
-    <View
-      accessibilityLabel={`Approval ${m.label}`}
-      style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 2 }}
-    >
+    <View accessibilityLabel={`Approval ${m.label}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 2 }}>
       <Icon sf={m.icon} size={14} color={m.tint} />
       <Text style={{ color: m.tint, fontSize: 13.5, fontWeight: '600' }}>{m.label}</Text>
     </View>
@@ -35,33 +22,31 @@ function ResolvedRow({ status, colors }: { status: ApprovalStatus; colors: Theme
 }
 
 /**
- * High-salience card asking the user to approve or deny a dangerous command
- * (gateway `approval.request`). Approvals are FIFO per session, so only the
- * oldest pending card is actionable (`active`); younger ones wait their turn.
+ * Dangerous-command approval. 0.21.5 (`approval` server request): every pending card is actionable.
+ * Legacy 0.20.4 (`approval.request` event): FIFO — only the oldest is `actionable`.
  */
 export function ApprovalCard({
-  approval,
-  active,
+  card,
+  actionable,
   onRespond,
 }: {
-  approval: ApprovalInfo;
-  /** True when this is the oldest unresolved approval in the session. */
-  active: boolean;
-  onRespond: (choice: ApprovalChoice) => void;
+  card: RequestCardState;
+  actionable: boolean;
+  onRespond: (choice: ApprovalResult['choice']) => void;
 }) {
   const { colors } = useTheme();
-  const { request, status } = approval;
-  const pending = status === 'pending' || status === 'answering';
-  const actionable = status === 'pending' && active;
+  const view = approvalView(card.params);
+  const pending = card.status === 'pending' || card.status === 'answering';
+  const canAct = card.status === 'pending' && actionable;
 
-  function respond(choice: ApprovalChoice) {
-    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  function respond(choice: ApprovalResult['choice']) {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     onRespond(choice);
   }
 
   return (
     <View
-      accessibilityLabel={`Approval required: ${request.description || request.command}`}
+      accessibilityLabel={`Approval required: ${view.description || view.command}`}
       style={{
         backgroundColor: colors.raised,
         borderRadius: 16,
@@ -76,59 +61,44 @@ export function ApprovalCard({
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         <Icon sf="exclamationmark.shield.fill" size={15} color={pending ? colors.accent : colors.textFaint} />
-        <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>
-          Approval required
-        </Text>
+        <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>Approval required</Text>
         <View style={{ flex: 1 }} />
-        {request.patternKey ? (
+        {view.patternKey || view.toolName ? (
           <Text numberOfLines={1} style={{ color: colors.textFaint, fontSize: 12, flexShrink: 1 }}>
-            {request.patternKey}
+            {view.patternKey || view.toolName}
           </Text>
         ) : null}
       </View>
 
-      {request.description ? (
-        <Text style={{ color: colors.textDim, fontSize: 13.5, lineHeight: 19 }}>{request.description}</Text>
+      {view.description ? (
+        <Text style={{ color: colors.textDim, fontSize: 13.5, lineHeight: 19 }}>{view.description}</Text>
       ) : null}
 
-      {request.command ? (
-        <View
-          style={{
-            backgroundColor: colors.surface,
-            borderRadius: 10,
-            borderCurve: 'continuous',
-            padding: 10,
-          }}
-        >
+      {view.command ? (
+        <View style={{ backgroundColor: colors.surface, borderRadius: 10, borderCurve: 'continuous', padding: 10 }}>
           <Text selectable style={{ color: colors.text, fontFamily: 'Menlo', fontSize: 12.5, lineHeight: 18 }}>
-            {request.command}
+            {view.command}
           </Text>
         </View>
       ) : null}
 
-      {status === 'answering' ? (
+      {card.status === 'answering' ? (
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8, minHeight: 44 }}>
           <ActivityIndicator size="small" color={colors.textDim} />
           <Text style={{ color: colors.textDim, fontSize: 13.5 }}>Sending…</Text>
         </View>
-      ) : pending ? (
+      ) : card.status === 'pending' ? (
         <>
-          <View style={{ flexDirection: 'row', gap: 10, opacity: actionable ? 1 : 0.45 }}>
+          <View style={{ flexDirection: 'row', gap: 10, opacity: canAct ? 1 : 0.45 }}>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Deny, block this command"
-              accessibilityState={{ disabled: !actionable }}
-              disabled={!actionable}
+              accessibilityState={{ disabled: !canAct }}
+              disabled={!canAct}
               onPress={() => respond('deny')}
               style={({ pressed }) => ({
-                flex: 1,
-                minHeight: 44,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 12,
-                borderCurve: 'continuous',
-                borderWidth: 1,
-                borderColor: colors.danger,
+                flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center',
+                borderRadius: 12, borderCurve: 'continuous', borderWidth: 1, borderColor: colors.danger,
                 opacity: pressed ? 0.6 : 1,
               })}
             >
@@ -137,30 +107,24 @@ export function ApprovalCard({
             <Pressable
               accessibilityRole="button"
               accessibilityLabel="Approve, run this command once"
-              accessibilityState={{ disabled: !actionable }}
-              disabled={!actionable}
+              accessibilityState={{ disabled: !canAct }}
+              disabled={!canAct}
               onPress={() => respond('once')}
               style={({ pressed }) => ({
-                flex: 1,
-                minHeight: 44,
-                alignItems: 'center',
-                justifyContent: 'center',
-                borderRadius: 12,
-                borderCurve: 'continuous',
+                flex: 1, minHeight: 44, alignItems: 'center', justifyContent: 'center',
+                borderRadius: 12, borderCurve: 'continuous',
                 backgroundColor: pressed ? colors.accentPressed : colors.accent,
               })}
             >
               <Text style={{ color: colors.onAccent, fontSize: 15.5, fontWeight: '700' }}>Approve</Text>
             </Pressable>
           </View>
-          {!actionable ? (
-            <Text style={{ color: colors.textFaint, fontSize: 12.5 }}>
-              Waiting for the earlier approval above…
-            </Text>
+          {!canAct && card.legacy ? (
+            <Text style={{ color: colors.textFaint, fontSize: 12.5 }}>Waiting for the earlier approval above…</Text>
           ) : null}
         </>
       ) : (
-        <ResolvedRow status={status} colors={colors} />
+        <ResolvedRow card={card} colors={colors} />
       )}
     </View>
   );

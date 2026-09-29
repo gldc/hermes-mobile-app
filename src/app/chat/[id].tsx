@@ -24,7 +24,7 @@ import {
 import { withProfile } from '@/api/profiles';
 import type { GatewayEvent, GatewayEventMap, RpcMethods } from '@/vendor/hermes-gateway';
 import { setAttachHandler } from '@/attach-bus';
-import { ApprovalCard, type ApprovalInfo } from '@/components/approval-card';
+import { ApprovalCard } from '@/components/approval-card';
 import { Icon } from '@/components/icon';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
@@ -35,7 +35,7 @@ import { mintGatewayUrl, withAuthRetry } from '@/connection';
 import { getProfileState, hydrateProfileStore } from '@/profile-store';
 import { openSidebar } from '@/sidebar-store';
 import { showActionSheet } from '@/lib/action-sheet';
-import { parseApprovalRequest, resolvedCount, type ApprovalChoice } from '@/lib/approval';
+import { resolvedCount, type ApprovalChoice } from '@/lib/approval';
 import { exportAsJsonl, exportAsText } from '@/lib/export';
 import { greetingForHour } from '@/lib/greeting';
 import { historyToItems } from '@/lib/history';
@@ -52,6 +52,7 @@ import {
   completeStatus,
   composerMode,
   initialTurnModel,
+  isApprovalActionable,
   mergeRequestRows,
   type RequestCardState,
   type TranscriptRow,
@@ -764,34 +765,12 @@ export default function ChatScreen() {
   // Inverted list: index 0 renders at the visual bottom, so newest goes first.
   const reversedRows = useMemo(() => [...rows].reverse(), [rows]);
 
-  // Legacy (0.20.4) approvals are FIFO: only the oldest open legacy card is actionable.
-  // 0.21.5 approvals resolve per request id, so every pending one is actionable.
-  const activeLegacyId = turn.requests.find(
-    (r) => r.legacy && (r.status === 'pending' || r.status === 'answering'),
-  )?.id;
-
-  function approvalInfo(card: RequestCardState): ApprovalInfo | null {
-    const request = parseApprovalRequest(card.params);
-    if (!request) return null;
-    const status =
-      card.status === 'pending' || card.status === 'answering'
-        ? card.status
-        : card.status === 'answered'
-          ? card.resolution === 'deny'
-            ? ('denied' as const)
-            : ('approved' as const)
-          : ('cancelled' as const);
-    return { request, status };
-  }
-
   function renderRequest(card: RequestCardState) {
     if (card.kind === 'approval') {
-      const approval = approvalInfo(card);
-      if (!approval) return null;
       return (
         <ApprovalCard
-          approval={approval}
-          active={card.legacy ? card.id === activeLegacyId : card.status === 'pending'}
+          card={card}
+          actionable={isApprovalActionable(turn.requests, card.id)}
           onRespond={(choice) => void respondApproval(card, choice)}
         />
       );

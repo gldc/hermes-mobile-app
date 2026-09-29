@@ -6,9 +6,10 @@ import { Redirect } from 'expo-router';
 import { useState, type ReactNode } from 'react';
 import { ScrollView, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { ApprovalCard } from '@/components/approval-card';
 import { Composer } from '@/components/composer';
 import { MessageRow } from '@/components/message-row';
-import type { ComposerMode } from '@/lib/turn-controller';
+import type { ComposerMode, RequestCardState } from '@/lib/turn-controller';
 import { useTheme } from '@/theme';
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -20,6 +21,11 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
     </View>
   );
 }
+
+function devCard(over: Partial<RequestCardState> & Pick<RequestCardState, 'id' | 'kind' | 'method' | 'params'>): RequestCardState {
+  return { status: 'pending', legacy: false, receivedAt: Date.now(), anchorKey: null, ...over };
+}
+const devApproval = { session_id: 's', request_id: 'r', command: 'rm -rf build/ dist/', description: 'Recursive delete of two directories' };
 
 function DevComposer({ mode, initial = '', image = false }: { mode: ComposerMode; initial?: string; image?: boolean }) {
   const [value, setValue] = useState(initial);
@@ -55,6 +61,12 @@ export default function DevCards() {
         <DevComposer mode={{ kind: 'stop+steer', stopEnabled: true, steerEnabled: true }} initial="Actually, use tabs." />
         <DevComposer mode={{ kind: 'stop+steer', stopEnabled: false, steerEnabled: false }} initial="Actually, use tabs." />
         <DevComposer mode={{ kind: 'stop+steer', stopEnabled: true, steerEnabled: false }} image />
+      </Section>
+      <Section title="Approval">
+        <ApprovalCard card={devCard({ id: 'a1', kind: 'approval', method: 'approval', params: devApproval })} actionable onRespond={() => {}} />
+        <ApprovalCard card={devCard({ id: 'a2', kind: 'approval', method: 'approval', params: devApproval, legacy: true })} actionable={false} onRespond={() => {}} />
+        <ApprovalCard card={devCard({ id: 'a3', kind: 'approval', method: 'approval', params: devApproval, status: 'answered', resolution: 'deny' })} actionable={false} onRespond={() => {}} />
+        <ApprovalCard card={devCard({ id: 'a4', kind: 'approval', method: 'approval', params: devApproval, status: 'cancelled', cancelReason: 'interrupted' })} actionable={false} onRespond={() => {}} />
       </Section>
       {/* dev-cards:end */}
     </ScrollView>

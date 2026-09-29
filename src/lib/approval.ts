@@ -1,46 +1,34 @@
 // src/lib/approval.ts
 //
 // Pure parsing for the gateway approval flow (docs/contracts/approvals.md).
-// The `approval.request` event payload is exactly the engine's approval_data
-// dict: { command, pattern_key, pattern_keys, description }. Approvals are
-// session-keyed (no request_id): one FIFO queue per session, and a response
-// resolves the OLDEST pending approval.
-
-/** Verified `approval.request` payload (terminal + execute_code guards share the shape). */
-export interface ApprovalRequest {
-  /** Full command (or synthesized command for execute_code). */
-  command: string;
-  /** Combined human-readable description of why this needs approval. */
-  description: string;
-  /** Primary matched pattern key, e.g. "recursive delete". */
-  patternKey: string;
-  /** Every matched pattern key. */
-  patternKeys: string[];
-}
+// Two wire shapes share a display: 0.21.5's per-request `approval` server
+// request (session_id, request_id, tool_name, ...) and legacy 0.20.4's
+// session-keyed `approval.request` event (no request_id — one FIFO queue per
+// session, and a response resolves the OLDEST pending approval).
 
 /** Canonical `approval.respond` choices (tools/approval.py). */
 export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny';
 
-/**
- * Parse an `approval.request` event payload. Lenient about missing fields,
- * but returns null when there is nothing meaningful to show (no command and
- * no description) — the gateway will deny on timeout regardless.
- */
-export function parseApprovalRequest(payload: unknown): ApprovalRequest | null {
-  if (typeof payload !== 'object' || payload === null) return null;
-  const p = payload as Record<string, unknown>;
-  const command = typeof p.command === 'string' ? p.command : '';
-  const description = typeof p.description === 'string' ? p.description : '';
-  if (!command.trim() && !description.trim()) return null;
-  const rawKey = typeof p.pattern_key === 'string' ? p.pattern_key : '';
-  const patternKeys = Array.isArray(p.pattern_keys)
+/** Display fields for either approval shape: the 0.21.5 `approval` server-request params
+ *  (ApprovalRequestParams) or the legacy 0.20.4 `approval.request` event payload. */
+export interface ApprovalView {
+  command: string;
+  description: string;
+  patternKey: string;
+  toolName: string;
+}
+
+export function approvalView(params: unknown): ApprovalView {
+  const p = typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : {};
+  const str = (v: unknown) => (typeof v === 'string' ? v : '');
+  const keys = Array.isArray(p.pattern_keys)
     ? p.pattern_keys.filter((k): k is string => typeof k === 'string' && k.length > 0)
     : [];
   return {
-    command,
-    description,
-    patternKey: rawKey || patternKeys[0] || '',
-    patternKeys: patternKeys.length > 0 ? patternKeys : rawKey ? [rawKey] : [],
+    command: str(p.command),
+    description: str(p.description),
+    patternKey: str(p.pattern_key) || keys[0] || '',
+    toolName: str(p.tool_name),
   };
 }
 
