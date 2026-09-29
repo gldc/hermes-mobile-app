@@ -194,7 +194,11 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
         if (!hasComplete(gap)) return applyGap(liveId, gap, seenBefore);
         await loadHistory();
         if (disposed) return;
-        return applyAfterLastComplete(liveId, gap, seenBefore);
+        // Re-fetched AFTER history, like the anchor replay: a turn that finished during the
+        // history read is then covered by its own complete instead of drawn twice.
+        const fresh = await eventsSince(liveId, seenBefore);
+        if (disposed) return;
+        return applyAfterLastComplete(liveId, fresh && !fresh.truncated ? fresh : gap, seenBefore);
       }
     }
     await loadHistory();
@@ -202,11 +206,22 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
     const res = await eventsSince(liveId, anchor);
     if (disposed || res === null) return;
     if (!res.truncated) return applyAfterLastComplete(liveId, res, seenBefore);
-    applyAfterLastComplete(liveId, probe, seenBefore);
-    const after = watermarks.get(liveId) ?? seenBefore;
+    // The ring moved past the anchor while history loaded. What followed the probe decides:
+    const after = Math.max(seenBefore, maxSeq(probe));
     const tail = await eventsSince(liveId, after);
-    if (disposed || !tail || tail.truncated) return;
-    applyGap(liveId, tail, after);
+    if (disposed) return;
+    if (tail && !tail.truncated && hasComplete(tail)) {
+      // the turn finished meanwhile, so history may already hold it: reload, apply what follows
+      await loadHistory();
+      if (disposed) return;
+      return applyAfterLastComplete(liveId, tail, seenBefore);
+    }
+    applyAfterLastComplete(liveId, probe, seenBefore); // still running: the probe holds the turn
+    if (tail && !tail.truncated) applyGap(liveId, tail, after);
+  }
+
+  function maxSeq(res: SinceResult): number {
+    return eventsOf(res).reduce((m, e) => Math.max(m, seqOf(e) ?? 0), 0);
   }
 
   /** Truncated path: the screen was not replaced, so every event after the watermark is new. */

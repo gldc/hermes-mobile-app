@@ -262,21 +262,42 @@ describe('sequence order', () => {
       // T1 finished during the drop and a prompt from another device started T2. The replace
       // brings T1's full text and T2's prompt row; replaying T1's tail on top would duplicate it.
       const h = longTurn();
-      h.results['session.events.since'] = [
-        since([], { truncated: true }),
-        since([
-          { type: 'message.delta', session_id: 'live-1', seq: 701, payload: { text: ' end' } },
-          { type: 'message.complete', session_id: 'live-1', seq: 702 },
-          { type: 'message.start', session_id: 'live-1', seq: 703 },
-          { type: 'message.delta', session_id: 'live-1', seq: 704, payload: { text: 'T2' } },
-        ]),
-      ];
+      const gap = since([
+        { type: 'message.delta', session_id: 'live-1', seq: 701, payload: { text: ' end' } },
+        { type: 'message.complete', session_id: 'live-1', seq: 702 },
+        { type: 'message.start', session_id: 'live-1', seq: 703 },
+        { type: 'message.delta', session_id: 'live-1', seq: 704, payload: { text: 'T2' } },
+      ]);
+      h.results['session.events.since'] = [since([], { truncated: true }), gap, gap];
       await h.orch.reconnect('close');
       expect(h.log).toContain('history:stored-1');
       expect(h.applied.map((e) => [e.type, e.seq, e.replayed])).toEqual([
         ['message.start', 703, true],
         ['message.delta', 704, true],
       ]);
+    });
+
+    it('the gap is re-fetched after history, so a turn that finished during the history read is not duplicated', async () => {
+      // RED (re-review minor): T2 started in the gap and completed before the history read;
+      // applying the pre-history gap after the replace re-drew T2's partial text under it.
+      const h = longTurn();
+      h.results['session.events.since'] = [
+        since([], { truncated: true }),
+        since([
+          { type: 'message.complete', session_id: 'live-1', seq: 702 },
+          { type: 'message.start', session_id: 'live-1', seq: 703 },
+          { type: 'message.delta', session_id: 'live-1', seq: 704, payload: { text: 'T2' } },
+        ]),
+        since([
+          { type: 'message.complete', session_id: 'live-1', seq: 702 },
+          { type: 'message.start', session_id: 'live-1', seq: 703 },
+          { type: 'message.delta', session_id: 'live-1', seq: 704, payload: { text: 'T2' } },
+          { type: 'message.complete', session_id: 'live-1', seq: 705 },
+        ]),
+      ];
+      await h.orch.reconnect('close');
+      expect(h.log.indexOf('history:stored-1')).toBeLessThan(h.log.lastIndexOf('call:session.events.since'));
+      expect(h.applied).toEqual([]);
     });
 
     it('dispose between the probe and the gap query: nothing further is fetched or applied', async () => {
@@ -322,6 +343,27 @@ describe('sequence order', () => {
       await h.orch.reconnect('close');
       expect(h.log).toContain('history:stored-1');
       expect(h.applied).toEqual([]); // history already holds the finished turn: no duplicate
+    });
+
+    it('ring moved past the anchor AND the turn completed meanwhile: reload history, re-apply nothing', async () => {
+      // RED (re-review minor): the fallback applied the pre-history probe over a history that
+      // already held the finished turn, so the turn showed twice.
+      const h = runningTurn();
+      h.results['session.events.since'] = [
+        since([
+          { type: 'message.start', session_id: 'live-1', seq: 10 },
+          { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } },
+          { type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: ' gap' } },
+        ]),
+        since([], { truncated: true }),
+        since([
+          { type: 'message.delta', session_id: 'live-1', seq: 13, payload: { text: ' end' } },
+          { type: 'message.complete', session_id: 'live-1', seq: 14 },
+        ]),
+      ];
+      await h.orch.reconnect('close');
+      expect(h.log.filter((l) => l === 'history:stored-1')).toHaveLength(2);
+      expect(h.applied).toEqual([]);
     });
 
     it('the ring moved past the anchor while history loaded: apply the probe, then only what followed it', async () => {

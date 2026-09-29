@@ -470,12 +470,14 @@ heartbeat `closed`, or AppState foreground with a dead socket.
       probe is `truncated`, ask for the gap after the watermark instead:
       - no `message.complete` in the gap → **skip step 3** and apply every gap event. The screen is
         exact up to the watermark, so the partial text before the drop stays;
-      - a `message.complete` in the gap (that turn is persisted) → step 3, then apply only what follows
-        the last complete;
+      - a `message.complete` in the gap (that turn is persisted) → step 3, then fetch the gap again
+        and apply only what follows its last complete;
       - the gap is truncated or fails → step 3 with no replay; the partial text before the drop is lost.
 
       If the probe was not truncated but the post-history anchor replay is (the ring moved while
-      history loaded), apply the probe batch, then the gap after its highest seq.
+      history loaded), fetch the gap after the probe's highest seq. If it holds a `message.complete`,
+      the turn finished meanwhile: step 3 again, then apply what follows it. Otherwise apply the probe
+      batch, then that gap.
    5. A replay's own `open_requests` go through the same dedupe.
 5. Live events resume. Events that arrive during steps 2–4 are **parked and applied after step 4**, in
    `seq` order, deduped against the replay.
