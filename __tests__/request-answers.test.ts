@@ -23,7 +23,7 @@ function harness(respondOk = true) {
     return c;
   };
   const actions: TurnAction[] = [];
-  const calls: Array<{ method: string; params: unknown }> = [];
+  const calls: { method: string; params: unknown }[] = [];
   const replies: Record<string, unknown[]> = {};
   const respond = jest.fn((_id: string, _r: Record<string, unknown>) => respondOk);
   const drop = jest.fn();

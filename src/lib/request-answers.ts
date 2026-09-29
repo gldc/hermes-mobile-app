@@ -44,7 +44,7 @@ export interface RequestResponder {
   approve(card: RequestCardState, choice: ApprovalResult['choice']): Promise<AnswerOutcome>;
   clarifySingle(card: RequestCardState, answer: ClarifyAnswer): AnswerOutcome;
   clarifyLock(card: RequestCardState, qid: string, answer: ClarifyAnswer): Promise<LockOutcome>;
-  clarifySubmitAll(card: RequestCardState, answers: Array<{ qid: string; answer: ClarifyAnswer }>): Promise<LockOutcome>;
+  clarifySubmitAll(card: RequestCardState, answers: { qid: string; answer: ClarifyAnswer }[]): Promise<LockOutcome>;
   clarifySkipAll(card: RequestCardState): AnswerOutcome;
   value(card: RequestCardState, value: string): AnswerOutcome;
 }
