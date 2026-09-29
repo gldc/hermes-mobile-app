@@ -51,7 +51,15 @@ import { provenanceForCard, type SkillsLookup } from '@/lib/secure-entry';
 import { emptyBatch, finalizeBatch, reduceSubagentEvent } from '@/lib/subagent-progress';
 import { parseTodoList } from '@/lib/todo';
 import { shouldReconnect } from '@/lib/reconnect';
-import { appendAfterStream, closeStreaming, createItemsMirror, offsetToReveal } from '@/lib/transcript-rows';
+import {
+  appendAfterStream,
+  closeStreaming,
+  createItemsMirror,
+  offsetToReveal,
+  reanchorAfterReplace,
+  withCardAnchors,
+  type CardAnchors,
+} from '@/lib/transcript-rows';
 import { completionEffects, createTurnCommands, restoreSteerText, type TurnCommands } from '@/lib/turn-commands';
 import {
   completeStatus,
@@ -139,6 +147,8 @@ export default function ChatScreen() {
   // A card's arrival closes the streaming segment (onNewCard), so the anchor is read after that close.
   const [itemsMirror] = useState(() => createItemsMirror<ChatItem>(setItems, closeStreaming));
   const updateItems = (fn: (prev: ChatItem[]) => ChatItem[]) => itemsMirror.update(fn);
+  // Cards that were open across a history replace, drawn under the reloaded last row (final review I1).
+  const [cardAnchors, setCardAnchors] = useState<CardAnchors>({});
   const [input, setInput] = useState('');
   const [stagedImage, setStagedImage] = useState<PickedImage | null>(null);
   const [thinking, setThinking] = useState(false); // sent / turn started, no tokens yet
@@ -407,7 +417,12 @@ export default function ChatScreen() {
   async function loadHistory(storedId: string) {
     const history = await withAuthRetry((r) => r.getMessages(storedId, profileRef.current ?? undefined));
     if (cancelledRef.current) return;
-    updateItems(() => historyToItems(history.messages, nextKey));
+    const reloaded = historyToItems(history.messages, nextKey);
+    updateItems(() => reloaded);
+    // The reload re-keyed every row: a card open now keeps its place under the new last row, so it is
+    // still drawn once it settles (final review I1). Settled cards are in the history (contract §8).
+    const requests = readTurn().requests;
+    setCardAnchors((prev) => reanchorAfterReplace(requests, prev, reloaded));
     // historyToItems never emits subagent/todo rows; clear stale live-card keys
     // so a reconnect/history replace can't update a row that no longer exists.
     // Request cards live in the turn store, NOT in items, so they survive this replace.
@@ -768,7 +783,10 @@ export default function ChatScreen() {
   }
 
   // Request cards live in the turn store (outside items) and merge in after their anchor.
-  const rows = useMemo(() => mergeRequestRows(items, turn.requests), [items, turn.requests]);
+  const rows = useMemo(
+    () => mergeRequestRows(items, withCardAnchors(turn.requests, cardAnchors)),
+    [items, turn.requests, cardAnchors],
+  );
   // Inverted list: index 0 renders at the visual bottom, so newest goes first.
   const reversedRows = useMemo(() => [...rows].reverse(), [rows]);
   // Room kept under the floating header buttons: the list's visual-top padding, and the top of the

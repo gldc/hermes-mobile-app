@@ -1,5 +1,12 @@
 import type { ChatItem } from '../src/components/message-row';
-import { appendAfterStream, closeStreaming, createItemsMirror, offsetToReveal } from '../src/lib/transcript-rows';
+import {
+  appendAfterStream,
+  closeStreaming,
+  createItemsMirror,
+  offsetToReveal,
+  reanchorAfterReplace,
+  withCardAnchors,
+} from '../src/lib/transcript-rows';
 import { mergeRequestRows, type RequestCardState } from '../src/lib/turn-controller';
 
 const item = (key: string): ChatItem => ({ key, role: 'assistant', text: key, complete: true });
@@ -114,5 +121,74 @@ describe('offsetToReveal (inverted list: a larger offset moves the content down)
 
   test('never scrolls past the newest end (offset 0)', () => {
     expect(offsetToReveal({ ...band, offset: 20, fieldTop: 600, fieldBottom: 640 })).toBe(0);
+  });
+});
+
+// Plan B final review I1: every history replace (each reconnect reloads) re-keys every row, so a card
+// that was OPEN across it kept a vanished anchorKey. It showed at the tail only while open; once it
+// settled mergeRequestRows dropped it, so no "Approved" / "Sent" / "Answered" row was left.
+describe('reanchorAfterReplace + withCardAnchors (I1)', () => {
+  const settle = (c: RequestCardState, status: RequestCardState['status']): RequestCardState => ({ ...c, status });
+  const reloaded = [item('i7'), item('i8')]; // the same transcript, freshly keyed by the reload
+
+  test('an open card across the re-key that then settles stays where it was drawn, with its settled state', () => {
+    const open = req('a', 'i1'); // anchored to the pre-reload last row
+    const anchors = reanchorAfterReplace([open], {}, reloaded);
+    expect(anchors).toEqual({ a: 'i8' });
+    const answered = settle(open, 'answered');
+    const rows = mergeRequestRows(reloaded, withCardAnchors([answered], anchors));
+    expect(keysOf(rows)).toEqual(['i7', 'i8', 'a']);
+    const last = rows[rows.length - 1];
+    expect(last.kind === 'request' && last.card.status).toBe('answered');
+    // Without the re-anchor the settled card is gone (the I1 symptom).
+    expect(keysOf(mergeRequestRows(reloaded, [answered]))).toEqual(['i7', 'i8']);
+  });
+
+  test('skipped and cancelled cards that were open across the reload stay visible too', () => {
+    const anchors = reanchorAfterReplace([req('s', 'i1'), req('c', 'i1')], {}, reloaded);
+    const rows = mergeRequestRows(reloaded, withCardAnchors([settle(req('s', 'i1'), 'skipped'), settle(req('c', 'i1'), 'cancelled')], anchors));
+    expect(keysOf(rows)).toEqual(['i7', 'i8', 's', 'c']);
+  });
+
+  test('a card answering (in flight) at the reload counts as open', () => {
+    expect(reanchorAfterReplace([settle(req('a', 'i1'), 'answering')], {}, reloaded)).toEqual({ a: 'i8' });
+  });
+
+  test('a card already settled before the reload is not redrawn (contract §8)', () => {
+    const answered = settle(req('a', 'i1'), 'answered');
+    const anchors = reanchorAfterReplace([answered], {}, reloaded);
+    expect(anchors).toEqual({});
+    expect(keysOf(mergeRequestRows(reloaded, withCardAnchors([answered], anchors)))).toEqual(['i7', 'i8']);
+  });
+
+  test('a second reload re-anchors a still-open card again and lets go of one that settled in between', () => {
+    const first = reanchorAfterReplace([req('open', 'i1'), req('done', 'i1')], {}, reloaded);
+    expect(first).toEqual({ open: 'i8', done: 'i8' });
+    const again = [item('i20'), item('i21')];
+    const second = reanchorAfterReplace([req('open', 'i1'), settle(req('done', 'i1'), 'answered')], first, again);
+    expect(second).toEqual({ open: 'i21' });
+  });
+
+  test('m4: a card that arrived before any transcript row (anchorKey null) anchors to the loaded history and stays there once settled', () => {
+    const early = req('a', null);
+    const anchors = reanchorAfterReplace([early], {}, reloaded);
+    expect(anchors).toEqual({ a: 'i8' });
+    expect(keysOf(mergeRequestRows(reloaded, withCardAnchors([settle(early, 'answered')], anchors)))).toEqual(['i7', 'i8', 'a']);
+  });
+
+  test('an empty history leaves open cards as they are', () => {
+    expect(reanchorAfterReplace([req('a', 'i1'), req('b', null)], {}, [])).toEqual({});
+  });
+
+  test('a card whose anchor survived keeps it; overrides of cards no longer in the store are dropped', () => {
+    expect(reanchorAfterReplace([req('a', 'i7')], { gone: 'i3' }, reloaded)).toEqual({});
+    expect(reanchorAfterReplace([req('a', 'i1')], { a: 'i7' }, reloaded)).toEqual({ a: 'i7' });
+  });
+
+  test('withCardAnchors: the same list back when no override applies; overridden cards get the new anchor', () => {
+    const list = [req('a', 'i1'), req('b', 'i1')];
+    expect(withCardAnchors(list, {})).toBe(list);
+    expect(withCardAnchors(list, { x: 'i8' })).toBe(list);
+    expect(withCardAnchors(list, { b: 'i8' }).map((c) => c.anchorKey)).toEqual(['i1', 'i8']);
   });
 });

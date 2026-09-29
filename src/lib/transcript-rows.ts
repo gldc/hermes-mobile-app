@@ -1,5 +1,6 @@
 // src/lib/transcript-rows.ts — helpers for the chat screen's transcript. The merge with request cards
 // is A's `mergeRequestRows` (src/lib/turn-controller.ts): cards live outside `items` (spec §6.0, review B1.3).
+import type { RequestCardState } from './turn-controller';
 
 /**
  * The inverted chat list's scroll offset that brings a focused card field inside the visible band
@@ -71,4 +72,42 @@ export function createItemsMirror<T extends { key: string }>(
       return settled[settled.length - 1]?.key ?? null;
     },
   };
+}
+
+/** Card id → the anchor the screen draws it under instead of its own `anchorKey` (Plan B final review I1). */
+export type CardAnchors = Readonly<Record<string, string>>;
+
+const isOpen = (c: RequestCardState) => c.status === 'pending' || c.status === 'answering';
+
+/**
+ * The card anchors after a history replace (each reconnect reloads, and the reload re-keys every row).
+ * A card that is OPEN now and whose anchor is gone (or that arrived before any row, anchorKey null —
+ * final review m4) moves under the new last row, so it stays there once it settles: the reloaded
+ * history cannot reflect an answer given after it. A card already settled keeps no override and is
+ * not redrawn — the history reflects it (contract §8). Overrides of cards gone from the store drop.
+ */
+export function reanchorAfterReplace(
+  requests: readonly RequestCardState[],
+  anchors: CardAnchors,
+  items: readonly { key: string }[],
+): Record<string, string> {
+  const keys = new Set(items.map((i) => i.key));
+  const last = items[items.length - 1]?.key ?? null;
+  const next: Record<string, string> = {};
+  for (const card of requests) {
+    const current = anchors[card.id] ?? card.anchorKey;
+    if (current !== null && keys.has(current)) {
+      if (anchors[card.id] !== undefined) next[card.id] = current;
+    } else if (isOpen(card) && last !== null) {
+      next[card.id] = last;
+    }
+  }
+  return next;
+}
+
+/** The cards as the transcript merge should place them: overridden anchors applied. The same list
+ *  comes back when no override applies. */
+export function withCardAnchors(requests: RequestCardState[], anchors: CardAnchors): RequestCardState[] {
+  if (!requests.some((c) => anchors[c.id] !== undefined)) return requests;
+  return requests.map((c) => (anchors[c.id] !== undefined ? { ...c, anchorKey: anchors[c.id] } : c));
 }
