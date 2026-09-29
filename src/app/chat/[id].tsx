@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, FlatList, Pressable, Share, Text, View, type HostInstance } from 'react-native';
+import { ActivityIndicator, AppState, FlatList, Keyboard, Pressable, Share, Text, View, type HostInstance } from 'react-native';
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createChatTransport, type ChatTransport } from '@/api/chat-transport';
@@ -42,6 +42,7 @@ import { showActionSheet } from '@/lib/action-sheet';
 import { exportAsJsonl, exportAsText } from '@/lib/export';
 import { greetingForHour } from '@/lib/greeting';
 import { historyToItems } from '@/lib/history';
+import { afterKeyboardSettles } from '@/lib/keyboard-settle';
 import { MAX_ATTACH_BYTES, base64ByteLength, buildAttachParams, type PickedImage } from '@/lib/image-attach';
 import type { ReconnectOrchestrator, ReconnectPhase } from '@/lib/reconnect-orchestrator';
 import { createRequestResponder, type RequestResponder } from '@/lib/request-answers';
@@ -794,17 +795,18 @@ export default function ChatScreen() {
   // band a focused card field is scrolled into.
   const headerClearance = insets.top + 64;
 
-  // Focusing a card's text field: wait for the keyboard inset (containerStyle paddingBottom) to
-  // apply, then scroll the FIELD into the band between the header and the composer — a tall card's
-  // field is off-screen whichever card edge is aligned (sim S2 B2). Everything is measured when the
-  // timer fires, so rows that changed meanwhile can't skew it (m2). One pending scroll; cleared on unmount.
+  // Focusing a card's text field: once the keyboard has finished rising (its inset, containerStyle
+  // paddingBottom, is then final — a fixed timer fired mid-rise, sim S3 s1), scroll the FIELD into the
+  // band between the header and the composer — a tall card's field is off-screen whichever card edge
+  // is aligned (sim S2 B2). Everything is measured then, so rows that changed meanwhile can't skew it
+  // (m2). One pending scroll; cancelled on unmount.
   const scrollOffsetRef = useRef(0);
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  useEffect(() => () => clearTimeout(scrollTimerRef.current ?? undefined), []);
+  const cancelRevealRef = useRef<(() => void) | null>(null);
+  useEffect(() => () => cancelRevealRef.current?.(), []);
   function revealField(measureField: HostInstance['measureInWindow']) {
-    clearTimeout(scrollTimerRef.current ?? undefined);
-    scrollTimerRef.current = setTimeout(() => {
-      scrollTimerRef.current = null;
+    cancelRevealRef.current?.();
+    cancelRevealRef.current = afterKeyboardSettles(Keyboard, () => {
+      cancelRevealRef.current = null;
       const list = listRef.current?.getNativeScrollRef();
       if (!list || !('measureInWindow' in list)) return; // unmounted; FlatList's ref type is loose
       list.measureInWindow((_lx, listY, _lw, listH) => {
@@ -819,7 +821,7 @@ export default function ChatScreen() {
           if (offset !== null) listRef.current?.scrollToOffset({ offset, animated: true });
         });
       });
-    }, 300);
+    });
   }
 
   function renderRequest(card: RequestCardState) {
