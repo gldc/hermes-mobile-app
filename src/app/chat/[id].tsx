@@ -22,11 +22,11 @@ import {
   pillModelId,
 } from '@/lib/model-pill';
 import { withProfile } from '@/api/profiles';
-import { listSkills, type SkillInfo } from '@/api/skills';
-import type { GatewayEvent, GatewayEventMap, RpcMethods, SecretRequestParams } from '@/vendor/hermes-gateway';
+import { listSkills } from '@/api/skills';
+import type { GatewayEvent, GatewayEventMap, RpcMethods } from '@/vendor/hermes-gateway';
 import { setAttachHandler } from '@/attach-bus';
 import { ApprovalCard } from '@/components/approval-card';
-import { ClarifyCard } from '@/components/clarify-card';
+import { ClarifyCard, type ClarifyResponder } from '@/components/clarify-card';
 import { Icon } from '@/components/icon';
 import { Composer } from '@/components/composer';
 import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
@@ -47,7 +47,7 @@ import type { ReconnectOrchestrator, ReconnectPhase } from '@/lib/reconnect-orch
 import { createRequestResponder, type RequestResponder } from '@/lib/request-answers';
 import type { RequestRegistry } from '@/lib/request-registry';
 import { shouldWarn } from '@/lib/request-router';
-import { provenanceFor, skillNameOf } from '@/lib/secure-entry';
+import { provenanceForCard, type SkillsLookup } from '@/lib/secure-entry';
 import { emptyBatch, finalizeBatch, reduceSubagentEvent } from '@/lib/subagent-progress';
 import { parseTodoList } from '@/lib/todo';
 import { shouldReconnect } from '@/lib/reconnect';
@@ -231,7 +231,7 @@ export default function ChatScreen() {
     return responderRef.current;
   }
   // ClarifyCard calls these only from its handlers, so render never builds the responder.
-  const clarifyResponder: Pick<RequestResponder, 'clarifySingle' | 'clarifyLock' | 'clarifySubmitAll' | 'clarifySkipAll'> = {
+  const clarifyResponder: ClarifyResponder = {
     clarifySingle: (card, answer) => responder().clarifySingle(card, answer),
     clarifyLock: (card, qid, answer) => responder().clarifyLock(card, qid, answer),
     clarifySubmitAll: (card, answers) => responder().clarifySubmitAll(card, answers),
@@ -239,27 +239,24 @@ export default function ChatScreen() {
   };
 
   // Provenance for pending secret cards: one lookup per new card set, scoped to this chat's profile.
-  // Failure → "unknown" (spec §6.4). Keyed by card ids so a just-created skill is found.
+  // Failure → "unknown" (spec §6.4). Keyed by card ids so a just-created skill is found; each card
+  // then reads the lookup that covers it (provenanceForCard), so settling never resets it.
   const pendingSecretIds = turn.requests
     .filter((r) => r.method === 'secret' && r.status === 'pending')
     .map((r) => r.id)
     .join(',');
-  const [skills, setSkills] = useState<{ key: string; list: SkillInfo[] | null } | null>(null);
+  const [skills, setSkills] = useState<SkillsLookup | null>(null);
   useEffect(() => {
     if (!pendingSecretIds) return;
     let stale = false;
+    const ids = pendingSecretIds.split(',');
     withAuthRetry((r) => listSkills(r, profileRef.current))
-      .then((list) => !stale && setSkills({ key: pendingSecretIds, list }))
-      .catch(() => !stale && setSkills({ key: pendingSecretIds, list: null }));
+      .then((list) => !stale && setSkills({ ids, list }))
+      .catch(() => !stale && setSkills({ ids, list: null }));
     return () => {
       stale = true;
     };
   }, [pendingSecretIds]);
-
-  function provenanceOf(card: RequestCardState) {
-    if (!skills || skills.key !== pendingSecretIds) return null; // still looking up
-    return provenanceFor(skills.list, skillNameOf(card.params as SecretRequestParams));
-  }
 
   async function stop() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
@@ -816,7 +813,7 @@ export default function ChatScreen() {
         return (
           <SecureEntryCard
             card={card}
-            provenance={card.method === 'secret' ? provenanceOf(card) : null}
+            provenance={card.method === 'secret' ? provenanceForCard(card, skills) : null}
             onSend={(v) => {
               const out = responder().value(card, v);
               if (!out.ok) setError(out.message);

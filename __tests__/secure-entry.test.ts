@@ -1,6 +1,6 @@
 // __tests__/secure-entry.test.ts
 import {
-  countdownA11y, formatCountdown, provenanceFor, provenanceText, secondsRemaining, secureEntryCopy, skillNameOf,
+  countdownA11y, formatCountdown, provenanceFor, provenanceForCard, provenanceText, secondsRemaining, secureEntryCopy, skillNameOf,
 } from '../src/lib/secure-entry';
 import type { RequestCardState } from '../src/lib/turn-controller';
 
@@ -49,4 +49,37 @@ test('secret copy: title, ask, warning, destination, no keychain autofill', () =
 test('sudo copy: password autofill, command shown, no warning', () => {
   const c = secureEntryCopy(card('sudo', { command: 'apt-get install jq' }));
   expect(c).toMatchObject({ method: 'sudo', title: 'Administrator password', ask: null, command: 'apt-get install jq', textContentType: 'password', warning: null, destination: null, fieldLabel: 'Administrator password' });
+});
+
+// Task 11 review I1: provenance is decided per card, so settling a card or a second card arriving
+// never drops a known source back to "checking…".
+describe('provenanceForCard', () => {
+  const weather = [{ name: 'weather', description: '', category: '', enabled: true, provenance: 'agent' as const }];
+  const secret = (id: string, status: RequestCardState['status'] = 'pending'): RequestCardState => ({
+    ...card('secret', { env_var: 'K', prompt: 'p', metadata: { skill_name: 'weather' } }), id, status,
+  });
+
+  test('a pending card covered by the lookup gets its source', () => {
+    expect(provenanceForCard(secret('a'), { ids: ['a'], list: weather })).toBe('agent');
+  });
+  test('a pending card whose lookup is still in flight is "checking" (null)', () => {
+    expect(provenanceForCard(secret('b'), { ids: ['a'], list: weather })).toBeNull();
+    expect(provenanceForCard(secret('b'), null)).toBeNull();
+  });
+  test('a second card arriving does not reset the first (the older lookup still covers it)', () => {
+    const before = { ids: ['a'], list: weather }; // B arrived; the refetch for "a,b" is in flight
+    expect(provenanceForCard(secret('a'), before)).toBe('agent');
+    expect(provenanceForCard(secret('b'), before)).toBeNull();
+    const after = { ids: ['a', 'b'], list: weather };
+    expect(provenanceForCard(secret('a'), after)).toBe('agent');
+    expect(provenanceForCard(secret('b'), after)).toBe('agent');
+  });
+  test('a settled card keeps its source from the last lookup, covered or not', () => {
+    expect(provenanceForCard(secret('a', 'answered'), { ids: ['a'], list: weather })).toBe('agent');
+    expect(provenanceForCard(secret('a', 'skipped'), { ids: ['c'], list: weather })).toBe('agent');
+  });
+  test('a settled card with no lookup ever, or a failed one, is "unknown"', () => {
+    expect(provenanceForCard(secret('a', 'cancelled'), null)).toBe('unknown');
+    expect(provenanceForCard(secret('a', 'answered'), { ids: ['a'], list: null })).toBe('unknown');
+  });
 });

@@ -33,6 +33,23 @@ export function provenanceFor(skills: SkillInfo[] | null, skillName: string | nu
   return skills.find((s) => s.name === skillName)?.provenance ?? 'unknown';
 }
 
+/** The latest skills lookup: the pending secret-card ids it was made for, and its result (null = failed). */
+export interface SkillsLookup {
+  ids: string[];
+  list: SkillInfo[] | null;
+}
+
+/**
+ * Provenance for one secret card, or null while its lookup is in flight ("checking…"). A lookup
+ * covers the cards it was made for, so a newer card arriving never resets an older one. A settled
+ * card has no lookup of its own coming: it uses the last result, or "unknown" if there never was one.
+ */
+export function provenanceForCard(card: RequestCardState, lookup: SkillsLookup | null): ProvenanceLabel | null {
+  const covered = lookup !== null && lookup.ids.includes(card.id);
+  if (!covered && card.status === 'pending') return null;
+  return provenanceFor(lookup?.list ?? null, skillNameOf(card.params as SecretRequestParams));
+}
+
 export function provenanceText(p: ProvenanceLabel): string {
   return { hub: 'Skills Hub', bundled: 'bundled with Hermes', agent: 'written by the agent', unknown: 'unknown' }[p];
 }

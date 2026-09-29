@@ -18,7 +18,7 @@ import { cancelLabel, type RequestCardState } from '@/lib/turn-controller';
 import { useTheme } from '@/theme';
 import type { ClarifyRequestParams } from '@/vendor/hermes-gateway';
 
-type ClarifyResponder = Pick<RequestResponder, 'clarifySingle' | 'clarifyLock' | 'clarifySubmitAll' | 'clarifySkipAll'>;
+export type ClarifyResponder = Pick<RequestResponder, 'clarifySingle' | 'clarifyLock' | 'clarifySubmitAll' | 'clarifySkipAll'>;
 
 function SettledRow({ card }: { card: RequestCardState }) {
   const { colors } = useTheme();
