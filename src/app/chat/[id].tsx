@@ -51,7 +51,7 @@ import { provenanceForCard, type SkillsLookup } from '@/lib/secure-entry';
 import { emptyBatch, finalizeBatch, reduceSubagentEvent } from '@/lib/subagent-progress';
 import { parseTodoList } from '@/lib/todo';
 import { shouldReconnect } from '@/lib/reconnect';
-import { createItemsMirror, rowIndexOf } from '@/lib/transcript-rows';
+import { appendAfterStream, closeStreaming, createItemsMirror, rowIndexOf } from '@/lib/transcript-rows';
 import { completionEffects, createTurnCommands, restoreSteerText, type TurnCommands } from '@/lib/turn-commands';
 import {
   completeStatus,
@@ -136,7 +136,8 @@ export default function ChatScreen() {
   const [items, setItems] = useState<ChatItem[]>([]);
   // Every transcript mutation goes through updateItems: the mirror applies it to the latest list and
   // is the request-card anchor at once, so a card never lands above the row that asked for it (M5).
-  const [itemsMirror] = useState(() => createItemsMirror<ChatItem>(setItems));
+  // A card's arrival closes the streaming segment (onNewCard), so the anchor is read after that close.
+  const [itemsMirror] = useState(() => createItemsMirror<ChatItem>(setItems, closeStreaming));
   const updateItems = (fn: (prev: ChatItem[]) => ChatItem[]) => itemsMirror.update(fn);
   const [input, setInput] = useState('');
   const [stagedImage, setStagedImage] = useState<PickedImage | null>(null);
@@ -276,10 +277,10 @@ export default function ChatScreen() {
       setInput((cur) => restoreSteerText(cur, text));
       return;
     }
-    updateItems((prev) => [
-      ...prev,
-      { key: nextKey(), role: 'user', text, complete: true, ...(out.kind === 'steered' ? { steered: true } : {}) },
-    ]);
+    // Close the segment streamed so far first (B1): it stays above the bubble, complete, and the
+    // turn's later deltas open a new segment below it.
+    const row: ChatItem = { key: nextKey(), role: 'user', text, complete: true, ...(out.kind === 'steered' ? { steered: true } : {}) };
+    updateItems((prev) => appendAfterStream(prev, row));
     // F10: the fallback was a queued prompt.submit (turn → waiting), so show the dots like send().
     if (out.kind === 'submitted') setThinking(true);
   }
@@ -303,14 +304,7 @@ export default function ChatScreen() {
   /** Close the trailing streaming segment: complete it, or drop it if it
    * holds only whitespace (prevents stranded carets around tool calls). */
   function finishAssistant() {
-    updateItems((prev) => {
-      const last = prev[prev.length - 1];
-      if (last?.role === 'assistant' && !last.complete) {
-        if (!last.text.trim()) return prev.slice(0, -1);
-        return [...prev.slice(0, -1), { ...last, complete: true }];
-      }
-      return prev;
-    });
+    updateItems(closeStreaming);
   }
 
   function startTool(payload: any) {

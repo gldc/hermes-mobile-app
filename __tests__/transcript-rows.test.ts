@@ -1,5 +1,5 @@
 import type { ChatItem } from '../src/components/message-row';
-import { createItemsMirror, rowIndexOf } from '../src/lib/transcript-rows';
+import { appendAfterStream, closeStreaming, createItemsMirror, rowIndexOf } from '../src/lib/transcript-rows';
 import { mergeRequestRows, type RequestCardState } from '../src/lib/turn-controller';
 
 const item = (key: string): ChatItem => ({ key, role: 'assistant', text: key, complete: true });
@@ -49,5 +49,52 @@ describe('createItemsMirror', () => {
     expect(mirror.anchorKey()).toBe('h1');
     mirror.update(() => []);
     expect(mirror.anchorKey()).toBeNull();
+  });
+});
+
+const streaming = (key: string, text: string): ChatItem => ({ key, role: 'assistant', text, complete: false });
+const keysOf = (rows: ReturnType<typeof mergeRequestRows<ChatItem>>) =>
+  rows.map((r) => (r.kind === 'item' ? r.item.key : r.card.id));
+
+describe('closeStreaming', () => {
+  test('completes a trailing streaming segment and drops a whitespace-only one', () => {
+    expect(closeStreaming([item('i0'), streaming('i1', 'then')])).toEqual([item('i0'), { ...streaming('i1', 'then'), complete: true }]);
+    expect(closeStreaming([item('i0'), streaming('i1', ' \n')])).toEqual([item('i0')]);
+  });
+
+  test('leaves a list with no trailing streaming segment unchanged', () => {
+    const list = [item('i0'), { key: 'i1', role: 'tool' as const, text: 'terminal' }];
+    expect(closeStreaming(list)).toBe(list);
+  });
+});
+
+// Sim S1 §3c / S2 §5 (B1): a steer while text streams left the pre-steer segment complete:false for
+// good (stuck caret, plain text) because the Steered bubble was appended after it without closing it.
+test('B1: a steered bubble appended mid-stream closes the streaming segment first', () => {
+  const steered: ChatItem = { key: 'i2', role: 'user', text: 'stop at 20', complete: true, steered: true };
+  const next = appendAfterStream([item('i0'), streaming('i1', '67 Florence')], steered);
+  expect(next).toEqual([item('i0'), { ...streaming('i1', '67 Florence'), complete: true }, steered]);
+  expect(next.filter((it) => it.role === 'assistant' && !it.complete)).toHaveLength(0);
+});
+
+// Task 11 m1: the router samples anchorKey() before onNewCard's finishAssistant() drops a trailing
+// whitespace-only segment, so a card anchored to that dropped row vanished once settled.
+describe('createItemsMirror anchor with a settle step', () => {
+  test('a trailing whitespace-only streaming segment is not an anchor: the card stays under the row before it', () => {
+    const committed: ChatItem[][] = [];
+    const mirror = createItemsMirror<ChatItem>((next) => committed.push(next), closeStreaming);
+    mirror.update(() => [item('i0'), { key: 'i1', role: 'tool', text: 'terminal' }, streaming('i2', '\n')]);
+    const anchor = mirror.anchorKey(); // sampled by the router when the request arrives…
+    mirror.update(closeStreaming); // …then onNewCard closes the segment
+    expect(anchor).toBe('i1');
+    const settled = req('a', anchor);
+    settled.status = 'answered';
+    expect(keysOf(mergeRequestRows(committed[committed.length - 1], [settled]))).toEqual(['i0', 'i1', 'a']);
+  });
+
+  test('a streaming segment with text is still the anchor (it is completed, not dropped)', () => {
+    const mirror = createItemsMirror<ChatItem>(() => {}, closeStreaming);
+    mirror.update(() => [item('i0'), streaming('i1', 'Running it now.')]);
+    expect(mirror.anchorKey()).toBe('i1');
   });
 });
