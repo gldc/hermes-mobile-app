@@ -245,7 +245,8 @@ export function ClarifyCard({
   const view = clarifyView(card.params);
   const [drafts, setDrafts] = useState<Record<string, ClarifyDraft>>({});
   const [busy, setBusy] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
+  // `openOnly`: a failed lock's "Try again" means nothing once the card is closed (final review m6).
+  const [note, setNote] = useState<{ text: string; openOnly: boolean } | null>(null);
   const pending = card.status === 'pending';
   const locked = card.lockedAnswers ?? {};
   const draftOf = (qid: string) => drafts[qid] ?? EMPTY_DRAFT;
@@ -256,7 +257,7 @@ export function ClarifyCard({
     setNote(null);
     const out = await responder.clarifyLock(card, qid, answer);
     setBusy(false);
-    if (out === 'failed') setNote("Couldn't send that answer. Try again.");
+    if (out === 'failed') setNote({ text: "Couldn't send that answer. Try again.", openOnly: true });
   }
 
   async function submitAll() {
@@ -268,11 +269,11 @@ export function ClarifyCard({
     setNote(null);
     const out = await responder.clarifySubmitAll(card, answers);
     setBusy(false);
-    if (out === 'failed') setNote("Couldn't send every answer. Try again.");
+    if (out === 'failed') setNote({ text: "Couldn't send every answer. Try again.", openOnly: true });
   }
 
   function finish(result: { ok: true } | { ok: false; message: string }) {
-    setNote(result.ok ? null : result.message);
+    setNote(result.ok ? null : { text: result.message, openOnly: false });
   }
 
   const frame = {
@@ -298,7 +299,8 @@ export function ClarifyCard({
       <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>{title}</Text>
     </View>
   );
-  const noteRow = note ? <Text style={{ color: colors.danger, fontSize: 13 }}>{note}</Text> : null;
+  const noteRow =
+    note && (pending || !note.openOnly) ? <Text style={{ color: colors.danger, fontSize: 13 }}>{note.text}</Text> : null;
 
   // Malformed params (final review m3): never throw in render — that replaced the whole chat. The card
   // can't be answered as asked, so it offers only Skip: a response with no answers, the contract's

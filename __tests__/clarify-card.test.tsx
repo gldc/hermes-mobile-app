@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from '@testing-library/react-native';
+import { act, fireEvent, render, screen } from '@testing-library/react-native';
 import { TextInput } from 'react-native';
 import { ClarifyCard } from '../src/components/clarify-card';
 import type { RequestCardState } from '../src/lib/turn-controller';
@@ -242,5 +242,27 @@ describe('malformed params (m3)', () => {
     await render(<ClarifyCard card={broken({ status: 'skipped' })} responder={responder()} />);
     expect(screen.getByText('Skipped')).toBeOnTheScreen();
     expect(screen.queryByRole('button', { name: 'Skip this request' })).toBeNull();
+  });
+});
+
+// Final review m6: a lock that failed after the card was closed (Stopped / Timed out) showed
+// "Try again" under a card that can no longer be answered.
+describe('a failed lock on a card that settled meanwhile (m6)', () => {
+  test.each([
+    ['lock', 'Skip question 2', "Couldn't send that answer. Try again."],
+    ['Submit all', 'Submit all answers', "Couldn't send every answer. Try again."],
+  ])('%s: no retry note once the card is closed', async (_name, button, retry) => {
+    const r = responder();
+    let fail!: () => void;
+    const gate = new Promise<'failed'>((res) => (fail = () => res('failed')));
+    r.clarifyLock.mockReturnValueOnce(gate as never);
+    r.clarifySubmitAll.mockReturnValueOnce(gate as never);
+    const open = card(batch);
+    const { rerender } = await render(<ClarifyCard card={open} responder={r} />);
+    await fireEvent.press(screen.getByRole('button', { name: button }));
+    await rerender(<ClarifyCard card={{ ...open, status: 'cancelled', cancelReason: 'interrupted' }} responder={r} />);
+    await act(async () => fail());
+    expect(screen.getByText('Stopped')).toBeOnTheScreen();
+    expect(screen.queryByText(retry)).toBeNull();
   });
 });
