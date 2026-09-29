@@ -436,16 +436,22 @@ export default function ChatScreen() {
     if (cancelledRef.current) return;
     if (p.kind === 'attempt') {
       setReady(false);
-      if (p.attempt === 1) finalizeSubagents(); // socket drop mid-delegation: seal the card
+      // A subagent card is NOT sealed here: when the replay ring no longer reaches the turn's
+      // anchor, the reconnect keeps the screen and the gap's subagent.* events continue the same
+      // card (A1). It is sealed below once we know the turn is over or the reconnect gave up.
       setReconnectNote(`Connection lost — reconnecting (${p.attempt}/${p.max})…`);
     } else if (p.kind === 'ready') {
       // A turn that finished while the socket was down never delivers message.complete
       // (resume reports running:false, replay is skipped) — drop the stale thinking flag.
-      if (readTurn().turn === 'idle') setThinking(false);
+      if (readTurn().turn === 'idle') {
+        setThinking(false);
+        finalizeSubagents(); // socket drop mid-delegation, turn over: seal the card
+      }
       setReconnectNote(null);
       setError(null);
       setReady(true);
     } else {
+      finalizeSubagents(); // gave up: nothing will update the card again
       setReconnectNote(null);
       setError('Could not reconnect. Check your VPN or Wi-Fi, then reopen this chat.');
     }
