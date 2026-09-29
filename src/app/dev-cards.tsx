@@ -10,6 +10,7 @@ import { ApprovalCard } from '@/components/approval-card';
 import { ClarifyCard } from '@/components/clarify-card';
 import { Composer } from '@/components/composer';
 import { MessageRow } from '@/components/message-row';
+import { SecureEntryCard } from '@/components/secure-entry-card';
 import type { ComposerMode, RequestCardState } from '@/lib/turn-controller';
 import { useTheme } from '@/theme';
 
@@ -95,6 +96,31 @@ export default function DevCards() {
         <ClarifyCard
           card={devCard({ id: 'c3', kind: 'clarify', method: 'clarify', params: { session_id: 's', question: 'Why?', choices: null }, status: 'cancelled', cancelReason: 'timeout' })}
           responder={devClarifyResponder}
+        />
+      </Section>
+      <Section title="Secure entry">
+        <SecureEntryCard
+          card={devCard({
+            id: 's1',
+            kind: 'secure-entry',
+            method: 'secret',
+            params: { session_id: 's', env_var: 'OPENWEATHER_API_KEY', prompt: 'Your OpenWeather API key (free tier is fine)', metadata: { skill_name: 'weather' } },
+          })}
+          provenance="agent"
+          onSend={() => {}}
+          onSkip={() => {}}
+        />
+        <SecureEntryCard
+          card={devCard({ id: 's2', kind: 'secure-entry', method: 'sudo', params: { session_id: 's', command: 'apt-get install -y jq' } })}
+          provenance={null}
+          onSend={() => {}}
+          onSkip={() => {}}
+        />
+        <SecureEntryCard
+          card={devCard({ id: 's3', kind: 'secure-entry', method: 'secret', params: { session_id: 's', env_var: 'K', prompt: 'p' }, status: 'answered' })}
+          provenance="unknown"
+          onSend={() => {}}
+          onSkip={() => {}}
         />
       </Section>
       {/* dev-cards:end */}
