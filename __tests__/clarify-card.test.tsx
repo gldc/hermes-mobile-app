@@ -115,6 +115,30 @@ test('a failed lock shows a retry note', async () => {
   expect(await screen.findByText("Couldn't send that answer. Try again.")).toBeOnTheScreen();
 });
 
+test('single: a failed Send is retried and the note clears on success', async () => {
+  const r = responder();
+  r.clarifySingle
+    .mockReturnValueOnce({ ok: false, message: "Couldn't send that answer. Try again." } as never)
+    .mockReturnValueOnce({ ok: true });
+  const c = card({ question: 'Color?', choices: ['Blue'] });
+  await render(<ClarifyCard card={c} responder={r} />);
+  await fireEvent.press(screen.getByRole('radio', { name: 'Blue' }));
+  await fireEvent.press(screen.getByRole('button', { name: 'Send answer' }));
+  expect(await screen.findByText("Couldn't send that answer. Try again.")).toBeOnTheScreen();
+  await fireEvent.press(screen.getByRole('button', { name: 'Send answer' }));
+  expect(screen.queryByText("Couldn't send that answer. Try again.")).toBeNull();
+});
+
+test('batch: a failed Skip all shows a note and the card stays pending', async () => {
+  const r = responder();
+  r.clarifySkipAll.mockReturnValueOnce({ ok: false, message: "Couldn't skip. Try again." } as never);
+  const c = card(batch);
+  await render(<ClarifyCard card={c} responder={r} />);
+  await fireEvent.press(screen.getByRole('button', { name: 'Skip all questions' }));
+  expect(await screen.findByText("Couldn't skip. Try again.")).toBeOnTheScreen();
+  expect(screen.getByRole('button', { name: 'Submit all answers' })).not.toBeDisabled();
+});
+
 test.each([
   [{ status: 'cancelled', cancelReason: 'timeout' }, 'Timed out'],
   [{ status: 'cancelled', cancelReason: 'interrupted' }, 'Stopped'],

@@ -264,7 +264,7 @@ export function ClarifyCard({
   }
 
   function finish(result: { ok: true } | { ok: false; message: string }) {
-    if (!result.ok) setNote(result.message);
+    setNote(result.ok ? null : result.message);
   }
 
   const first = view.questions[0];
