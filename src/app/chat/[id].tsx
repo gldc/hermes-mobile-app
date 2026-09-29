@@ -801,9 +801,18 @@ export default function ChatScreen() {
   // is aligned (sim S2 B2). Everything is measured then, so rows that changed meanwhile can't skew it
   // (m2). One pending scroll; cancelled on unmount.
   const scrollOffsetRef = useRef(0);
+  // While a card field has the keyboard, a tap on a card button acts at once instead of only dismissing
+  // the keyboard (sim S3 s2): the list persists taps its rows handle. With the composer's keyboard it
+  // stays 'never', so a tap on a message row still just dismisses the keyboard, as before.
+  const [cardFieldFocused, setCardFieldFocused] = useState(false);
+  useEffect(() => {
+    const sub = Keyboard.addListener('keyboardDidHide', () => setCardFieldFocused(false));
+    return () => sub.remove();
+  }, []);
   const cancelRevealRef = useRef<(() => void) | null>(null);
   useEffect(() => () => cancelRevealRef.current?.(), []);
   function revealField(measureField: HostInstance['measureInWindow']) {
+    setCardFieldFocused(true);
     cancelRevealRef.current?.();
     cancelRevealRef.current = afterKeyboardSettles(Keyboard, () => {
       cancelRevealRef.current = null;
@@ -921,6 +930,7 @@ export default function ChatScreen() {
           keyExtractor={(r: Row) => (r.kind === 'item' ? r.item.key : `req:${r.card.id}`)}
           // 'interactive' is iOS-only; Android ignores it, so fall back to on-drag.
           keyboardDismissMode={process.env.EXPO_OS === 'ios' ? 'interactive' : 'on-drag'}
+          keyboardShouldPersistTaps={cardFieldFocused ? 'handled' : 'never'}
           // Inverted list: contentContainer paddingBottom is the visual top —
           // clearance for the floating header buttons.
           contentContainerStyle={{
