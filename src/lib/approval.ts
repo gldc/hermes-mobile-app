@@ -6,9 +6,6 @@
 // session-keyed `approval.request` event (no request_id — one FIFO queue per
 // session, and a response resolves the OLDEST pending approval).
 
-/** Canonical `approval.respond` choices (tools/approval.py). */
-export type ApprovalChoice = 'once' | 'session' | 'always' | 'deny';
-
 /** Display fields for either approval shape: the 0.21.5 `approval` server-request params
  *  (ApprovalRequestParams) or the legacy 0.20.4 `approval.request` event payload. */
 export interface ApprovalView {

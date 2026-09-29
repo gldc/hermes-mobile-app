@@ -11,6 +11,7 @@ import { ClarifyCard } from '@/components/clarify-card';
 import { Composer } from '@/components/composer';
 import { MessageRow } from '@/components/message-row';
 import { SecureEntryCard } from '@/components/secure-entry-card';
+import { VaultDeclinedNote } from '@/components/vault-declined-note';
 import type { ComposerMode, RequestCardState } from '@/lib/turn-controller';
 import { useTheme } from '@/theme';
 
@@ -122,6 +123,9 @@ export default function DevCards() {
           onSend={() => {}}
           onSkip={() => {}}
         />
+      </Section>
+      <Section title="Vault">
+        <VaultDeclinedNote />
       </Section>
       {/* dev-cards:end */}
     </ScrollView>
