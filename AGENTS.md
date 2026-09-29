@@ -13,6 +13,8 @@ Read the exact versioned docs at https://docs.expo.dev/versions/v56.0.0/ before 
 ```bash
 npx expo start          # dev server; JS changes hot-reload, no rebuild
 npx expo run:ios --device   # native rebuild — ONLY needed when native deps/config change
+                        # (expo-local-authentication, Face ID for secure entry, is native: an old
+                        # dev client must be rebuilt once)
 npx tsc --noEmit        # typecheck (run before every commit)
 npx jest                # unit tests (run before every commit)
 ```
@@ -31,6 +33,8 @@ src/app/          expo-router routes — THIS is the router root, not a top-leve
   chat/[id].tsx   Root surface after connect ("new" = lazy-created session;
                   otherwise session.resume). No native header — floating buttons.
   settings.tsx    formSheet (gateway info, disconnect)
+  dev-cards.tsx   __DEV__-only gallery of every turn-control/card state for sim screenshots
+                  (`xcrun simctl openurl booted hermesmobileapp://dev-cards`); release redirects
 src/api/          transport, all unit-tested with injected fetch/socket
   cookieJar.ts    manual cookie store (RN fetch doesn't manage cookies)
   restClient.ts   login / ws-ticket / sessions / history
@@ -41,7 +45,11 @@ src/vendor/hermes-gateway/  upstream client + generated contract, pinned by
                   VENDORED.json (re-vendor: scripts/sync-gateway-contract.sh <tag>)
 src/connection.ts singleton glue: SecureStore persistence, withAuthRetry, mintGatewayUrl
                   (mints a fresh single-use ticket URL)
+src/lib/turn-controller.ts pure turn state + request-card reducer; mergeRequestRows places cards
+src/lib/turn-commands.ts   Stop (15 s reconnect fallback) and steer
+src/lib/request-answers.ts answers cards (guards on the store's card, never the rendered one)
 src/components/   message rows, tool cards, composer, theme'd pieces
+  approval-card / clarify-card / secure-entry-card  server→client request cards
   sidebar-host.tsx Claude-style slide-over: wraps the Stack in root _layout;
                   custom Reanimated drawer (no @react-navigation/drawer — banned
                   in SDK 56). Active on /chat/* only; left edge opens it there.
@@ -69,6 +77,15 @@ src/theme.ts      single source of color truth (warm cream light / charcoal dark
   server→client request cards arrive via the request router.
 - History: `GET /api/sessions/{id}/messages` returns raw session-DB rows — text lives in
   `content` (string or parts array), never `text`. Use `messageText()`.
+- Stop = `session.interrupt` (turn ends via `message.complete status:interrupted`); steer =
+  `session.steer` mid-turn, falling back to `prompt.submit {queued:true}` when rejected (or
+  4010). Turn state is server-driven (`turn-controller`), not set from the composer.
+- Request cards live in the turn store, outside `items`, anchored to a transcript key; a
+  history reload re-anchors OPEN cards to the new last row (settled ones are not redrawn).
+  Answer with the contract's own decline (clarify `{}` = cancel-all, sudo/secret
+  `{value:""}`); malformed params render "can't be shown" + Skip — never throw in render.
+- Push: `clarify_request` joins `session_end`/`approval_request` as a foreground-suppressed
+  type (`SUPPRESSIBLE_PUSH_TYPES`); taps open `/chat/<session_id>`.
 
 ## Conventions & gotchas
 
@@ -85,11 +102,24 @@ src/theme.ts      single source of color truth (warm cream light / charcoal dark
 - ATS exception (`NSAllowsArbitraryLoads`) is dev-only pragmatism for plain-HTTP-over-
   WireGuard; replace with Tailscale HTTPS certs before App Store submission.
 
+## Secure entry (sudo/secret) — security rules
+
+- The typed value lives ONLY in `SecureEntryForm`'s local state and goes straight to the
+  response frame: never into the turn store, `items`, a ref, an error, storage, `console.*`,
+  analytics or push. The form renders only while the card is open, so every exit clears it.
+- Send requires Face ID (device-passcode fallback) immediately before responding; a failed
+  or cancelled check sends nothing and keeps the card open. Skip responds `{value:""}`.
+- Secret: `textContentType="none"` (never offer to save an API key to Passwords); sudo:
+  `password`. Every secret card shows the phishing warning and where the value goes; skill
+  provenance is information, never a trust grade. Tests assert the value never leaks.
+
 ## Testing
 
 Pure logic (cookie parsing, REST, JSON-RPC, formatting) lives in `src/api`/`src/lib` with
-injected I/O and unit tests in `__tests__/`. Screens are glue and are verified on-device.
-TDD for any new transport/parsing logic.
+injected I/O and unit tests in `__tests__/`. TDD for any new transport/parsing logic.
+Components (cards, composer) have React Native Testing Library tests (`*.test.tsx`);
+`jest.setup.ts` mocks Reanimated/Worklets for them. Screens (`src/app/`) are glue and are
+verified on the simulator/device.
 
 ## Roadmap context
 
