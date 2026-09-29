@@ -463,9 +463,20 @@ heartbeat `closed`, or AppState foreground with a dead socket.
       only when `replay_epoch` changes.
    2. Apply only events **after the last `message.complete` in the replay batch**. Those belong to the
       still-unpersisted turn, so nothing duplicates history.
-   3. `truncated:true`, **or no watermark yet** (a cold start or a fresh screen), → skip the replay;
-      the live stream carries on from now, and the partial text before it is lost.
-   4. A replay's own `open_requests` go through the same dedupe.
+   3. **No watermark yet** (a cold start or a fresh screen) → skip the replay; the live stream
+      carries on from now.
+   4. **Truncated anchor** (amended 2026-09-29, A1: the ring holds 512 events, and a long or
+      reasoning-heavy turn outgrows it). A running turn **probes the anchor before step 3**. If the
+      probe is `truncated`, ask for the gap after the watermark instead:
+      - no `message.complete` in the gap → **skip step 3** and apply every gap event. The screen is
+        exact up to the watermark, so the partial text before the drop stays;
+      - a `message.complete` in the gap (that turn is persisted) → step 3, then apply only what follows
+        the last complete;
+      - the gap is truncated or fails → step 3 with no replay; the partial text before the drop is lost.
+
+      If the probe was not truncated but the post-history anchor replay is (the ring moved while
+      history loaded), apply the probe batch, then the gap after its highest seq.
+   5. A replay's own `open_requests` go through the same dedupe.
 5. Live events resume. Events that arrive during steps 2–4 are **parked and applied after step 4**, in
    `seq` order, deduped against the replay.
 
@@ -687,7 +698,8 @@ codes alone):
   - resume → history → replay order;
   - **reconnect mid-clarify → history replace → the card is still present and answerable** (review B1);
   - replay applies only post-last-complete events;
-  - `truncated` skips replay;
+  - a truncated anchor replays the gap after the watermark and keeps the screen; a gap with a complete
+    replaces history first; a truncated gap falls back to the replace (A1);
   - events parked during replay are deduped by `seq`.
 - **Cards:**
   - add, answer (optimistic) and cancel for every kind, with each reason's label;

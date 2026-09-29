@@ -252,6 +252,101 @@ describe('sequence order', () => {
       expect(h.client.call).toHaveBeenCalledTimes(2);
       expect(h.log).toContain('history:stored-1');
       expect(h.applied.filter((e) => e.type !== 'gateway.ready')).toEqual([]);
+      // the reset is real: the next running reconnect has no anchor, so it does not replay at all
+      h.results['session.resume'] = [resume({ running: true })];
+      await h.orch.reconnect('close');
+      expect(h.client.call).toHaveBeenCalledTimes(3); // + resume only
+    });
+
+    it('a turn ended in the gap (persisted): history replace, then only what follows the complete', async () => {
+      // T1 finished during the drop and a prompt from another device started T2. The replace
+      // brings T1's full text and T2's prompt row; replaying T1's tail on top would duplicate it.
+      const h = longTurn();
+      h.results['session.events.since'] = [
+        since([], { truncated: true }),
+        since([
+          { type: 'message.delta', session_id: 'live-1', seq: 701, payload: { text: ' end' } },
+          { type: 'message.complete', session_id: 'live-1', seq: 702 },
+          { type: 'message.start', session_id: 'live-1', seq: 703 },
+          { type: 'message.delta', session_id: 'live-1', seq: 704, payload: { text: 'T2' } },
+        ]),
+      ];
+      await h.orch.reconnect('close');
+      expect(h.log).toContain('history:stored-1');
+      expect(h.applied.map((e) => [e.type, e.seq, e.replayed])).toEqual([
+        ['message.start', 703, true],
+        ['message.delta', 704, true],
+      ]);
+    });
+
+    it('dispose between the probe and the gap query: nothing further is fetched or applied', async () => {
+      const h = longTurn();
+      let releaseProbe!: (v: unknown) => void;
+      h.results['session.events.since'] = [new Promise((r) => (releaseProbe = r)) as any, since([])];
+      const run = h.orch.reconnect('close');
+      await flush();
+      h.orch.dispose();
+      releaseProbe(since([], { truncated: true }));
+      await run;
+      expect(h.client.call).toHaveBeenCalledTimes(2); // resume + probe only
+      expect(h.log).not.toContain('history:stored-1');
+      expect(h.applied).toEqual([]);
+    });
+  });
+
+  describe('the probe reached the anchor (not truncated)', () => {
+    function runningTurn() {
+      const h = harness();
+      h.orch.onLiveEvent({ type: 'message.complete', session_id: 'live-1', seq: 9 } as any);
+      h.orch.onLiveEvent({ type: 'message.start', session_id: 'live-1', seq: 10 } as any);
+      h.orch.onLiveEvent({ type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } } as any);
+      h.applied.length = 0;
+      h.results['session.resume'] = [resume({ running: true })];
+      return h;
+    }
+
+    it('the turn finished while history loaded: the post-history batch ends in a complete, so nothing is re-applied', async () => {
+      const h = runningTurn();
+      h.results['session.events.since'] = [
+        since([
+          { type: 'message.start', session_id: 'live-1', seq: 10 },
+          { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } },
+        ]),
+        since([
+          { type: 'message.start', session_id: 'live-1', seq: 10 },
+          { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } },
+          { type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: ' done' } },
+          { type: 'message.complete', session_id: 'live-1', seq: 13 },
+        ]),
+      ];
+      await h.orch.reconnect('close');
+      expect(h.log).toContain('history:stored-1');
+      expect(h.applied).toEqual([]); // history already holds the finished turn: no duplicate
+    });
+
+    it('the ring moved past the anchor while history loaded: apply the probe, then only what followed it', async () => {
+      // RED (review #1): the post-history call came back truncated and the code returned, after
+      // the replace had removed the unpersisted row — A1 again, one step later.
+      const h = runningTurn();
+      h.results['session.events.since'] = [
+        since([
+          { type: 'message.start', session_id: 'live-1', seq: 10 },
+          { type: 'message.delta', session_id: 'live-1', seq: 11, payload: { text: 'pre' } },
+          { type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: ' gap' } },
+        ]),
+        since([], { truncated: true }),
+        since([
+          { type: 'message.delta', session_id: 'live-1', seq: 12, payload: { text: ' gap' } },
+          { type: 'message.delta', session_id: 'live-1', seq: 13, payload: { text: ' more' } },
+        ]),
+      ];
+      await h.orch.reconnect('close');
+      expect(h.client.call).toHaveBeenNthCalledWith(4, 'session.events.since', { session_id: 'live-1', last_seen: 12 });
+      expect(h.applied.map((e) => [e.type, e.seq, e.replayed])).toEqual([
+        ['message.delta', 11, true],
+        ['message.delta', 12, true],
+        ['message.delta', 13, true],
+      ]);
     });
   });
 

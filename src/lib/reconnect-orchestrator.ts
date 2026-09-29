@@ -11,8 +11,9 @@
 //   4. in-flight replay via session.events.since, from the turn anchor (fallback: the highest
 //      seq seen) so a running turn's whole unpersisted text returns after the history replace;
 //      apply only events after the batch's last message.complete. A running turn probes the
-//      anchor BEFORE step 3: when the ring no longer reaches it (truncated), step 3 is skipped
-//      and only the gap after the watermark is replayed onto what is on screen (A1).
+//      anchor BEFORE step 3: when the ring no longer reaches it (truncated), only the gap after
+//      the watermark is replayed, and step 3 is skipped unless a turn ended in the gap (A1;
+//      see historyAndReplay).
 //   5. live events that arrived during 2–4 were parked; flush them in seq order, deduped.
 import type { GatewayClient } from '@/api/gatewayClient';
 import type { GatewayEvent, RpcMethods } from '@/vendor/hermes-gateway';
@@ -154,15 +155,23 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
     return (Array.isArray(res.events) ? res.events : []) as unknown as GatewayEvent[];
   }
 
+  function hasComplete(res: SinceResult): boolean {
+    return eventsOf(res).some((e) => e?.type === 'message.complete');
+  }
+
   /**
    * Steps 3–4 for a RUNNING turn. The anchor replay is only safe to pair with the history
    * replace when the ring buffer still reaches back to the anchor; a long turn outgrows it
    * (A1: 512 events, reasoning-heavy turns run ~1750), and the replace would then remove the
-   * unpersisted row with nothing to restore it. So probe first:
-   * - not truncated → history replace, then the anchor replay (re-fetched AFTER history so a
-   *   turn that finishes in between is not duplicated);
-   * - truncated → keep what is on screen (it is exact up to the watermark) and replay only the
-   *   gap after the watermark; if that is truncated or fails too, fall back to the replace.
+   * unpersisted row with nothing to restore it. So probe the anchor first:
+   * - not truncated → history replace, then the anchor replay, re-fetched AFTER history so a
+   *   turn that finishes in between is not duplicated. If the ring moved past the anchor while
+   *   history loaded, the probe still holds the turn: apply it, then only what followed it.
+   * - truncated → replay only the gap after the watermark. With no turn boundary in the gap the
+   *   screen is kept as is (it is exact up to the watermark). A message.complete in the gap means
+   *   that turn is persisted, so the history replace loses nothing: replace, then apply what
+   *   follows the last complete (a turn started from another device keeps its prompt row).
+   * - the gap is truncated too, or fails → the history replace alone (the old behaviour).
    */
   async function historyAndReplay(storedId: string, liveId: string, skipHistory: boolean): Promise<void> {
     // Prefer the turn anchor so the whole unpersisted turn is re-applied after the history replace;
@@ -181,13 +190,23 @@ export function createReconnectOrchestrator(deps: OrchestratorDeps): ReconnectOr
     if (probe?.truncated && seenBefore > anchor) {
       const gap = await eventsSince(liveId, seenBefore);
       if (disposed) return;
-      if (gap && !gap.truncated) return applyGap(liveId, gap, seenBefore);
+      if (gap && !gap.truncated) {
+        if (!hasComplete(gap)) return applyGap(liveId, gap, seenBefore);
+        await loadHistory();
+        if (disposed) return;
+        return applyAfterLastComplete(liveId, gap, seenBefore);
+      }
     }
     await loadHistory();
     if (disposed || !probe || probe.truncated) return;
     const res = await eventsSince(liveId, anchor);
-    if (disposed || !res || res.truncated) return;
-    applyAfterLastComplete(liveId, res, seenBefore);
+    if (disposed || res === null) return;
+    if (!res.truncated) return applyAfterLastComplete(liveId, res, seenBefore);
+    applyAfterLastComplete(liveId, probe, seenBefore);
+    const after = watermarks.get(liveId) ?? seenBefore;
+    const tail = await eventsSince(liveId, after);
+    if (disposed || !tail || tail.truncated) return;
+    applyGap(liveId, tail, after);
   }
 
   /** Truncated path: the screen was not replaced, so every event after the watermark is new. */
