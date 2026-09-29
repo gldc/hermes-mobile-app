@@ -124,7 +124,7 @@ export function Composer({
             </View>
             {running ? (
               <Text style={{ color: colors.textFaint, fontSize: 12.5, alignSelf: 'center', marginLeft: 10, flexShrink: 1 }}>
-                Sends after Hermes finishes
+                Tap Send once Hermes finishes
               </Text>
             ) : null}
           </Animated.View>

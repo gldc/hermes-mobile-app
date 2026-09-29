@@ -53,10 +53,12 @@ test('stopping: "Stopping…", Stop and steer disabled', async () => {
   expect(handlers.onStop).not.toHaveBeenCalled();
 });
 
-test('a staged photo while streaming says it waits for the turn to finish', async () => {
+// Final review m5: nothing sends the photo on its own when the turn ends, so the copy must not promise it.
+test('a staged photo while streaming says it can be sent once the turn finishes', async () => {
   const { el } = setup({ kind: 'stop+steer', stopEnabled: true, steerEnabled: false }, { stagedImageUri: 'file:///p.jpg' });
   await render(el);
-  expect(screen.getByText('Sends after Hermes finishes')).toBeOnTheScreen();
+  expect(screen.getByText('Tap Send once Hermes finishes')).toBeOnTheScreen();
+  expect(screen.queryByText(/^Sends after/)).toBeNull();
 });
 
 test('not ready: Stop disabled too', async () => {
