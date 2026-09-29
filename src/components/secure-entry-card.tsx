@@ -4,7 +4,7 @@
 // while the card is open, so every exit path (send, skip, request.cancel, interrupt, local timeout,
 // unmount) unmounts it and the value is gone. It is never lifted, logged, or put in the turn controller.
 import { useEffect, useRef, useState } from 'react';
-import { Text, TextInput, View, type HostInstance } from 'react-native';
+import { Text, TextInput, View, useWindowDimensions, type HostInstance } from 'react-native';
 import { CardButton } from '@/components/card-button';
 import { Icon } from '@/components/icon';
 import { confirmWithBiometrics, type BiometricOutcome } from '@/lib/biometric';
@@ -57,6 +57,7 @@ function SecureEntryForm({
   onInputFocus?: (measureField: HostInstance['measureInWindow']) => void;
 }) {
   const { colors } = useTheme();
+  const { fontScale } = useWindowDimensions();
   const inputRef = useRef<TextInput>(null);
   const [value, setValue] = useState('');
   const [authing, setAuthing] = useState(false);
@@ -116,7 +117,9 @@ function SecureEntryForm({
           borderWidth: 1,
           borderColor: colors.border,
           paddingHorizontal: 12,
-          height: 44,
+          // Grows with Dynamic Type: a fixed 44 pt was filled edge to edge at accessibility sizes (sim S3 s3).
+          minHeight: 44,
+          paddingVertical: Math.round(10 * Math.min(fontScale, 2)),
           fontSize: 16,
         }}
       />

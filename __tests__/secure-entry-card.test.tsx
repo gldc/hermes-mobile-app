@@ -6,6 +6,11 @@ import type { RequestCardState } from '../src/lib/turn-controller';
 
 jest.mock('../src/components/icon', () => ({ Icon: () => null }));
 jest.mock('expo-local-authentication', () => ({ authenticateAsync: jest.fn() }));
+const mockFontScale = { value: 1 };
+jest.mock('react-native/Libraries/Utilities/useWindowDimensions', () => ({
+  __esModule: true,
+  default: () => ({ width: 402, height: 874, scale: 3, fontScale: mockFontScale.value }),
+}));
 
 const SECRET = 'sk-live-DO-NOT-LEAK-4242';
 const T0 = 1_700_000_000_000;
@@ -224,4 +229,15 @@ describe('malformed params (m3)', () => {
     await render(<SecureEntryCard card={{ ...sudo(), params: null }} provenance={null} onSend={jest.fn()} onSkip={jest.fn()} now={() => T0} />);
     expect(screen.getByLabelText('Administrator password')).toBeOnTheScreen();
   });
+});
+
+// Sim S3 s3: a fixed 44 pt field was filled edge to edge at accessibility text sizes.
+test('the field grows with text size: minHeight, no fixed height, padding scaled by fontScale', async () => {
+  mockFontScale.value = 1.5;
+  await render(<SecureEntryCard card={secret()} provenance="agent" onSend={jest.fn()} onSkip={jest.fn()} now={() => T0} />);
+  const style = field().props.style;
+  expect(style.height).toBeUndefined();
+  expect(style.minHeight).toBe(44);
+  expect(style.paddingVertical).toBe(15);
+  mockFontScale.value = 1;
 });
