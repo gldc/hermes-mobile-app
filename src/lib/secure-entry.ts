@@ -23,8 +23,16 @@ export function countdownA11y(s: number): string {
   return `${parts.join(' ') || '0 seconds'} remaining`;
 }
 
-export function skillNameOf(params: SecretRequestParams): string | null {
-  const n = params.metadata?.skill_name;
+/** A request's params as a record of unknowns: server data is never trusted to match its type (m3). */
+function fields<T>(params: unknown): Partial<Record<keyof T, unknown>> {
+  return typeof params === 'object' && params !== null ? (params as Partial<Record<keyof T, unknown>>) : {};
+}
+
+const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+
+export function skillNameOf(params: unknown): string | null {
+  const meta = fields<SecretRequestParams>(params).metadata;
+  const n = typeof meta === 'object' && meta !== null ? (meta as Record<string, unknown>).skill_name : undefined;
   return typeof n === 'string' && n.trim() ? n.trim() : null;
 }
 
@@ -47,7 +55,7 @@ export interface SkillsLookup {
 export function provenanceForCard(card: RequestCardState, lookup: SkillsLookup | null): ProvenanceLabel | null {
   const covered = lookup !== null && lookup.ids.includes(card.id);
   if (!covered && card.status === 'pending') return null;
-  return provenanceFor(lookup?.list ?? null, skillNameOf(card.params as SecretRequestParams));
+  return provenanceFor(lookup?.list ?? null, skillNameOf(card.params));
 }
 
 export function provenanceText(p: ProvenanceLabel): string {
@@ -68,28 +76,34 @@ export interface SecureEntryCopy {
   authReason: string;
 }
 
-export function secureEntryCopy(card: RequestCardState): SecureEntryCopy {
+/**
+ * The card's copy, or null when it can't be shown (final review m3): a secret without a usable
+ * `env_var` — the value's destination is the one fact the card must state. Sudo needs no params.
+ */
+export function secureEntryCopy(card: RequestCardState): SecureEntryCopy | null {
   if (card.method === 'sudo') {
-    const p = card.params as SudoRequestParams;
+    const p = fields<SudoRequestParams>(card.params);
     return {
-      method: 'sudo', title: 'Administrator password', ask: null, command: p.command || null,
+      method: 'sudo', title: 'Administrator password', ask: null, command: text(p.command),
       textContentType: 'password', warning: null, destination: null, skillName: null,
       fieldLabel: 'Administrator password', placeholder: 'Password',
       authReason: 'Send the administrator password to Hermes',
     };
   }
-  const p = card.params as SecretRequestParams;
+  const p = fields<SecretRequestParams>(card.params);
+  const envVar = text(p.env_var)?.trim();
+  if (!envVar) return null;
   return {
     method: 'secret',
-    title: `Value for ${p.env_var}`,
-    ask: p.prompt || null,
+    title: `Value for ${envVar}`,
+    ask: text(p.prompt),
     command: null,
     textContentType: 'none', // never offer to save an API key to Passwords (review m14)
     warning: "Only continue if you asked for this — the agent can write or edit the skill that's asking.",
     destination: "Saved to the gateway's .env — the agent can read it.",
-    skillName: skillNameOf(p),
-    fieldLabel: `Value for ${p.env_var}`,
+    skillName: skillNameOf(card.params),
+    fieldLabel: `Value for ${envVar}`,
     placeholder: 'Paste or type the value',
-    authReason: `Send ${p.env_var} to Hermes`,
+    authReason: `Send ${envVar} to Hermes`,
   };
 }

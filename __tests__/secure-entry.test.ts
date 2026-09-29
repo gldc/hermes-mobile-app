@@ -83,3 +83,32 @@ describe('provenanceForCard', () => {
     expect(provenanceForCard(secret('a', 'answered'), { ids: ['a'], list: null })).toBe('unknown');
   });
 });
+
+// Final review m3: malformed params used to throw in render (p.env_var of null) and replace the chat.
+describe('malformed params (m3)', () => {
+  const raw = (method: 'secret' | 'sudo', params: unknown): RequestCardState => ({ ...card(method, {}), params });
+
+  test.each([
+    ['null params', null],
+    ['no env_var', { session_id: 's', prompt: 'Your key' }],
+    ['a blank env_var', { session_id: 's', env_var: ' ', prompt: 'p' }],
+    ['a non-string env_var', { session_id: 's', env_var: 42, prompt: 'p' }],
+  ])('secret with %s → null (can\'t be shown)', (_name, params) => {
+    expect(secureEntryCopy(raw('secret', params))).toBeNull();
+  });
+
+  test('a secret with a non-string prompt drops the ask; a bad metadata has no skill name', () => {
+    const c = secureEntryCopy(raw('secret', { session_id: 's', env_var: 'K', prompt: 3, metadata: 'weather' }));
+    expect(c).toMatchObject({ title: 'Value for K', ask: null, skillName: null });
+  });
+
+  test('sudo needs no params: null or a non-string command shows the card without a command', () => {
+    expect(secureEntryCopy(raw('sudo', null))).toMatchObject({ method: 'sudo', title: 'Administrator password', command: null });
+    expect(secureEntryCopy(raw('sudo', { session_id: 's', command: ['rm'] }))).toMatchObject({ command: null });
+  });
+
+  test('skill name and provenance never throw on null params', () => {
+    expect(skillNameOf(null)).toBeNull();
+    expect(provenanceForCard({ ...raw('secret', null), status: 'answered' }, null)).toBe('unknown');
+  });
+});

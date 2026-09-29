@@ -16,6 +16,7 @@ import {
   secureEntryCopy,
   type ProvenanceLabel,
   type SecureEntryCopy,
+  type SecureMethod,
 } from '@/lib/secure-entry';
 import { cancelLabel, type RequestCardState } from '@/lib/turn-controller';
 import { useTheme, type ThemeColors } from '@/theme';
@@ -165,6 +166,7 @@ export function SecureEntryCard({
 }: SecureEntryCardProps) {
   const { colors } = useTheme();
   const copy = secureEntryCopy(card);
+  const method: SecureMethod = card.method === 'sudo' ? 'sudo' : 'secret';
   const [nowMs, setNowMs] = useState(() => now());
   const pending = card.status === 'pending';
   useEffect(() => {
@@ -172,30 +174,60 @@ export function SecureEntryCard({
     const t = setInterval(() => setNowMs(now()), 1000);
     return () => clearInterval(t);
   }, [pending, now]);
-  const remaining = secondsRemaining(copy.method, card.receivedAt, nowMs);
+  const remaining = secondsRemaining(method, card.receivedAt, nowMs);
   const open = pending && remaining > 0;
   const settled = settledRow(card, colors);
 
   function stillOpen(): boolean {
     const t = now();
     setNowMs(t);
-    return secondsRemaining(copy.method, card.receivedAt, t) > 0;
+    return secondsRemaining(method, card.receivedAt, t) > 0;
+  }
+
+  const frame = {
+    backgroundColor: colors.raised,
+    borderRadius: 16,
+    borderCurve: 'continuous',
+    borderWidth: 1,
+    borderColor: open ? colors.accent : colors.border,
+    padding: 14,
+    gap: 10,
+    marginVertical: 6,
+    alignSelf: 'stretch',
+  } as const;
+  const outcome = (
+    <View accessibilityLabel={settled.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
+      <Icon sf={settled.icon} size={14} color={settled.tint} />
+      <Text style={{ color: settled.tint, fontSize: 13.5, fontWeight: '600' }}>{settled.label}</Text>
+    </View>
+  );
+
+  // Malformed params (final review m3): never throw in render — that replaced the whole chat. A secret
+  // without its env var can't say where the value goes, so there is no field: only Skip ({value:""},
+  // the contract's decline). Never -32601/-32603, which would withdraw the request for every client.
+  if (copy === null) {
+    return (
+      <View accessibilityLabel="Secret request that can't be shown" style={frame}>
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
+          <Icon sf="lock.fill" size={14} color={open ? colors.accent : colors.textFaint} />
+          <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>Hermes asked for a value</Text>
+        </View>
+        <Text style={{ color: colors.textDim, fontSize: 14, lineHeight: 20 }}>{"This request can't be shown."}</Text>
+        {open ? (
+          <View style={{ flexDirection: 'row' }}>
+            <CardButton label="Skip" a11y="Skip this request" onPress={onSkip} flex />
+          </View>
+        ) : (
+          outcome
+        )}
+      </View>
+    );
   }
 
   return (
     <View
       accessibilityLabel={copy.method === 'sudo' ? 'Administrator password request' : `Secret request: ${copy.title}`}
-      style={{
-        backgroundColor: colors.raised,
-        borderRadius: 16,
-        borderCurve: 'continuous',
-        borderWidth: 1,
-        borderColor: open ? colors.accent : colors.border,
-        padding: 14,
-        gap: 10,
-        marginVertical: 6,
-        alignSelf: 'stretch',
-      }}
+      style={frame}
     >
       <View style={{ flexDirection: 'row', alignItems: 'center', gap: 7 }}>
         <Icon sf="lock.fill" size={14} color={open ? colors.accent : colors.textFaint} />
@@ -266,10 +298,7 @@ export function SecureEntryCard({
           onInputFocus={onInputFocus}
         />
       ) : (
-        <View accessibilityLabel={settled.label} style={{ flexDirection: 'row', alignItems: 'center', gap: 6 }}>
-          <Icon sf={settled.icon} size={14} color={settled.tint} />
-          <Text style={{ color: settled.tint, fontSize: 13.5, fontWeight: '600' }}>{settled.label}</Text>
-        </View>
+        outcome
       )}
     </View>
   );

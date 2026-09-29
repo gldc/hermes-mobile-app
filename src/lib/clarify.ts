@@ -23,24 +23,42 @@ export function parseChoice(wire: string): ClarifyChoiceView {
   return { label: recommended ? wire.replace(RECOMMENDED, '') : wire, recommended };
 }
 
-function choicesOf(raw: string[] | null | undefined): ClarifyChoiceView[] | null {
-  return Array.isArray(raw) && raw.length > 0 ? raw.map(parseChoice) : null;
+function choicesOf(raw: unknown): ClarifyChoiceView[] | null {
+  const wire = Array.isArray(raw) ? raw.filter((c): c is string => typeof c === 'string') : [];
+  return wire.length > 0 ? wire.map(parseChoice) : null;
 }
 
-export function clarifyView(params: ClarifyRequestParams): ClarifyView {
-  if (Array.isArray(params.questions) && params.questions.length > 0) {
-    return {
-      batch: true,
-      questions: params.questions.map((q) => {
-        const choices = choicesOf(q.choices);
-        return { qid: q.qid, question: q.question, choices, multiSelect: Boolean(q.multi_select) && choices !== null };
-      }),
-    };
+const text = (v: unknown): string | null => (typeof v === 'string' && v.trim() ? v : null);
+
+/** One batch question, or null when it is malformed (no string qid or question). */
+function questionOf(raw: unknown): ClarifyQuestionView | null {
+  if (typeof raw !== 'object' || raw === null) return null;
+  const q = raw as Partial<Record<keyof NonNullable<ClarifyRequestParams['questions']>[number], unknown>>;
+  const qid = text(q.qid);
+  const question = text(q.question);
+  if (qid === null || question === null) return null;
+  const choices = choicesOf(q.choices);
+  return { qid, question, choices, multiSelect: q.multi_select === true && choices !== null };
+}
+
+/**
+ * The card's view, or null when the params can't be shown (final review m3): not an object, a single
+ * question with no text, or a batch with any malformed question — half a batch can't be answered.
+ * The card then offers only Skip; nothing here ever throws on server data.
+ */
+export function clarifyView(params: unknown): ClarifyView | null {
+  if (typeof params !== 'object' || params === null) return null;
+  const p = params as Partial<Record<keyof ClarifyRequestParams, unknown>>;
+  if (Array.isArray(p.questions) && p.questions.length > 0) {
+    const questions = p.questions.map(questionOf);
+    return questions.every((q): q is ClarifyQuestionView => q !== null) ? { batch: true, questions } : null;
   }
-  const choices = choicesOf(params.choices);
+  const question = text(p.question);
+  if (question === null) return null;
+  const choices = choicesOf(p.choices);
   return {
     batch: false,
-    questions: [{ qid: SINGLE_QID, question: params.question ?? '', choices, multiSelect: Boolean(params.multi_select) && choices !== null }],
+    questions: [{ qid: SINGLE_QID, question, choices, multiSelect: p.multi_select === true && choices !== null }],
   };
 }
 

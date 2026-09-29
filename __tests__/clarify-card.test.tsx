@@ -15,7 +15,7 @@ const card = (params: Record<string, unknown>, over: Partial<RequestCardState> =
 const responder = () => ({
   clarifySingle: jest.fn((_c: RequestCardState, _a: string | string[]) => ({ ok: true as const })),
   clarifyLock: jest.fn(async (_c: RequestCardState, _q: string, _a: string | string[]) => 'ok' as const),
-  clarifySubmitAll: jest.fn(async (_c: RequestCardState, _a: Array<{ qid: string; answer: string | string[] }>) => 'resolved' as const),
+  clarifySubmitAll: jest.fn(async (_c: RequestCardState, _a: { qid: string; answer: string | string[] }[]) => 'resolved' as const),
   clarifySkipAll: jest.fn((_c: RequestCardState) => ({ ok: true as const })),
 });
 const batch = {
@@ -148,7 +148,7 @@ test.each([
   [{ status: 'cancelled', cancelReason: 'interrupted' }, 'Stopped'],
   [{ status: 'skipped' }, 'Skipped'],
   [{ status: 'answered', resolution: 'Blue' }, 'Answered: Blue'],
-] as Array<[Partial<RequestCardState>, string]>)('settled %o → %s, no controls', async (over, label) => {
+] as [Partial<RequestCardState>, string][])('settled %o → %s, no controls', async (over, label) => {
   await render(<ClarifyCard card={card({ question: 'Color?', choices: ['Blue'] }, over)} responder={responder()} />);
   expect(screen.getByText(label)).toBeOnTheScreen();
   expect(screen.queryByRole('button', { name: 'Send answer' })).toBeNull();
@@ -213,4 +213,34 @@ test('V5: a locked batch question keeps its number', async () => {
   await render(<ClarifyCard card={card(batch, { lockedAnswers: { q0: 'staging' } })} responder={responder()} />);
   expect(screen.getByText('1. Which env?')).toBeOnTheScreen();
   expect(screen.getByText('2. Anything else?')).toBeOnTheScreen();
+});
+
+// Final review m3: a malformed clarify threw in render and RouteError replaced the whole chat. It now
+// reads "can't be shown" and offers Skip (a cancel-all response, the contract's decline) — never -32601.
+describe('malformed params (m3)', () => {
+  const broken = (over: Partial<RequestCardState> = {}): RequestCardState => ({ ...card({}), params: null, ...over });
+
+  test('renders a safe card with Skip, which sends the cancel-all response', async () => {
+    const r = responder();
+    const c = broken();
+    await render(<ClarifyCard card={c} responder={r} />);
+    expect(screen.getByText("This request can't be shown.")).toBeOnTheScreen();
+    expect(screen.queryByLabelText('Answer')).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Skip this request' }));
+    expect(r.clarifySkipAll).toHaveBeenCalledWith(c);
+    expect(r.clarifySingle).not.toHaveBeenCalled();
+    expect(r.clarifyLock).not.toHaveBeenCalled();
+  });
+
+  test('a batch with a malformed question is not half-drawn', async () => {
+    await render(<ClarifyCard card={card({ questions: [{ qid: 'q0', question: 'Env?' }, { qid: 'q1' }] })} responder={responder()} />);
+    expect(screen.getByText("This request can't be shown.")).toBeOnTheScreen();
+    expect(screen.queryByText(/Env\?/)).toBeNull();
+  });
+
+  test('once settled it shows the outcome, no Skip', async () => {
+    await render(<ClarifyCard card={broken({ status: 'skipped' })} responder={responder()} />);
+    expect(screen.getByText('Skipped')).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'Skip this request' })).toBeNull();
+  });
 });

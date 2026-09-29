@@ -199,3 +199,29 @@ test('V2: the secret title is never truncated', async () => {
   await render(<SecureEntryCard card={secret()} provenance="hub" onSend={jest.fn()} onSkip={jest.fn()} now={() => T0} />);
   expect(screen.getByText('Value for OPENWEATHER_API_KEY').props.numberOfLines).toBeUndefined();
 });
+
+// Final review m3: malformed params threw in render (p.env_var of null) and replaced the whole chat.
+describe('malformed params (m3)', () => {
+  test('a secret without a usable env_var: "can\'t be shown", no field, Skip sends the skip response', async () => {
+    const onSkip = jest.fn();
+    const onSend = jest.fn();
+    await render(<SecureEntryCard card={secret({ params: null })} provenance={null} onSend={onSend} onSkip={onSkip} now={() => T0} />);
+    expect(screen.getByText("This request can't be shown.")).toBeOnTheScreen();
+    expect(screen.queryByPlaceholderText('Paste or type the value')).toBeNull();
+    expect(screen.queryByLabelText(/^Value for/)).toBeNull();
+    await fireEvent.press(screen.getByRole('button', { name: 'Skip this request' }));
+    expect(onSkip).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  test('once settled it shows the outcome, no Skip', async () => {
+    await render(<SecureEntryCard card={secret({ params: {}, status: 'skipped' })} provenance={null} onSend={jest.fn()} onSkip={jest.fn()} now={() => T0} />);
+    expect(screen.getByText('Skipped')).toBeOnTheScreen();
+    expect(screen.queryByRole('button', { name: 'Skip this request' })).toBeNull();
+  });
+
+  test('sudo with null params still asks for the password, without a command', async () => {
+    await render(<SecureEntryCard card={{ ...sudo(), params: null }} provenance={null} onSend={jest.fn()} onSkip={jest.fn()} now={() => T0} />);
+    expect(screen.getByLabelText('Administrator password')).toBeOnTheScreen();
+  });
+});

@@ -16,7 +16,6 @@ import {
 import type { ClarifyAnswer, RequestResponder } from '@/lib/request-answers';
 import { cancelLabel, type RequestCardState } from '@/lib/turn-controller';
 import { useTheme } from '@/theme';
-import type { ClarifyRequestParams } from '@/vendor/hermes-gateway';
 
 export type ClarifyResponder = Pick<RequestResponder, 'clarifySingle' | 'clarifyLock' | 'clarifySubmitAll' | 'clarifySkipAll'>;
 
@@ -243,7 +242,7 @@ export function ClarifyCard({
   onInputFocus?: (measureField: HostInstance['measureInWindow']) => void;
 }) {
   const { colors } = useTheme();
-  const view = clarifyView(card.params as ClarifyRequestParams);
+  const view = clarifyView(card.params);
   const [drafts, setDrafts] = useState<Record<string, ClarifyDraft>>({});
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -261,6 +260,7 @@ export function ClarifyCard({
   }
 
   async function submitAll() {
+    if (view === null) return;
     const answers = view.questions
       .filter((q) => !(q.qid in locked))
       .map((q) => ({ qid: q.qid, answer: draftAnswer(q, draftOf(q.qid)) ?? '' }));
@@ -275,35 +275,58 @@ export function ClarifyCard({
     setNote(result.ok ? null : result.message);
   }
 
+  const frame = {
+    backgroundColor: colors.raised,
+    borderRadius: 16,
+    borderCurve: 'continuous',
+    borderWidth: 1,
+    borderColor: pending ? colors.accent : colors.border,
+    padding: 14,
+    gap: 14,
+    marginVertical: 6,
+    alignSelf: 'stretch',
+  } as const;
+  const header = (title: string) => (
+    <View
+      style={{
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 7,
+      }}
+    >
+      <Icon sf="questionmark.bubble" size={15} color={pending ? colors.accent : colors.textFaint} />
+      <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>{title}</Text>
+    </View>
+  );
+  const noteRow = note ? <Text style={{ color: colors.danger, fontSize: 13 }}>{note}</Text> : null;
+
+  // Malformed params (final review m3): never throw in render — that replaced the whole chat. The card
+  // can't be answered as asked, so it offers only Skip: a response with no answers, the contract's
+  // cancel-all. Never -32601/-32603, which would withdraw the request for every client.
+  if (view === null) {
+    return (
+      <View accessibilityLabel="Hermes has a question that can't be shown" style={frame}>
+        {header('Hermes has a question')}
+        <Text style={{ color: colors.textDim, fontSize: 14, lineHeight: 20 }}>{"This request can't be shown."}</Text>
+        {pending ? (
+          <View style={{ flexDirection: 'row' }}>
+            <CardButton label="Skip" a11y="Skip this request" onPress={() => finish(responder.clarifySkipAll(card))} flex />
+          </View>
+        ) : (
+          <SettledRow card={card} />
+        )}
+        {noteRow}
+      </View>
+    );
+  }
+
   const first = view.questions[0];
   const singleAnswer = first ? draftAnswer(first, draftOf(first.qid)) : null;
   const title = view.batch ? `Hermes has ${view.questions.length} questions` : 'Hermes has a question';
 
   return (
-    <View
-      accessibilityLabel={title}
-      style={{
-        backgroundColor: colors.raised,
-        borderRadius: 16,
-        borderCurve: 'continuous',
-        borderWidth: 1,
-        borderColor: pending ? colors.accent : colors.border,
-        padding: 14,
-        gap: 14,
-        marginVertical: 6,
-        alignSelf: 'stretch',
-      }}
-    >
-      <View
-        style={{
-          flexDirection: 'row',
-          alignItems: 'center',
-          gap: 7,
-        }}
-      >
-        <Icon sf="questionmark.bubble" size={15} color={pending ? colors.accent : colors.textFaint} />
-        <Text style={{ color: colors.text, fontSize: 14.5, fontWeight: '700', flexShrink: 1 }}>{title}</Text>
-      </View>
+    <View accessibilityLabel={title} style={frame}>
+      {header(title)}
       {view.questions.map((q, i) => (
         <QuestionBlock
           key={q.qid}
@@ -343,7 +366,7 @@ export function ClarifyCard({
       ) : (
         <SettledRow card={card} />
       )}
-      {note ? <Text style={{ color: colors.danger, fontSize: 13 }}>{note}</Text> : null}
+      {noteRow}
     </View>
   );
 }
