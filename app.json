@@ -70,6 +70,12 @@
         }
       ],
       [
+        "expo-local-authentication",
+        {
+          "faceIDPermission": "Hermes asks for Face ID before sending a password or secret to your gateway."
+        }
+      ],
+      [
         "expo-build-properties",
         {
           "android": {

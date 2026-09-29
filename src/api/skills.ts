@@ -1,10 +1,10 @@
 // src/api/skills.ts — skills REST surface (docs/contracts/skills.md).
 //
-// Supported over REST: list (GET /api/skills, bare JSON array) and
-// enable/disable toggle (PUT /api/skills/toggle). NOT supported and therefore
-// deliberately absent here:
+// Supported over REST: list (GET /api/skills, bare JSON array, optionally
+// scoped with `?profile=`) and enable/disable toggle (PUT /api/skills/toggle).
+// NOT supported and therefore deliberately absent here:
 //   - pin/unpin — CLI-only (`hermes curator pin`), no HTTP endpoint;
-//   - per-skill `source`/`pinned` fields — not in the list payload;
+//   - per-skill `pinned` — not in the list payload;
 //   - reading an installed skill's SKILL.md — no content endpoint (the
 //     /api/files/read workaround is locked down for remote clients).
 import type { RestClient } from './restClient';
@@ -17,6 +17,8 @@ export interface SkillInfo {
   category: string;
   /** False when the skill is in the profile's disabled set (still listed). */
   enabled: boolean;
+  /** Where the gateway says the skill came from — a NAME lookup (review M8): information, not trust. */
+  provenance?: 'hub' | 'bundled' | 'agent';
 }
 
 export interface SkillToggleResponse {
@@ -28,9 +30,10 @@ export interface SkillToggleResponse {
 /** Only the generic verbs — keeps tests trivial and RestClient lean. */
 type Rest = Pick<RestClient, 'get' | 'put'>;
 
-/** All installed skills, disabled ones included (bare JSON array, not wrapped). */
-export function listSkills(rest: Rest): Promise<SkillInfo[]> {
-  return rest.get<SkillInfo[]>('/api/skills');
+/** All installed skills, disabled ones included (bare JSON array, not wrapped). `profile` scopes the
+ *  lookup to that profile (secure-entry cards pass the chat's profile). */
+export function listSkills(rest: Rest, profile?: string | null): Promise<SkillInfo[]> {
+  return rest.get<SkillInfo[]>(profile ? `/api/skills?profile=${encodeURIComponent(profile)}` : '/api/skills');
 }
 
 /** Enable/disable a skill for the agent. Persists to the profile's disabled-skills config. */

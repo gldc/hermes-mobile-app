@@ -112,3 +112,17 @@ describe('skills api', () => {
     });
   });
 });
+
+// listSkills(rest, profile?) — no-profile path already covered above
+// ("listSkills hits GET /api/skills and returns the bare array").
+describe('listSkills — profile scope + provenance (secure-entry cards, spec §6.4)', () => {
+  it('profile is passed as an encoded query param', async () => {
+    const f = fakeFetch(200, []);
+    await listSkills(client(f), 'work & play');
+    expect(f.calls[0].url).toBe('http://h/api/skills?profile=work%20%26%20play');
+  });
+  it('provenance passes through', async () => {
+    const f = fakeFetch(200, [skill({ provenance: 'agent' })]);
+    expect((await listSkills(client(f), null))[0].provenance).toBe('agent');
+  });
+});
