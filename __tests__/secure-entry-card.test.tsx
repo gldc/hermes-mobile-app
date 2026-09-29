@@ -1,4 +1,5 @@
 import { act, fireEvent, render, screen } from '@testing-library/react-native';
+import { TextInput } from 'react-native';
 import { SecureEntryCard } from '../src/components/secure-entry-card';
 import type { BiometricOutcome } from '../src/lib/biometric';
 import type { RequestCardState } from '../src/lib/turn-controller';
@@ -183,8 +184,13 @@ test('focusing the field hands the screen that field to scroll into view (Review
   await render(<SecureEntryCard card={secret()} provenance="hub" onSend={jest.fn()} onSkip={jest.fn()} onInputFocus={onInputFocus} now={() => T0} />);
   await fireEvent(field(), 'focus');
   expect(onInputFocus).toHaveBeenCalledTimes(1);
-  expect(onInputFocus.mock.calls[0][0].props.accessibilityLabel).toBe('Value for OPENWEATHER_API_KEY');
-  expect(typeof onInputFocus.mock.calls[0][0].measureInWindow).toBe('function');
+  // Only a measure callback leaves the form — never the field instance, whose props hold the value.
+  const spy = jest.spyOn(TextInput.prototype, 'measureInWindow');
+  const cb = jest.fn();
+  onInputFocus.mock.calls[0][0](cb);
+  expect(spy).toHaveBeenCalledWith(cb);
+  expect((spy.mock.contexts[0] as TextInput).props.accessibilityLabel).toBe('Value for OPENWEATHER_API_KEY');
+  spy.mockRestore();
 });
 
 // Sim S1 §2 V2: numberOfLines 2 cut the env var name ("Value for OPENWEATHER_A…") at accessibility

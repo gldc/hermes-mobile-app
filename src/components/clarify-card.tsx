@@ -89,7 +89,7 @@ function QuestionBlock(props: {
   disabled: boolean;
   onSkip: () => void;
   onConfirm: (answer: ClarifyAnswer) => void;
-  onInputFocus?: (field: HostInstance) => void;
+  onInputFocus?: (measureField: HostInstance['measureInWindow']) => void;
 }) {
   const { q, index, batch, draft, onChange, locked, lockedAnswer, settled, disabled, onSkip, onConfirm, onInputFocus } = props;
   const { colors } = useTheme();
@@ -191,7 +191,7 @@ function QuestionBlock(props: {
         value={draft.other}
         onChangeText={(t) => onChange(setOther(q, draft, t))}
         ref={inputRef}
-        onFocus={() => inputRef.current && onInputFocus?.(inputRef.current)}
+        onFocus={() => onInputFocus?.((cb) => inputRef.current?.measureInWindow(cb))}
         editable={!disabled}
         multiline
         placeholder={q.choices ? 'Other…' : 'Your answer'}
@@ -239,8 +239,8 @@ export function ClarifyCard({
 }: {
   card: RequestCardState;
   responder: ClarifyResponder;
-  /** A text field got focus: the screen scrolls that field (not the card) above the keyboard. */
-  onInputFocus?: (field: HostInstance) => void;
+  /** A text field got focus: the screen measures that field (not the card) and scrolls it above the keyboard. */
+  onInputFocus?: (measureField: HostInstance['measureInWindow']) => void;
 }) {
   const { colors } = useTheme();
   const view = clarifyView(card.params as ClarifyRequestParams);

@@ -28,8 +28,9 @@ export interface SecureEntryCardProps {
   onSkip: () => void;
   authenticate?: (reason: string) => Promise<BiometricOutcome>;
   now?: () => number;
-  /** The field got focus: the screen scrolls that field (not the card) above the keyboard. */
-  onInputFocus?: (field: HostInstance) => void;
+  /** The field got focus: the screen measures that field (not the card) and scrolls it above the keyboard.
+   *  Only a measure callback leaves the form — the field instance's props hold the value. */
+  onInputFocus?: (measureField: HostInstance['measureInWindow']) => void;
 }
 
 const AUTH_NOTES = {
@@ -52,7 +53,7 @@ function SecureEntryForm({
   stillOpen: () => boolean;
   onSend: (value: string) => void;
   onSkip: () => void;
-  onInputFocus?: (field: HostInstance) => void;
+  onInputFocus?: (measureField: HostInstance['measureInWindow']) => void;
 }) {
   const { colors } = useTheme();
   const inputRef = useRef<TextInput>(null);
@@ -95,7 +96,7 @@ function SecureEntryForm({
         value={value}
         onChangeText={setValue}
         ref={inputRef}
-        onFocus={() => inputRef.current && onInputFocus?.(inputRef.current)}
+        onFocus={() => onInputFocus?.((cb) => inputRef.current?.measureInWindow(cb))}
         editable={!authing}
         secureTextEntry
         autoCorrect={false}

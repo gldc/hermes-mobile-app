@@ -779,14 +779,14 @@ export default function ChatScreen() {
   const scrollOffsetRef = useRef(0);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => clearTimeout(scrollTimerRef.current ?? undefined), []);
-  function revealField(field: HostInstance) {
+  function revealField(measureField: HostInstance['measureInWindow']) {
     clearTimeout(scrollTimerRef.current ?? undefined);
     scrollTimerRef.current = setTimeout(() => {
       scrollTimerRef.current = null;
       const list = listRef.current?.getNativeScrollRef();
       if (!list || !('measureInWindow' in list)) return; // unmounted; FlatList's ref type is loose
       list.measureInWindow((_lx, listY, _lw, listH) => {
-        field.measureInWindow((_x, fieldY, _w, fieldH) => {
+        measureField((_x, fieldY, _w, fieldH) => {
           const offset = offsetToReveal({
             offset: scrollOffsetRef.current,
             fieldTop: fieldY,
