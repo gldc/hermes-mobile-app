@@ -1,21 +1,10 @@
 import type { ChatItem } from '../src/components/message-row';
-import { appendAfterStream, closeStreaming, createItemsMirror, rowIndexOf } from '../src/lib/transcript-rows';
+import { appendAfterStream, closeStreaming, createItemsMirror, offsetToReveal } from '../src/lib/transcript-rows';
 import { mergeRequestRows, type RequestCardState } from '../src/lib/turn-controller';
 
 const item = (key: string): ChatItem => ({ key, role: 'assistant', text: key, complete: true });
 const req = (id: string, anchorKey: string | null): RequestCardState => ({
   id, kind: 'approval', method: 'approval', params: {}, status: 'pending', legacy: false, receivedAt: 0, anchorKey,
-});
-
-test('rowIndexOf finds a card in the newest-first (inverted list) order', () => {
-  const rows = mergeRequestRows([item('i0'), item('i1')], [req('a', 'i0')]).reverse();
-  expect(rowIndexOf(rows, 'a')).toBe(1);
-  expect(rowIndexOf(rows, 'zz')).toBe(-1);
-});
-
-test('an open card orphaned by a history replace is still findable (it sits at the newest end)', () => {
-  const rows = mergeRequestRows([item('h0'), item('h1')], [req('a', 'gone')]).reverse();
-  expect(rowIndexOf(rows, 'a')).toBe(0);
 });
 
 // Plan A final review M5 (Preflight F3): React commits state after the JS turn, so an anchor read
@@ -96,5 +85,34 @@ describe('createItemsMirror anchor with a settle step', () => {
     const mirror = createItemsMirror<ChatItem>(() => {}, closeStreaming);
     mirror.update(() => [item('i0'), streaming('i1', 'Running it now.')]);
     expect(mirror.anchorKey()).toBe('i1');
+  });
+});
+
+// Sim S2 §1 (B2): scrolling the CARD row put a focused field of a card taller than the band above the
+// keyboard off-screen (a 3-question batch is 1140 pt; the band is ~430 pt). The field itself is revealed.
+describe('offsetToReveal (inverted list: a larger offset moves the content down)', () => {
+  const band = { visibleTop: 126, visibleBottom: 556, margin: 12 };
+
+  test('a field pushed above the band by the keyboard comes down to just under its top', () => {
+    // S2: Q1's "Other…" field at py −424 after the keyboard rose.
+    expect(offsetToReveal({ ...band, offset: 0, fieldTop: -424, fieldBottom: -384 })).toBe(562);
+  });
+
+  test('a field below the band goes up to just above the keyboard', () => {
+    // S2 viewPosition 1: Q3's field at py 965.
+    expect(offsetToReveal({ ...band, offset: 562, fieldTop: 965, fieldBottom: 1005 })).toBe(101);
+  });
+
+  test('a field already inside the band needs no scroll', () => {
+    expect(offsetToReveal({ ...band, offset: 40, fieldTop: 259, fieldBottom: 299 })).toBeNull();
+    expect(offsetToReveal({ ...band, offset: 40, fieldTop: 138, fieldBottom: 544 })).toBeNull(); // margins exactly met
+  });
+
+  test('a field taller than the band shows its top', () => {
+    expect(offsetToReveal({ ...band, offset: 400, fieldTop: 400, fieldBottom: 900 })).toBe(138); // top lands at 138
+  });
+
+  test('never scrolls past the newest end (offset 0)', () => {
+    expect(offsetToReveal({ ...band, offset: 20, fieldTop: 600, fieldBottom: 640 })).toBe(0);
   });
 });

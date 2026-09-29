@@ -1,10 +1,31 @@
-// src/lib/transcript-rows.ts — helpers over A's merged transcript rows. The merge itself is A's
-// `mergeRequestRows` (src/lib/turn-controller.ts): cards live outside `items` (spec §6.0, review B1.3).
-import type { TranscriptRow } from '@/lib/turn-controller';
+// src/lib/transcript-rows.ts — helpers for the chat screen's transcript. The merge with request cards
+// is A's `mergeRequestRows` (src/lib/turn-controller.ts): cards live outside `items` (spec §6.0, review B1.3).
 
-/** Index of a request card in the newest-first rows the inverted FlatList renders, or -1. */
-export function rowIndexOf<T>(rowsNewestFirst: TranscriptRow<T>[], cardId: string): number {
-  return rowsNewestFirst.findIndex((r) => r.kind === 'request' && r.card.id === cardId);
+/**
+ * The inverted chat list's scroll offset that brings a focused card field inside the visible band
+ * (under the floating header, above the composer and keyboard), or null when it is already there.
+ * All y values are window coordinates measured at scroll time. In the inverted list a larger offset
+ * moves the content DOWN. A field below the band is aligned to its bottom; one above it, or taller
+ * than it, to its top. Never past the newest end (offset 0). Sim S2 §1 (B2): a card taller than the
+ * band hid its focused field whichever edge of the CARD was aligned.
+ */
+export function offsetToReveal(p: {
+  offset: number;
+  fieldTop: number;
+  fieldBottom: number;
+  visibleTop: number;
+  visibleBottom: number;
+  margin?: number;
+}): number | null {
+  const margin = p.margin ?? 12;
+  const top = p.visibleTop + margin;
+  const bottom = p.visibleBottom - margin;
+  let shiftUp: number;
+  if (p.fieldTop < top || p.fieldBottom - p.fieldTop > bottom - top) shiftUp = p.fieldTop - top;
+  else if (p.fieldBottom > bottom) shiftUp = p.fieldBottom - bottom;
+  else return null;
+  const next = Math.max(0, p.offset - shiftUp);
+  return next === p.offset ? null : next;
 }
 
 /** A transcript item as far as streaming goes: an assistant segment is open while `complete` is false. */

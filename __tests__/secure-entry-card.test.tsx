@@ -178,9 +178,11 @@ test('countdown ticks and the card times out locally (value cleared)', async () 
   expect(screen.queryByDisplayValue(SECRET)).toBeNull();
 });
 
-test('focusing the field asks the screen to scroll the card into view (Review Focus 5)', async () => {
+test('focusing the field hands the screen that field to scroll into view (Review Focus 5, sim S2 B2)', async () => {
   const onInputFocus = jest.fn();
   await render(<SecureEntryCard card={secret()} provenance="hub" onSend={jest.fn()} onSkip={jest.fn()} onInputFocus={onInputFocus} now={() => T0} />);
   await fireEvent(field(), 'focus');
   expect(onInputFocus).toHaveBeenCalledTimes(1);
+  expect(onInputFocus.mock.calls[0][0].props.accessibilityLabel).toBe('Value for OPENWEATHER_API_KEY');
+  expect(typeof onInputFocus.mock.calls[0][0].measureInWindow).toBe('function');
 });

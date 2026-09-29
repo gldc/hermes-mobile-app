@@ -1,6 +1,6 @@
 // src/components/clarify-card.tsx — the agent's clarify question(s) (spec §6.2).
-import { useState } from 'react';
-import { ActivityIndicator, Pressable, Text, TextInput, View } from 'react-native';
+import { useRef, useState } from 'react';
+import { ActivityIndicator, Pressable, Text, TextInput, View, type HostInstance } from 'react-native';
 import { CardButton } from '@/components/card-button';
 import { Icon } from '@/components/icon';
 import {
@@ -87,10 +87,11 @@ function QuestionBlock(props: {
   disabled: boolean;
   onSkip: () => void;
   onConfirm: (answer: ClarifyAnswer) => void;
-  onInputFocus?: () => void;
+  onInputFocus?: (field: HostInstance) => void;
 }) {
   const { q, index, batch, draft, onChange, locked, lockedAnswer, disabled, onSkip, onConfirm, onInputFocus } = props;
   const { colors } = useTheme();
+  const inputRef = useRef<TextInput>(null);
   const n = index + 1;
   const forQ = batch ? ` for question ${n}` : '';
   if (locked) {
@@ -183,7 +184,8 @@ function QuestionBlock(props: {
       <TextInput
         value={draft.other}
         onChangeText={(t) => onChange(setOther(q, draft, t))}
-        onFocus={onInputFocus}
+        ref={inputRef}
+        onFocus={() => inputRef.current && onInputFocus?.(inputRef.current)}
         editable={!disabled}
         multiline
         placeholder={q.choices ? 'Other…' : 'Your answer'}
@@ -232,7 +234,8 @@ export function ClarifyCard({
 }: {
   card: RequestCardState;
   responder: ClarifyResponder;
-  onInputFocus?: () => void;
+  /** A text field got focus: the screen scrolls that field (not the card) above the keyboard. */
+  onInputFocus?: (field: HostInstance) => void;
 }) {
   const { colors } = useTheme();
   const view = clarifyView(card.params as ClarifyRequestParams);

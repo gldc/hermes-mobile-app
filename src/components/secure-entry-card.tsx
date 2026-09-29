@@ -4,7 +4,7 @@
 // while the card is open, so every exit path (send, skip, request.cancel, interrupt, local timeout,
 // unmount) unmounts it and the value is gone. It is never lifted, logged, or put in the turn controller.
 import { useEffect, useRef, useState } from 'react';
-import { Text, TextInput, View } from 'react-native';
+import { Text, TextInput, View, type HostInstance } from 'react-native';
 import { CardButton } from '@/components/card-button';
 import { Icon } from '@/components/icon';
 import { confirmWithBiometrics, type BiometricOutcome } from '@/lib/biometric';
@@ -28,7 +28,8 @@ export interface SecureEntryCardProps {
   onSkip: () => void;
   authenticate?: (reason: string) => Promise<BiometricOutcome>;
   now?: () => number;
-  onInputFocus?: () => void;
+  /** The field got focus: the screen scrolls that field (not the card) above the keyboard. */
+  onInputFocus?: (field: HostInstance) => void;
 }
 
 const AUTH_NOTES = {
@@ -51,9 +52,10 @@ function SecureEntryForm({
   stillOpen: () => boolean;
   onSend: (value: string) => void;
   onSkip: () => void;
-  onInputFocus?: () => void;
+  onInputFocus?: (field: HostInstance) => void;
 }) {
   const { colors } = useTheme();
+  const inputRef = useRef<TextInput>(null);
   const [value, setValue] = useState('');
   const [authing, setAuthing] = useState(false);
   const [note, setNote] = useState<string | null>(null);
@@ -92,7 +94,8 @@ function SecureEntryForm({
       <TextInput
         value={value}
         onChangeText={setValue}
-        onFocus={onInputFocus}
+        ref={inputRef}
+        onFocus={() => inputRef.current && onInputFocus?.(inputRef.current)}
         editable={!authing}
         secureTextEntry
         autoCorrect={false}

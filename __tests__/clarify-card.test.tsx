@@ -150,9 +150,19 @@ test.each([
   expect(screen.queryByRole('button', { name: 'Send answer' })).toBeNull();
 });
 
-test('focusing a free-text field asks the screen to scroll the card into view (Review Focus 5)', async () => {
+test('focusing a free-text field hands the screen that field to scroll into view (Review Focus 5)', async () => {
   const onInputFocus = jest.fn();
   await render(<ClarifyCard card={card({ question: 'Why?', choices: null })} responder={responder()} onInputFocus={onInputFocus} />);
   await fireEvent(screen.getByLabelText('Answer'), 'focus');
   expect(onInputFocus).toHaveBeenCalledTimes(1);
+  expect(typeof onInputFocus.mock.calls[0][0].measureInWindow).toBe('function');
+});
+
+// Sim S2 §1 (B2): in a tall batch the screen must reveal the FOCUSED field, not the card, so each
+// question's field reports itself.
+test('batch: focusing question 2 hands over question 2\'s field, not the first one', async () => {
+  const onInputFocus = jest.fn();
+  await render(<ClarifyCard card={card(batch)} responder={responder()} onInputFocus={onInputFocus} />);
+  await fireEvent(screen.getByLabelText('Answer for question 2'), 'focus');
+  expect(onInputFocus.mock.calls[0][0].props.accessibilityLabel).toBe('Answer for question 2');
 });

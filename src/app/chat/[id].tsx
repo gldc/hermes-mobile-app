@@ -4,7 +4,7 @@ import { Image } from 'expo-image';
 import * as ImagePicker from 'expo-image-picker';
 import { router, useLocalSearchParams } from 'expo-router';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { ActivityIndicator, AppState, FlatList, Pressable, Share, Text, View } from 'react-native';
+import { ActivityIndicator, AppState, FlatList, Pressable, Share, Text, View, type HostInstance } from 'react-native';
 import Animated, { FadeIn, useAnimatedKeyboard, useAnimatedStyle } from 'react-native-reanimated';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createChatTransport, type ChatTransport } from '@/api/chat-transport';
@@ -51,7 +51,7 @@ import { provenanceForCard, type SkillsLookup } from '@/lib/secure-entry';
 import { emptyBatch, finalizeBatch, reduceSubagentEvent } from '@/lib/subagent-progress';
 import { parseTodoList } from '@/lib/todo';
 import { shouldReconnect } from '@/lib/reconnect';
-import { appendAfterStream, closeStreaming, createItemsMirror, rowIndexOf } from '@/lib/transcript-rows';
+import { appendAfterStream, closeStreaming, createItemsMirror, offsetToReveal } from '@/lib/transcript-rows';
 import { completionEffects, createTurnCommands, restoreSteerText, type TurnCommands } from '@/lib/turn-commands';
 import {
   completeStatus,
@@ -773,20 +773,34 @@ export default function ChatScreen() {
   const reversedRows = useMemo(() => [...rows].reverse(), [rows]);
 
   // Focusing a card's text field: wait for the keyboard inset (containerStyle paddingBottom) to
-  // apply, then bring the card up. One pending scroll at a time; cleared on unmount.
+  // apply, then scroll the FIELD into the band between the header and the composer — a tall card's
+  // field is off-screen whichever card edge is aligned (sim S2 B2). Everything is measured when the
+  // timer fires, so rows that changed meanwhile can't skew it (m2). One pending scroll; cleared on unmount.
+  const scrollOffsetRef = useRef(0);
   const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => () => clearTimeout(scrollTimerRef.current ?? undefined), []);
-  function scrollCardIntoView(cardId: string) {
+  function revealField(field: HostInstance) {
     clearTimeout(scrollTimerRef.current ?? undefined);
     scrollTimerRef.current = setTimeout(() => {
       scrollTimerRef.current = null;
-      const index = rowIndexOf(reversedRows, cardId);
-      if (index >= 0) listRef.current?.scrollToIndex({ index, viewPosition: 0, animated: true });
+      const list = listRef.current?.getNativeScrollRef();
+      if (!list || !('measureInWindow' in list)) return; // unmounted; FlatList's ref type is loose
+      list.measureInWindow((_lx, listY, _lw, listH) => {
+        field.measureInWindow((_x, fieldY, _w, fieldH) => {
+          const offset = offsetToReveal({
+            offset: scrollOffsetRef.current,
+            fieldTop: fieldY,
+            fieldBottom: fieldY + fieldH,
+            visibleTop: listY + insets.top + 64, // the list's header clearance (contentContainerStyle)
+            visibleBottom: listY + listH, // the composer's top; the list shrinks with the keyboard
+          });
+          if (offset !== null) listRef.current?.scrollToOffset({ offset, animated: true });
+        });
+      });
     }, 300);
   }
 
   function renderRequest(card: RequestCardState) {
-    const focus = () => scrollCardIntoView(card.id);
     switch (card.kind) {
       case 'approval':
         return (
@@ -801,7 +815,7 @@ export default function ChatScreen() {
           />
         );
       case 'clarify':
-        return <ClarifyCard card={card} responder={clarifyResponder} onInputFocus={focus} />;
+        return <ClarifyCard card={card} responder={clarifyResponder} onInputFocus={revealField} />;
       case 'secure-entry':
         // The typed value goes straight to the response frame — never into state, a ref or an error.
         return (
@@ -816,7 +830,7 @@ export default function ChatScreen() {
               const out = responder().value(card, '');
               if (!out.ok) setError(out.message);
             }}
-            onInputFocus={focus}
+            onInputFocus={revealField}
           />
         );
       case 'vault-declined':
@@ -876,7 +890,10 @@ export default function ChatScreen() {
           ref={listRef}
           data={reversedRows}
           inverted
-          onScrollToIndexFailed={() => listRef.current?.scrollToOffset({ offset: 0, animated: true })}
+          onScroll={(e) => {
+            scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
+          }}
+          scrollEventThrottle={16}
           keyExtractor={(r: Row) => (r.kind === 'item' ? r.item.key : `req:${r.card.id}`)}
           // 'interactive' is iOS-only; Android ignores it, so fall back to on-drag.
           keyboardDismissMode={process.env.EXPO_OS === 'ios' ? 'interactive' : 'on-drag'}
