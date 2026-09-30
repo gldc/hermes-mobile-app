@@ -1,11 +1,11 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useState } from 'react';
 import { Animated, Easing, View } from 'react-native';
 import { useTheme } from '@/theme';
 
 /** Three softly pulsing dots — shown while the agent is thinking. */
 export function ThinkingDots() {
   const { colors } = useTheme();
-  const anims = useRef([0, 1, 2].map(() => new Animated.Value(0.25))).current;
+  const [anims] = useState(() => [0, 1, 2].map(() => new Animated.Value(0.25)));
 
   useEffect(() => {
     const loops = anims.map((v, i) =>
