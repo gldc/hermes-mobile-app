@@ -17,13 +17,22 @@ npx expo run:ios --device   # native rebuild — ONLY needed when native deps/co
                         # dev client must be rebuilt once)
 npx tsc --noEmit        # typecheck (run before every commit)
 npx jest                # unit tests (run before every commit)
+npm run lint            # expo lint --max-warnings 0 — must be clean (0 errors, 0 warnings)
 ```
+
+`npm run lint` covers `src/` only (expo lint's default inputs); the top-level `__tests__/`
+is not linted. Fix React Compiler lint findings by removing the pattern — no
+`eslint-disable` comments and no rule downgrades.
 
 ## Git workflow
 
 **Never push to `main` directly.** All changes go through a branch + PR, even small ones.
-Branch names: `feat/...`, `fix/...`, `docs/...`. Run `npx tsc --noEmit && npx jest` before
-opening the PR.
+Branch names: `feat/...`, `fix/...`, `docs/...`. Run `npx tsc --noEmit && npx jest && npm run lint`
+before opening the PR.
+
+CI (`.github/workflows/ci.yml`) runs typecheck, `npx jest --ci` and `npm run lint` on every PR
+and on `main` (Node 22, SHA-pinned actions). Merge only when it is green — gate on the
+check's exit code, never on piped output.
 
 ## Architecture
 
