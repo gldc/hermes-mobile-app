@@ -10,6 +10,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { createChatTransport, type ChatTransport } from '@/api/chat-transport';
 import { RpcError, makeNativeSocket, type GatewayClient } from '@/api/gatewayClient';
 import { getModelInfo } from '@/api/models';
+import { clearStartedDraft, setStartedDraft } from '@/draft-chat-store';
 import { setSessionModelTarget } from '@/session-model-store';
 import { switchSessionModel, type SwitchOutcome } from '@/api/sessionModel';
 import {
@@ -173,6 +174,7 @@ export default function ChatScreen() {
   const orchestratorRef = useRef<ReconnectOrchestrator | null>(null);
   const liveIdRef = useRef<string | null>(null); // gateway (live) session handle
   const storedIdRef = useRef<string | null>(null); // persistent id, survives reconnects
+  const startedDraftRef = useRef<string | null>(null); // session a /chat/new minted (draft-chat-store)
   const cancelledRef = useRef(false);
   // Profile target captured at mount — keeps create/resume/history consistent
   // for this chat even if the user switches profiles elsewhere mid-session.
@@ -647,6 +649,7 @@ export default function ChatScreen() {
     });
     return () => {
       cancelledRef.current = true;
+      clearStartedDraft(startedDraftRef.current);
       sub.remove();
       unsubStore();
       t.dispose(); // orchestrator first, then the socket — no reconnect on unmount
@@ -801,6 +804,12 @@ export default function ChatScreen() {
         liveIdRef.current = created.session_id;
         setPill((p) => withResumedModel(p, created.info));
         if (created.stored_session_id) storedIdRef.current = created.stored_session_id;
+        // The URL stays /chat/new (the transport is keyed on it), so tell the sidebar this draft
+        // has started: New chat must open a fresh one, and its Recents row is this screen.
+        if (id === 'new') {
+          startedDraftRef.current = storedIdRef.current ?? created.session_id;
+          setStartedDraft(startedDraftRef.current);
+        }
         // Best-effort: bind this device to the new session so session-stop push
         // hooks can target it. Never block the send flow on the claim.
         const liveId = created.session_id;

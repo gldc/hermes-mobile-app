@@ -22,6 +22,8 @@ import { SearchResultRow } from '@/components/search-result-row';
 import { SessionRow } from '@/components/session-row';
 import { AuthError } from '@/api/restClient';
 import { withAuthRetry } from '@/connection';
+import { getStartedDraft } from '@/draft-chat-store';
+import { chatOnScreen } from '@/lib/chat-route';
 import {
   activeProfileLabel,
   canServerSearch,
@@ -334,7 +336,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   const openChat = useCallback(
     (sessionId: string) => {
       closeSidebar();
-      if (pathname !== `/chat/${sessionId}`) router.replace(`/chat/${sessionId}`);
+      if (chatOnScreen(pathname, getStartedDraft()) !== sessionId) router.replace(`/chat/${sessionId}`);
     },
     [pathname],
   );
@@ -342,7 +344,8 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   const newChat = useCallback(() => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     closeSidebar();
-    if (pathname !== '/chat/new') router.replace('/chat/new');
+    // Only an unstarted draft is already a new chat: a lazily created chat keeps /chat/new.
+    if (chatOnScreen(pathname, getStartedDraft()) !== 'new') router.replace('/chat/new');
   }, [pathname]);
 
   const pushRoute = useCallback((route: Href) => {
