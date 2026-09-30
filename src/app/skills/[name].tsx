@@ -57,7 +57,8 @@ export default function SkillDetailScreen() {
   const { colors } = useTheme();
   const { name } = useLocalSearchParams<{ name: string }>();
   const [skill, setSkill] = useState<SkillInfo | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  // true until the first fetch settles: the RefreshControl spins on first load.
+  const [refreshing, setRefreshing] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -70,24 +71,37 @@ export default function SkillDetailScreen() {
     setError(message);
   }, []);
 
-  const load = useCallback(async () => {
-    setRefreshing(true);
-    setError(null);
-    try {
+  // Every setter runs in a promise callback, never synchronously on the mount
+  // effect's path. `refresh` (pull-to-refresh) raises the spinner and clears
+  // the error itself before calling this; a successful fetch clears a stale
+  // error too (e.g. after the `name` param changes).
+  const fetchSkill = useCallback(
+    () =>
       // No GET /api/skills/{name} exists — fetch the list and pick our row.
-      const skills = await withAuthRetry((r) => listSkills(r));
-      setSkill(skills.find((s) => s.name === name) ?? null);
-    } catch (e) {
-      handleError(e, 'Gateway unreachable — check your VPN or Wi-Fi, then pull to retry.');
-    } finally {
-      setRefreshing(false);
-      setLoaded(true);
-    }
-  }, [name, handleError]);
+      withAuthRetry((r) => listSkills(r))
+        .then((skills) => {
+          setSkill(skills.find((s) => s.name === name) ?? null);
+          setError(null);
+        })
+        .catch((e: unknown) => {
+          handleError(e, 'Gateway unreachable — check your VPN or Wi-Fi, then pull to retry.');
+        })
+        .finally(() => {
+          setRefreshing(false);
+          setLoaded(true);
+        }),
+    [name, handleError],
+  );
 
   useEffect(() => {
-    load();
-  }, [load]);
+    void fetchSkill();
+  }, [fetchSkill]);
+
+  function refresh() {
+    setRefreshing(true);
+    setError(null);
+    void fetchSkill();
+  }
 
   /** Optimistic enable/disable — flip immediately, revert if the server says no. */
   async function toggle(current: SkillInfo) {
@@ -112,7 +126,7 @@ export default function SkillDetailScreen() {
       contentInsetAdjustmentBehavior="automatic"
       style={{ backgroundColor: colors.bg }}
       contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.textDim} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.textDim} />}
     >
       <Stack.Screen options={{ title: typeof name === 'string' ? name : 'Skill' }} />
 

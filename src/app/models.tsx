@@ -226,7 +226,8 @@ export default function ModelsScreen() {
   const [info, setInfo] = useState<ModelInfo | null>(null);
   const [options, setOptions] = useState<ModelOptionsResponse | null>(null);
   const [current, setCurrent] = useState<Selection | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  // true until the first fetch settles: the RefreshControl spins on first load.
+  const [refreshing, setRefreshing] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -240,28 +241,39 @@ export default function ModelsScreen() {
     setError(e instanceof Error && e.message ? e.message : fallback);
   }, []);
 
-  const load = useCallback(async () => {
-    setRefreshing(true);
-    setError(null);
-    try {
-      const [i, o] = await Promise.all([
+  // Every setter runs in a promise callback, never synchronously on the mount
+  // effect's path. `refresh` (pull-to-refresh) raises the spinner and clears
+  // the error itself before calling this.
+  const fetchModels = useCallback(
+    () =>
+      Promise.all([
         withAuthRetry((r) => getModelInfo(r)),
         withAuthRetry((r) => getModelOptions(r)),
-      ]);
-      setInfo(i);
-      setOptions(o);
-      setCurrent({ provider: o.provider || i.provider, model: o.model || i.model });
-    } catch (e) {
-      handleError(e, 'Gateway unreachable — check your VPN or Wi-Fi, then pull to retry.');
-    } finally {
-      setRefreshing(false);
-      setLoaded(true);
-    }
-  }, [handleError]);
+      ])
+        .then(([i, o]) => {
+          setInfo(i);
+          setOptions(o);
+          setCurrent({ provider: o.provider || i.provider, model: o.model || i.model });
+        })
+        .catch((e: unknown) => {
+          handleError(e, 'Gateway unreachable — check your VPN or Wi-Fi, then pull to retry.');
+        })
+        .finally(() => {
+          setRefreshing(false);
+          setLoaded(true);
+        }),
+    [handleError],
+  );
 
   useEffect(() => {
-    load();
-  }, [load]);
+    void fetchModels();
+  }, [fetchModels]);
+
+  function refresh() {
+    setRefreshing(true);
+    setError(null);
+    void fetchModels();
+  }
 
   async function applySwitch(provider: string, model: string, confirmExpensive: boolean, previous: Selection | null) {
     try {
@@ -384,7 +396,7 @@ export default function ModelsScreen() {
       contentInsetAdjustmentBehavior="automatic"
       style={{ backgroundColor: colors.bg }}
       contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 40 }}
-      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.textDim} />}
+      refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.textDim} />}
     >
       <Stack.Screen options={{ title: sessionMode ? 'Switch model' : 'Model' }} />
 
