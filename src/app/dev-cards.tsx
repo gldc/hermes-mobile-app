@@ -28,7 +28,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 function devCard(over: Partial<RequestCardState> & Pick<RequestCardState, 'id' | 'kind' | 'method' | 'params'>): RequestCardState {
   return { status: 'pending', legacy: false, receivedAt: Date.now(), anchorKey: null, ...over };
 }
-const devApproval = { session_id: 's', request_id: 'r', command: 'rm -rf build/ dist/', description: 'Recursive delete of two directories' };
+const devApproval = { session_id: 's', request_id: 'r', command: 'rm -rf build/ dist/', description: 'Recursive delete of two directories', pattern_key: 'recursive delete', choices: ['once', 'session', 'always', 'deny'] };
 const devClarifyResponder = {
   clarifySingle: () => ({ ok: true as const }),
   clarifyLock: async () => 'ok' as const,
@@ -83,6 +83,9 @@ export default function DevCards() {
         <ApprovalCard card={devCard({ id: 'a1', kind: 'approval', method: 'approval', params: devApproval })} actionable onRespond={() => {}} />
         <ApprovalCard card={devCard({ id: 'a2', kind: 'approval', method: 'approval', params: devApproval, legacy: true })} actionable={false} onRespond={() => {}} />
         <ApprovalCard card={devCard({ id: 'a3', kind: 'approval', method: 'approval', params: devApproval, status: 'answered', resolution: 'deny' })} actionable={false} onRespond={() => {}} />
+        <ApprovalCard card={devCard({ id: 'a5', kind: 'approval', method: 'approval', params: devApproval, status: 'answered', resolution: 'session' })} actionable={false} onRespond={() => {}} />
+        <ApprovalCard card={devCard({ id: 'a6', kind: 'approval', method: 'approval', params: devApproval, status: 'answered', resolution: 'always' })} actionable={false} onRespond={() => {}} />
+        <ApprovalCard card={devCard({ id: 'a7', kind: 'approval', method: 'approval', params: { ...devApproval, choices: ['once', 'deny'] } })} actionable onRespond={() => {}} />
         <ApprovalCard card={devCard({ id: 'a4', kind: 'approval', method: 'approval', params: devApproval, status: 'cancelled', cancelReason: 'interrupted' })} actionable={false} onRespond={() => {}} />
       </Section>
       <Section title="Clarify">

@@ -97,6 +97,8 @@ src/theme.ts      single source of color truth (warm cream light / charcoal dark
   pinned and drawn.
   Answer with the contract's own decline (clarify `{}` = cancel-all, sudo/secret
   `{value:""}`); malformed params render "can't be shown" + Skip — never throw in render.
+- Approval choices: render only what `params.choices` offers (server-computed); `session`/`always` live behind
+  More options; `always` confirms first (it persists to the gateway's config.yaml).
 - Push: `clarify_request` joins `session_end`/`approval_request` as a foreground-suppressed
   type (`SUPPRESSIBLE_PUSH_TYPES`); taps open `/chat/<session_id>`.
 

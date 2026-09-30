@@ -76,6 +76,15 @@ drop the approval UI on `message.complete`/interrupt, like `clearAllPrompts` doe
 
 ---
 
+## 0.21.5: precomputed `choices`
+
+The 0.21.5 `approval` server request (and the legacy event, when `smart_denied` or `allow_permanent` is present)
+carries `choices`, computed server-side by `_approval_request_payload` (`tui_gateway/server.py`, v2026.9.24):
+without an explicit list it is `["once"] + (["session"] + (["always"] if allow_permanent is not False)
+if not smart_denied and allow_session is not False) + ["deny"]`. The client renders only the choices present
+(`approvalChoices`): Deny | Approve are always shown, `session`/`always` sit behind "More options", and `always`
+asks for confirmation first because it persists the pattern to the gateway's `config.yaml`.
+
 ## `clarify.request` event + `clarify.respond` RPC — SUPPORTED
 
 The clarify tool blocks the agent through the `_block()` request/response bridge
