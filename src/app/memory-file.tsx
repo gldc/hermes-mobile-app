@@ -8,7 +8,7 @@
 // View mode renders the markdown; Edit switches to a monospace multiline
 // input. Leaving with unsaved changes (Cancel, back swipe, header back) asks
 // for confirmation before discarding.
-import { Stack, router, useLocalSearchParams, useNavigation } from 'expo-router';
+import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -33,12 +33,15 @@ import {
   type MemoryFileName,
 } from '@/api/memory';
 import { AuthError } from '@/api/restClient';
+import { useDiscardGuard } from '@/components/discard-guard';
 import { Icon } from '@/components/icon';
 import { MarkdownView } from '@/components/markdown-view';
 import { withAuthRetry } from '@/connection';
 import { useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
+
+const DISCARD_MESSAGE = 'You have unsaved edits to this file.';
 
 function HeaderButton({
   label,
@@ -69,7 +72,6 @@ function HeaderButton({
 
 export default function MemoryFileScreen() {
   const { colors } = useTheme();
-  const navigation = useNavigation();
   const params = useLocalSearchParams<{ name?: string }>();
   const rawName = typeof params.name === 'string' ? params.name : '';
   const name: MemoryFileName | null = isMemoryFileName(rawName) ? rawName : null;
@@ -114,18 +116,9 @@ export default function MemoryFileScreen() {
     void fetchFile();
   }
 
-  // Guard hardware/gesture/header-back navigation while there are unsaved edits.
-  // Re-subscribes whenever dirtiness changes, so the listener always sees it.
-  useEffect(() => {
-    return navigation.addListener('beforeRemove', (e: any) => {
-      if (!dirty) return;
-      e.preventDefault();
-      Alert.alert('Discard changes?', 'You have unsaved edits to this file.', [
-        { text: 'Keep editing', style: 'cancel' },
-        { text: 'Discard', style: 'destructive', onPress: () => navigation.dispatch(e.data.action) },
-      ]);
-    });
-  }, [navigation, dirty]);
+  // Header back / router.back with unsaved edits asks first (see discard-guard for why it must
+  // be usePreventRemove, not a bare beforeRemove listener).
+  useDiscardGuard(dirty, DISCARD_MESSAGE);
 
   function startEditing() {
     if (content == null) return;
@@ -140,7 +133,7 @@ export default function MemoryFileScreen() {
       setError(null);
       return;
     }
-    Alert.alert('Discard changes?', 'You have unsaved edits to this file.', [
+    Alert.alert('Discard changes?', DISCARD_MESSAGE, [
       { text: 'Keep editing', style: 'cancel' },
       {
         text: 'Discard',
