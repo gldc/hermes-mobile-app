@@ -806,9 +806,9 @@ export default function ChatScreen() {
         if (created.stored_session_id) storedIdRef.current = created.stored_session_id;
         // The URL stays /chat/new (the transport is keyed on it), so tell the sidebar this draft
         // has started: New chat must open a fresh one, and its Recents row is this screen.
-        if (id === 'new') {
-          startedDraftRef.current = storedIdRef.current ?? created.session_id;
-          setStartedDraft(startedDraftRef.current);
+        if (id === 'new' && created.stored_session_id) {
+          startedDraftRef.current = created.stored_session_id;
+          setStartedDraft(created.stored_session_id);
         }
         // Best-effort: bind this device to the new session so session-stop push
         // hooks can target it. Never block the send flow on the claim.

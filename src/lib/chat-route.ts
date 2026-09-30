@@ -11,6 +11,5 @@
 export function chatOnScreen(pathname: string, startedDraft: string | null): string | null {
   const m = /^\/chat\/([^/]+)$/.exec(pathname);
   if (!m) return null;
-  const id = decodeURIComponent(m[1]);
-  return id === 'new' ? (startedDraft ?? 'new') : id;
+  return m[1] === 'new' ? (startedDraft ?? 'new') : m[1];
 }
