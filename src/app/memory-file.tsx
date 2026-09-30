@@ -87,9 +87,10 @@ export default function MemoryFileScreen() {
 
   const dirty = editing && content != null && draft !== content;
 
-  // An expired session sends you to sign in. Unsaved edits are dropped first and the replace waits
-  // for that re-render: the discard guard would otherwise intercept it ("Discard changes?" before
-  // login, where Keep editing leaves you on a dead session).
+  // An expired session sends you to sign in. Unsaved edits are dropped first and the replace runs
+  // from an effect of the commit where they are gone, so the discard guard's listener can never
+  // see a stale `dirty` and intercept it ("Discard changes?" before login, where Keep editing
+  // leaves you on a dead session).
   const toSignIn = useCallback(() => {
     setEditing(false);
     setSignedOut(true);
