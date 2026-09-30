@@ -83,8 +83,20 @@ export default function MemoryFileScreen() {
   const [refreshing, setRefreshing] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [signedOut, setSignedOut] = useState(false);
 
   const dirty = editing && content != null && draft !== content;
+
+  // An expired session sends you to sign in. Unsaved edits are dropped first and the replace waits
+  // for that re-render: the discard guard would otherwise intercept it ("Discard changes?" before
+  // login, where Keep editing leaves you on a dead session).
+  const toSignIn = useCallback(() => {
+    setEditing(false);
+    setSignedOut(true);
+  }, []);
+  useEffect(() => {
+    if (signedOut) router.replace('/');
+  }, [signedOut]);
 
   // Every setter runs in a promise callback, never synchronously on the mount
   // effect's path. `refresh` (pull-to-refresh) raises the spinner and clears
@@ -98,13 +110,13 @@ export default function MemoryFileScreen() {
       })
       .catch((e: unknown) => {
         if (e instanceof AuthError) {
-          router.replace('/');
+          toSignIn();
           return;
         }
         setError(memoryWriteErrorMessage(e));
       })
       .finally(() => setRefreshing(false));
-  }, [name]);
+  }, [name, toSignIn]);
 
   useEffect(() => {
     void fetchFile();
@@ -162,7 +174,7 @@ export default function MemoryFileScreen() {
       setEditing(false);
     } catch (e) {
       if (e instanceof AuthError) {
-        router.replace('/');
+        toSignIn();
         return;
       }
       setError(memoryWriteErrorMessage(e));
