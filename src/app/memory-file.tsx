@@ -24,6 +24,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   formatBytes,
   isMemoryFileName,
@@ -77,6 +78,7 @@ function HeaderButton({
 export default function MemoryFileScreen() {
   const { colors } = useTheme();
   const headerHeight = useHeaderHeight();
+  const { bottom: bottomInset } = useSafeAreaInsets();
   const params = useLocalSearchParams<{ name?: string }>();
   const rawName = typeof params.name === 'string' ? params.name : '';
   const name: MemoryFileName | null = isMemoryFileName(rawName) ? rawName : null;
@@ -200,8 +202,9 @@ export default function MemoryFileScreen() {
       behavior={process.env.EXPO_OS === 'ios' ? 'padding' : undefined}
       // It compares its parent-relative frame with the keyboard's screen Y, and this screen's
       // content starts below the native header: without the offset the last lines, the caret and
-      // the size counter sit behind the keyboard.
-      keyboardVerticalOffset={headerHeight}
+      // the size counter sit behind the keyboard. Less the home-indicator inset, which the size
+      // counter already pads and the keyboard covers: no gap above the keyboard.
+      keyboardVerticalOffset={headerHeight - bottomInset}
     >
       <Stack.Screen
         options={{
@@ -263,7 +266,8 @@ export default function MemoryFileScreen() {
               fontSize: 12,
               textAlign: 'right',
               paddingHorizontal: 20,
-              paddingVertical: 6,
+              paddingTop: 6,
+              paddingBottom: 6 + bottomInset, // clear of the home indicator
             }}
           >
             {`${formatBytes(draftBytes)} / ${formatBytes(MEMORY_FILE_MAX_BYTES)}`}

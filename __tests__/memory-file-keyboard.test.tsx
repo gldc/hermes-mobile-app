@@ -19,6 +19,10 @@ jest.mock('expo-router/react-navigation', () => ({
   ...jest.requireActual('expo-router/react-navigation'),
   useHeaderHeight: () => 116,
 }));
+jest.mock('react-native-safe-area-context', () => ({
+  ...jest.requireActual('react-native-safe-area-context'),
+  useSafeAreaInsets: () => ({ top: 62, right: 0, bottom: 34, left: 0 }),
+}));
 
 // KeyboardAvoidingView subscribes to keyboardWillShow on iOS; keep the handler to drive it.
 const keyboardHandlers: ((e: KeyboardEvent) => void)[] = [];
@@ -32,13 +36,26 @@ beforeEach(() => {
 });
 afterEach(() => addListener.mockRestore());
 
-test('the editor pads its bottom by the keyboard overlap, header included', async () => {
+async function openEditor() {
   await renderRouter(
     { _layout: () => <Stack />, index: () => <Text>home</Text>, 'memory-file': MemoryFileScreen },
     { initialUrl: '/' },
   );
   await act(async () => router.push('/memory-file?name=USER.md'));
   await screen.findByText('old');
+  await act(async () => fireEvent.press(screen.getByLabelText('Edit')));
+}
+
+const counterPaddingBottom = () =>
+  StyleSheet.flatten(screen.getByLabelText(/^File size /).props.style).paddingBottom;
+
+test('keyboard hidden: the size counter clears the home indicator', async () => {
+  await openEditor();
+  expect(counterPaddingBottom()).toBe(6 + 34);
+});
+
+test('keyboard shown: the editor clears the keyboard, header included, without a safe-area gap', async () => {
+  await openEditor();
 
   // Content view: 700 pt tall, starting below a 116 pt header; keyboard top at screen Y 500.
   const avoider = screen.getByTestId('memory-file-keyboard-avoider');
@@ -57,6 +74,12 @@ test('the editor pads its bottom by the keyboard overlap, header included', asyn
       } as KeyboardEvent);
   });
 
-  // 116 + 700 - 500: the whole overlap. Without the header offset it would be 200.
-  expect(StyleSheet.flatten(screen.getByTestId('memory-file-keyboard-avoider').props.style).paddingBottom).toBe(316);
+  // The whole overlap is 116 + 700 - 500 = 316 (200 without the header offset). The counter
+  // already pads the 34 pt home-indicator inset the keyboard covers, so the avoider adds the rest
+  // and the counter sits 6 pt above the keyboard.
+  const avoiderPadding = StyleSheet.flatten(
+    screen.getByTestId('memory-file-keyboard-avoider').props.style,
+  ).paddingBottom;
+  expect(avoiderPadding).toBe(316 - 34);
+  expect(avoiderPadding + counterPaddingBottom()).toBe(316 + 6);
 });
