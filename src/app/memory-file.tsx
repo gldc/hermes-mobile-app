@@ -6,8 +6,8 @@
 // whole file, PUT {content} for an atomic replace (≤ 256 KiB → 413 above).
 //
 // View mode renders the markdown; Edit switches to a monospace multiline
-// input. Leaving with unsaved changes (Cancel, back swipe, header back) asks
-// for confirmation before discarding.
+// input. Leaving with unsaved changes (Cancel, header back) asks for
+// confirmation before discarding; the back swipe is off while there are any.
 import { Stack, router, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import {

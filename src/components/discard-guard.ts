@@ -1,7 +1,7 @@
 // src/components/discard-guard.ts
 //
-// Asks "Discard changes?" before a screen with unsaved edits is removed (header back, back
-// swipe, router.back). Keep editing leaves the screen where it is; Discard lets the navigation go.
+// Asks "Discard changes?" before a screen with unsaved edits is removed (header back,
+// router.back). Keep editing leaves the screen where it is; Discard lets the navigation go.
 //
 // usePreventRemove, not a bare `beforeRemove` listener: native-stack only honours prevention it
 // knows about up front. With a bare listener UIKit has already popped the screen when the header
