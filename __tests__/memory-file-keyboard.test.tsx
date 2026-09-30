@@ -22,10 +22,15 @@ jest.mock('expo-router/react-navigation', () => ({
 
 // KeyboardAvoidingView subscribes to keyboardWillShow on iOS; keep the handler to drive it.
 const keyboardHandlers: ((e: KeyboardEvent) => void)[] = [];
-jest.spyOn(Keyboard, 'addListener').mockImplementation((event, handler) => {
-  if (event === 'keyboardWillShow') keyboardHandlers.push(handler as (e: KeyboardEvent) => void);
-  return { remove: () => {} } as ReturnType<typeof Keyboard.addListener>;
+let addListener: jest.SpyInstance;
+beforeEach(() => {
+  keyboardHandlers.length = 0;
+  addListener = jest.spyOn(Keyboard, 'addListener').mockImplementation((event, handler) => {
+    if (event === 'keyboardWillShow') keyboardHandlers.push(handler as (e: KeyboardEvent) => void);
+    return { remove: () => {} } as ReturnType<typeof Keyboard.addListener>;
+  });
 });
+afterEach(() => addListener.mockRestore());
 
 test('the editor pads its bottom by the keyboard overlap, header included', async () => {
   await renderRouter(

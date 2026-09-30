@@ -9,6 +9,10 @@
 // input. Leaving with unsaved changes (Cancel, header back) asks for
 // confirmation before discarding; the back swipe is off while there are any.
 import { Stack, router, useLocalSearchParams } from 'expo-router';
+// Deprecated in SDK 56 ("copy the helper into your codebase"), with no numeric successor:
+// useAnimatedHeaderHeight is an Animated.Value, which keyboardVerticalOffset cannot take.
+// Revisit on the next SDK bump.
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
@@ -32,7 +36,6 @@ import {
   MEMORY_FILE_MAX_BYTES,
   type MemoryFileName,
 } from '@/api/memory';
-import { useHeaderHeight } from 'expo-router/react-navigation';
 import { AuthError } from '@/api/restClient';
 import { useDiscardGuard } from '@/components/discard-guard';
 import { Icon } from '@/components/icon';
