@@ -32,6 +32,7 @@ import {
   MEMORY_FILE_MAX_BYTES,
   type MemoryFileName,
 } from '@/api/memory';
+import { useHeaderHeight } from 'expo-router/react-navigation';
 import { AuthError } from '@/api/restClient';
 import { useDiscardGuard } from '@/components/discard-guard';
 import { Icon } from '@/components/icon';
@@ -72,6 +73,7 @@ function HeaderButton({
 
 export default function MemoryFileScreen() {
   const { colors } = useTheme();
+  const headerHeight = useHeaderHeight();
   const params = useLocalSearchParams<{ name?: string }>();
   const rawName = typeof params.name === 'string' ? params.name : '';
   const name: MemoryFileName | null = isMemoryFileName(rawName) ? rawName : null;
@@ -190,8 +192,13 @@ export default function MemoryFileScreen() {
 
   return (
     <KeyboardAvoidingView
+      testID="memory-file-keyboard-avoider"
       style={{ flex: 1, backgroundColor: colors.bg }}
       behavior={process.env.EXPO_OS === 'ios' ? 'padding' : undefined}
+      // It compares its parent-relative frame with the keyboard's screen Y, and this screen's
+      // content starts below the native header: without the offset the last lines, the caret and
+      // the size counter sit behind the keyboard.
+      keyboardVerticalOffset={headerHeight}
     >
       <Stack.Screen
         options={{

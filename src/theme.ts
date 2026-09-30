@@ -1,3 +1,4 @@
+import { DarkTheme, DefaultTheme } from 'expo-router';
 import { useColorScheme } from 'react-native';
 
 export interface ThemeColors {
@@ -78,4 +79,23 @@ export function useTheme(): { colors: ThemeColors; dark: boolean } {
   const scheme = useColorScheme();
   const dark = scheme !== 'light';
   return { colors: dark ? palettes.dark : palettes.light, dark };
+}
+
+/** React Navigation's theme in this palette and scheme. Without it the navigator runs on its light
+ * DefaultTheme under a dark app, and iOS 26's liquid-glass header items render against the wrong
+ * appearance (light glass pills in dark mode). */
+export function navigationTheme(colors: ThemeColors, dark: boolean): typeof DefaultTheme {
+  const base = dark ? DarkTheme : DefaultTheme;
+  return {
+    ...base,
+    dark,
+    colors: {
+      primary: colors.accent,
+      background: colors.bg,
+      card: colors.bg,
+      text: colors.text,
+      border: colors.border,
+      notification: colors.accent,
+    },
+  };
 }
