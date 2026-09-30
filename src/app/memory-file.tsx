@@ -9,7 +9,7 @@
 // input. Leaving with unsaved changes (Cancel, back swipe, header back) asks
 // for confirmation before discarding.
 import { Stack, router, useLocalSearchParams, useNavigation } from 'expo-router';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Alert,
   KeyboardAvoidingView,
@@ -77,47 +77,55 @@ export default function MemoryFileScreen() {
   const [content, setContent] = useState<string | null>(null); // null = not loaded yet
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState('');
-  const [refreshing, setRefreshing] = useState(false);
+  // true until the first fetch settles: the RefreshControl spins on first load.
+  const [refreshing, setRefreshing] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const dirty = editing && content != null && draft !== content;
-  const dirtyRef = useRef(false);
-  dirtyRef.current = dirty;
 
-  const load = useCallback(async () => {
-    if (!name) return;
-    setRefreshing(true);
-    setError(null);
-    try {
-      const res = await withAuthRetry((r) => readMemoryFile(r, name));
-      setContent(res.content);
-    } catch (e) {
-      if (e instanceof AuthError) {
-        router.replace('/');
-        return;
-      }
-      setError(memoryWriteErrorMessage(e));
-    } finally {
-      setRefreshing(false);
-    }
+  // Every setter runs in a promise callback, never synchronously on the mount
+  // effect's path. `refresh` (pull-to-refresh) raises the spinner and clears
+  // the error itself before calling this.
+  const fetchFile = useCallback(() => {
+    if (!name) return Promise.resolve();
+    return withAuthRetry((r) => readMemoryFile(r, name))
+      .then((res) => {
+        setContent(res.content);
+        setError(null);
+      })
+      .catch((e: unknown) => {
+        if (e instanceof AuthError) {
+          router.replace('/');
+          return;
+        }
+        setError(memoryWriteErrorMessage(e));
+      })
+      .finally(() => setRefreshing(false));
   }, [name]);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    void fetchFile();
+  }, [fetchFile]);
+
+  function refresh() {
+    setRefreshing(true);
+    setError(null);
+    void fetchFile();
+  }
 
   // Guard hardware/gesture/header-back navigation while there are unsaved edits.
+  // Re-subscribes whenever dirtiness changes, so the listener always sees it.
   useEffect(() => {
     return navigation.addListener('beforeRemove', (e: any) => {
-      if (!dirtyRef.current) return;
+      if (!dirty) return;
       e.preventDefault();
       Alert.alert('Discard changes?', 'You have unsaved edits to this file.', [
         { text: 'Keep editing', style: 'cancel' },
         { text: 'Discard', style: 'destructive', onPress: () => navigation.dispatch(e.data.action) },
       ]);
     });
-  }, [navigation]);
+  }, [navigation, dirty]);
 
   function startEditing() {
     if (content == null) return;
@@ -250,7 +258,7 @@ export default function MemoryFileScreen() {
           contentInsetAdjustmentBehavior="automatic"
           style={{ flex: 1 }}
           contentContainerStyle={{ padding: 20, paddingBottom: 48 }}
-          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.textDim} />}
+          refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.textDim} />}
         >
           {error ? (
             <Text selectable style={{ color: colors.danger, fontSize: 14, marginBottom: 12 }}>
