@@ -1,8 +1,9 @@
 import * as Haptics from 'expo-haptics';
 import { useState } from 'react';
-import { ActivityIndicator, Pressable, Text, View } from 'react-native';
+import { ActivityIndicator, Alert, Pressable, Text, View } from 'react-native';
 import { Icon } from '@/components/icon';
-import { approvalView } from '@/lib/approval';
+import { showActionSheet, type SheetAction } from '@/lib/action-sheet';
+import { approvalChoices, approvalView } from '@/lib/approval';
 import { cancelLabel, type RequestCardState } from '@/lib/turn-controller';
 import { useTheme, type ThemeColors } from '@/theme';
 import type { ApprovalResult } from '@/vendor/hermes-gateway';
@@ -54,7 +55,11 @@ function ResolvedRow({ card, colors }: { card: RequestCardState; colors: ThemeCo
     card.status === 'answered'
       ? card.resolution === 'deny'
         ? { icon: 'xmark.circle.fill', tint: colors.danger, label: 'Denied' }
-        : { icon: 'checkmark.circle.fill', tint: colors.success, label: 'Approved' }
+        : {
+            icon: 'checkmark.circle.fill',
+            tint: colors.success,
+            label: card.resolution === 'session' ? 'Allowed for this session' : card.resolution === 'always' ? 'Always allowed' : 'Approved',
+          }
       : { icon: 'slash.circle', tint: colors.textFaint, label: card.cancelReason ? cancelLabel(card.cancelReason) : 'Closed' };
   return (
     <View accessibilityLabel={`Approval ${m.label}`} style={{ flexDirection: 'row', alignItems: 'center', gap: 6, paddingTop: 2 }}>
@@ -79,12 +84,32 @@ export function ApprovalCard({
 }) {
   const { colors } = useTheme();
   const view = approvalView(card.params);
+  const extra = approvalChoices(card.params);
+  const hasMore = extra.session || extra.always;
   const pending = card.status === 'pending' || card.status === 'answering';
   const canAct = card.status === 'pending' && actionable;
 
   function respond(choice: ApprovalResult['choice']) {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => {});
     onRespond(choice);
+  }
+
+  function confirmAlways() {
+    Alert.alert(
+      'Always allow this command?',
+      `Hermes adds “${view.patternKey || 'this pattern'}” to the gateway's permanent allowlist (config.yaml) and stops asking for matching commands, in this and future sessions.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Always allow', style: 'destructive', onPress: () => respond('always') },
+      ],
+    );
+  }
+
+  function openMore() {
+    const actions: SheetAction[] = [];
+    if (extra.session) actions.push({ label: 'Allow for this session', onPress: () => respond('session') });
+    if (extra.always) actions.push({ label: 'Always allow…', onPress: confirmAlways });
+    showActionSheet(view.patternKey || undefined, actions);
   }
 
   return (
@@ -162,6 +187,25 @@ export function ApprovalCard({
               <Text style={{ color: canAct ? colors.onAccent : colors.textDim, fontSize: 15.5, fontWeight: '700' }}>Approve</Text>
             </Pressable>
           </View>
+          {hasMore ? (
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel="More approval options"
+              accessibilityHint="Allow for this session or always"
+              accessibilityState={{ disabled: !canAct }}
+              disabled={!canAct}
+              hitSlop={8}
+              onPress={openMore}
+              style={({ pressed }) => ({
+                alignSelf: 'center', minHeight: 44, paddingHorizontal: 12,
+                flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 4,
+                opacity: !canAct ? 0.45 : pressed ? 0.6 : 1,
+              })}
+            >
+              <Text style={{ color: colors.textDim, fontSize: 13.5, fontWeight: '600' }}>More options</Text>
+              <Icon sf="chevron.down" size={11} color={colors.textDim} />
+            </Pressable>
+          ) : null}
           {!canAct && card.legacy ? (
             <Text style={{ color: colors.textFaint, fontSize: 12.5 }}>Waiting for the earlier approval above…</Text>
           ) : null}
