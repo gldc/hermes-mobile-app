@@ -6,6 +6,8 @@
 // session-keyed `approval.request` event (no request_id — one FIFO queue per
 // session, and a response resolves the OLDEST pending approval).
 
+import type { ApprovalResult } from '@/vendor/hermes-gateway';
+
 /** Display fields for either approval shape: the 0.21.5 `approval` server-request params
  *  (ApprovalRequestParams) or the legacy 0.20.4 `approval.request` event payload. */
 export interface ApprovalView {
@@ -31,6 +33,18 @@ export function approvalView(params: unknown): ApprovalView {
     patternKey,
     toolName: str(p.tool_name),
   };
+}
+
+/** Which choices beyond once/deny the request offers. `choices` is precomputed server-side
+ *  (`_approval_request_payload`, v2026.9.24) and wins; without it, the server's own rule. */
+export function approvalChoices(params: unknown): { session: boolean; always: boolean } {
+  const p = typeof params === 'object' && params !== null ? (params as Record<string, unknown>) : {};
+  if (Array.isArray(p.choices)) {
+    const offered = new Set(p.choices.filter((c): c is ApprovalResult['choice'] => c === 'session' || c === 'always'));
+    return { session: offered.has('session'), always: offered.has('always') };
+  }
+  const session = !p.smart_denied && p.allow_session !== false;
+  return { session, always: session && p.allow_permanent !== false };
 }
 
 /**

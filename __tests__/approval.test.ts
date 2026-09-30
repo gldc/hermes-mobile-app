@@ -1,4 +1,4 @@
-import { approvalView, resolvedCount } from '../src/lib/approval';
+import { approvalChoices, approvalView, resolvedCount } from '../src/lib/approval';
 
 describe('approvalView', () => {
   it('reads the 0.21.5 server-request params', () => {
@@ -44,5 +44,22 @@ describe('resolvedCount', () => {
 
   it('truncates fractional counts', () => {
     expect(resolvedCount({ resolved: 1.9 })).toBe(1);
+  });
+});
+
+describe('approvalChoices', () => {
+  test.each([
+    [{ choices: ['once', 'session', 'always', 'deny'] }, { session: true, always: true }],
+    [{ choices: ['once', 'session', 'deny'] }, { session: true, always: false }],
+    [{ choices: ['once', 'deny'] }, { session: false, always: false }],
+    [{ choices: ['once', 'deny'], allow_session: true, allow_permanent: true }, { session: false, always: false }], // choices win
+    [{ choices: ['once', 'bogus', 7, 'always', 'deny'] }, { session: false, always: true }],
+    [{}, { session: true, always: true }], // no choices: session shown, always unless allow_permanent === false
+    [{ allow_permanent: false }, { session: true, always: false }],
+    [{ smart_denied: true }, { session: false, always: false }],
+    [{ allow_session: false }, { session: false, always: false }],
+    [null, { session: true, always: true }],
+  ])('%j → %j', (params, expected) => {
+    expect(approvalChoices(params)).toEqual(expected);
   });
 });
