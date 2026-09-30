@@ -34,6 +34,7 @@ import { showProfilePicker } from '@/lib/profile-picker';
 import { closeSidebar } from '@/sidebar-store';
 import { getPinState, hydratePinStore, pinSession, setPinsCollapsed, subscribePins, unpinSession } from '@/pin-store';
 import { sessionPinId } from '@/lib/session-utils';
+import { searchView, type SearchHits } from '@/lib/sidebar-search';
 import { serif, useTheme } from '@/theme';
 
 const isIOS = process.env.EXPO_OS === 'ios';
@@ -84,10 +85,10 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   const [error, setError] = useState<string | null>(null);
   const [query, setQuery] = useState('');
   const [showArchived, setShowArchived] = useState(false);
-  // Server FTS hits, tagged with the query they answer so stale results
-  // never render while a newer request is still in flight.
-  const [hits, setHits] = useState<{ q: string; results: SearchResult[] } | null>(null);
-  const [searchPending, setSearchPending] = useState(false);
+  // Last server FTS answer, tagged with the query it answers so stale results
+  // never render while a newer request is still in flight. Pending/visible
+  // state is derived from it at render time (searchView).
+  const [hits, setHits] = useState<SearchHits | null>(null);
   // Android rename dialog target (iOS uses Alert.prompt instead).
   const [renameTarget, setRenameTarget] = useState<SessionSummary | null>(null);
   const profiles = useSyncExternalStore(subscribeProfiles, getProfileState);
@@ -104,33 +105,50 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
     setError('Gateway unreachable — check your VPN or Wi-Fi, then pull to retry.');
   }, []);
 
-  const load = useCallback(async (opts?: { silent?: boolean }) => {
-    if (!opts?.silent) setRefreshing(true);
+  // Every setter runs in a promise callback, never synchronously on the
+  // drawer-open effect's path. Reads the selected profile from the store after
+  // hydrating (not the render-time `activeProfile`), so it doesn't depend on it;
+  // the drawer-open effect lists `activeProfile` to reload on a switch.
+  const load = useCallback(
+    (opts?: { silent?: boolean }) =>
+      hydrateProfileStore()
+        .then(() => {
+          if (!opts?.silent) setRefreshing(true);
+          setError(null);
+          return hydratePinStore();
+        })
+        .then(() =>
+          withAuthRetry((r) =>
+            listSessionsForProfile(r, getProfileState().selected, 0, showArchived ? 'only' : 'exclude'),
+          ),
+        )
+        .then((res) => {
+          const pinIds = new Set(getPinState().ids);
+          setSessions((prev) => {
+            if (prev.length === 0 || pinIds.size === 0) return res.sessions;
+            const incomingIds = new Set(res.sessions.map((s) => s.id));
+            const survivors = prev.filter(
+              (s) => !incomingIds.has(s.id) &&
+                (pinIds.has(s.id) || (s._lineage_root_id && pinIds.has(s._lineage_root_id))),
+            );
+            return [...res.sessions, ...survivors];
+          });
+          setTotal(res.total);
+        })
+        .catch(handleLoadError)
+        .finally(() => {
+          setRefreshing(false);
+          setLoaded(true);
+        }),
+    [handleLoadError, showArchived],
+  );
+
+  // Pull-to-refresh: raise the spinner and clear the error in the handler.
+  const refresh = useCallback(() => {
+    setRefreshing(true);
     setError(null);
-    try {
-      await hydrateProfileStore();
-      await hydratePinStore();
-      const res = await withAuthRetry((r) =>
-        listSessionsForProfile(r, getProfileState().selected, 0, showArchived ? 'only' : 'exclude'),
-      );
-      const pinIds = new Set(getPinState().ids);
-      setSessions((prev) => {
-        if (prev.length === 0 || pinIds.size === 0) return res.sessions;
-        const incomingIds = new Set(res.sessions.map((s) => s.id));
-        const survivors = prev.filter(
-          (s) => !incomingIds.has(s.id) &&
-            (pinIds.has(s.id) || (s._lineage_root_id && pinIds.has(s._lineage_root_id))),
-        );
-        return [...res.sessions, ...survivors];
-      });
-      setTotal(res.total);
-    } catch (e) {
-      handleLoadError(e);
-    } finally {
-      setRefreshing(false);
-      setLoaded(true);
-    }
-  }, [handleLoadError, activeProfile, showArchived]);
+    void load();
+  }, [load]);
 
   const loadMore = useCallback(async () => {
     if (loadingMore || refreshing || query || sessions.length >= total) return;
@@ -153,14 +171,14 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
 
   // Refresh whenever the drawer opens (and on archive/profile switches while open).
   useEffect(() => {
-    if (open) load();
-  }, [open, load]);
+    if (open) void load();
+  }, [open, load, activeProfile, showArchived]);
 
   // Reflect out-of-band activity (web dashboard, another device): when the app
   // returns to the foreground with the drawer open, silently re-pull the list.
   useEffect(() => {
     const sub = AppState.addEventListener('change', (next) => {
-      if (next === 'active' && open) load({ silent: true });
+      if (next === 'active' && open) void load({ silent: true });
     });
     return () => sub.remove();
   }, [open, load]);
@@ -192,37 +210,35 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
   // for the backend's own profile only, so skip it for other targets and let
   // the client-side filter stand.
   const serverSearchOk = canServerSearch(profiles);
+  // The effect only schedules the request; every setter runs in its callbacks.
   useEffect(() => {
     const q = query.trim();
-    if (!q || !serverSearchOk) {
-      setHits(null);
-      setSearchPending(false);
-      return;
-    }
-    setSearchPending(true);
+    if (!q || !serverSearchOk) return;
     let stale = false;
-    const timer = setTimeout(async () => {
-      try {
-        const res = await withAuthRetry((r) => searchSessions(r, q));
-        if (!stale) setHits({ q, results: res.results });
-      } catch (e) {
-        if (stale) return;
-        if (e instanceof AuthError) {
-          closeSidebar();
-          router.replace('/');
-          return;
-        }
-        // Network/server hiccup: silently fall back to the client-side filter.
-        setHits(null);
-      } finally {
-        if (!stale) setSearchPending(false);
-      }
+    const timer = setTimeout(() => {
+      withAuthRetry((r) => searchSessions(r, q)).then(
+        (res) => {
+          if (!stale) setHits({ q, results: res.results });
+        },
+        (e: unknown) => {
+          if (stale) return;
+          // Answered (failed) → no longer pending; the client-side filter stands.
+          setHits({ q, results: null });
+          if (e instanceof AuthError) {
+            closeSidebar();
+            router.replace('/');
+          }
+          // Otherwise a network/server hiccup: silently fall back to the client-side filter.
+        },
+      );
     }, SEARCH_DEBOUNCE_MS);
     return () => {
       stale = true;
       clearTimeout(timer);
     };
   }, [query, serverSearchOk]);
+  const search = searchView(query, hits, serverSearchOk);
+  const serverHits = search.results;
 
   const handleActionError = useCallback((e: unknown, what: string) => {
     if (e instanceof AuthError) {
@@ -371,11 +387,12 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
 
   const rows: Row[] = useMemo(() => {
     const q = query.trim();
-    // Server FTS results, once they match the live query.
-    if (q && hits && hits.q === q) {
-      return hits.results.map((hit) => ({ kind: 'hit' as const, hit }));
+    // Server FTS results, once they answer the live query.
+    if (serverHits) {
+      return serverHits.map((hit) => ({ kind: 'hit' as const, hit }));
     }
-    // No query, or request still in flight → instant client-side filter.
+    // No query, request still in flight, failed, or server search unavailable
+    // → instant client-side filter.
     const lower = q.toLowerCase();
     const list = !lower
       ? sessions
@@ -387,7 +404,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
     return list
       .filter((s) => !pinnedLiveIdSet.has(s.id))
       .map((session) => ({ kind: 'session' as const, session }));
-  }, [sessions, query, hits, pinnedLiveIdSet]);
+  }, [sessions, query, serverHits, pinnedLiveIdSet]);
 
   const searching = query.trim().length > 0;
   const profileInitial = (activeProfileLabel(profiles) || 'H')[0]?.toUpperCase() ?? 'H';
@@ -582,7 +599,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
         itemLayoutAnimation={LinearTransition.duration(220)}
         style={{ flex: 1 }}
         contentContainerStyle={{ paddingHorizontal: 4, paddingBottom: insets.bottom + 92 }}
-        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={load} tintColor={colors.textDim} />}
+        refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} tintColor={colors.textDim} />}
         keyboardShouldPersistTaps="handled"
         renderItem={({ item }) =>
           item.kind === 'hit' ? (
@@ -608,7 +625,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
         onEndReached={loadMore}
         onEndReachedThreshold={0.4}
         ListFooterComponent={
-          loadingMore || (searchPending && rows.length > 0) ? (
+          loadingMore || (search.pending && rows.length > 0) ? (
             <Text style={{ color: colors.textFaint, fontSize: 13, textAlign: 'center', padding: 14 }}>
               {loadingMore ? 'Loading…' : 'Searching…'}
             </Text>
@@ -618,7 +635,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           loaded && !refreshing ? (
             <Text style={{ color: colors.textFaint, fontSize: 14, paddingHorizontal: 16, paddingTop: 18 }}>
               {searching
-                ? searchPending
+                ? search.pending
                   ? 'Searching…'
                   : 'No matches'
                 : showArchived
