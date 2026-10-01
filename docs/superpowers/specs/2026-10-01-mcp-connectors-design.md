@@ -561,8 +561,8 @@ error states. Read-only REST calls run against the live gateway.
 
 ## 10. Risks and things to verify during implementation
 
-- **R1. The REST OAuth flow has no client we could copy, and the callback URL is built by the
-  gateway** from the request, from `HERMES_DASHBOARD_PUBLIC_URL` / `dashboard.public_url`, or from
+- **R1. (Resolved on the device, §12.) The REST OAuth flow has no client we could copy, and the
+  callback URL is built by the gateway** from the request, from `HERMES_DASHBOARD_PUBLIC_URL` / `dashboard.public_url`, or from
   a per-server override. Expected: `https://hermes.kite-opah.ts.net/api/mcp/oauth/callback/<name>`.
   Rule B checks it at run time. If it is wrong, the fix is to set `HERMES_DASHBOARD_PUBLIC_URL` in
   `hermes-deploy`, which is his deploy.
@@ -627,6 +627,25 @@ error states. Read-only REST calls run against the live gateway.
   `youtube-transcript`): four more in both cases, consistent with the gateway registering helper
   tools for a server's prompts and resources. Not confirmed in its source.
 
-**Not yet exercised anywhere:** an OAuth sign-in end to end against a real provider (R1), and the
-bearer-token form with Face ID. Both need his accounts and his phone.
+**Observed on his phone (2026-10-01, preview build, custom connector `Gmail` for
+`https://gmail.mcp.gldc.io/mcp`, behind Cloudflare Access managed OAuth):**
+
+- **R1 is resolved: an OAuth sign-in works end to end.** The gateway asked for
+  `https://hermes.kite-opah.ts.net/api/mcp/oauth/callback/Gmail`, rebuilt from the request with the
+  `https` scheme, so `HERMES_DASHBOARD_PUBLIC_URL` was not needed. After the sign-in the detail
+  read "Signed in." and "Working · 13 tools"; after a reload, "Connected · 13 tools".
+- **R2 showed up first, in a form the design did not cover.** Access registers a client only when
+  its redirect address is on the application's allow list. The gateway passed the refusal through
+  as `Registration failed: 400 {"error":"invalid_client_metadata","error_description":"redirect_uri
+  is not allowed by the account configuration"}`, and the detail showed that text under both Sign
+  in and Test. Allowing `https://hermes.kite-opah.ts.net/api/mcp/oauth/callback/*` on each of the
+  nine Access applications fixed it.
+- **Added to #42 because of it:** a refused registration is put into words (`explainOauthRefusal`
+  in `src/lib/mcp.ts`). When the provider's own words or error code say the redirect address is
+  not allowed, the sign-in card says what to do, quotes the provider, and shows the address to
+  allow; a failed test is enough to show it. Any other refusal quotes the provider with its HTTP
+  status. A newer test replaces an older sign-in note.
+
+**Not yet exercised anywhere:** the bearer-token form with Face ID, and the switch on a connector
+that existed before (`youtube-transcript`).
 
