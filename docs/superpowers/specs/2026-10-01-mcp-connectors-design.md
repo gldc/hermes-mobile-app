@@ -646,6 +646,6 @@ error states. Read-only REST calls run against the live gateway.
   allow; a failed test is enough to show it. Any other refusal quotes the provider with its HTTP
   status. A newer test replaces an older sign-in note.
 
-**Not yet exercised anywhere:** the bearer-token form with Face ID, and the switch on a connector
-that existed before (`youtube-transcript`).
+**Confirmed by him on his phone afterwards (2026-10-01):** the bearer-token form with Face ID, and
+the switch on a connector that existed before (`youtube-transcript`).
 
