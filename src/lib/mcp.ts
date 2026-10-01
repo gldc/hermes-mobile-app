@@ -319,6 +319,89 @@ export function checkAuthorizationUrl(url: string, baseUrl: string): string | nu
     : `The gateway would send the sign-in back to an address this phone cannot reach. Set HERMES_DASHBOARD_PUBLIC_URL on the gateway to ${want.origin}${basePath}.`;
 }
 
+/** The address the gateway asks a provider to send a sign-in back to, unless the gateway is
+ * configured with another one. Null when the gateway address is not a URL. */
+export function oauthRedirectAddress(baseUrl: string, name: string): string | null {
+  let base: URL;
+  try {
+    base = new URL(baseUrl.trim());
+  } catch {
+    return null;
+  }
+  // The gateway uses Python's quote(name, safe=''), which also encodes these five.
+  const quoted = encodeURIComponent(name).replace(/[!*'()]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`);
+  // `origin` drops any credentials in the stored gateway URL.
+  return `${base.origin}${base.pathname.replace(/\/+$/, '')}/api/mcp/oauth/callback/${quoted}`;
+}
+
+/** A provider's refusal to register the gateway for sign-in, in words. */
+export interface OauthRefusal {
+  /** It refused the redirect address, which the provider's settings can allow. */
+  redirect: boolean;
+  /** For the sign-in card. */
+  message: string;
+  /** One line for the test card. */
+  summary: string;
+}
+
+const REGISTRATION_FAILED = /Registration failed: (\d{3})\b\s*([\s\S]*)$/;
+// Inside a registration refusal any mention of the redirect address counts; elsewhere only
+// the standard error code does (a token-exchange error can mention `redirect_uri` too).
+const REDIRECT_REFUSED = /invalid_redirect_uri|redirect[_ ]ur[il]/i;
+const REDIRECT_CODE = /invalid_redirect_uri/i;
+const MAX_PROVIDER_TEXT = 160;
+
+/** What the provider said, from its JSON answer: the description, else the error code. */
+function providerSaid(body: string): string | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(body);
+  } catch {
+    return null;
+  }
+  if (!parsed || typeof parsed !== 'object') return null;
+  const { error, error_description: description } = parsed as { error?: unknown; error_description?: unknown };
+  const said = typeof description === 'string' && description.trim() ? description : typeof error === 'string' ? error : '';
+  const text = said.trim();
+  if (!text) return null;
+  return text.length > MAX_PROVIDER_TEXT ? `${text.slice(0, MAX_PROVIDER_TEXT)}…` : text;
+}
+
+/** The gateway passes a provider's registration refusal through as
+ * `Registration failed: <status> <body>`. Null for any other text. */
+export function explainOauthRefusal(text: string): OauthRefusal | null {
+  const failed = REGISTRATION_FAILED.exec(text);
+  if (failed ? REDIRECT_REFUSED.test(failed[2]) : REDIRECT_CODE.test(text)) {
+    return {
+      redirect: true,
+      message:
+        'The server’s sign-in does not allow this gateway’s redirect address. Add it to the server’s allowed redirect addresses, then sign in again.',
+      summary: 'Sign-in is not set up: the server does not allow this gateway’s redirect address.',
+    };
+  }
+  if (!failed) return null;
+  const status = failed[1];
+  const said = providerSaid(failed[2]);
+  return {
+    redirect: false,
+    message: `The server refused to register this gateway for sign-in (HTTP ${status}).${said ? ` It said: “${said}”` : ''}`,
+    summary: `Sign-in is not set up: the server refused to register this gateway (HTTP ${status}).`,
+  };
+}
+
+/** What the sign-in card shows for a failed sign-in: the words, and the address to allow when
+ * the provider refused it. */
+export function signInProblem(text: string, baseUrl: string | null, name: string): { text: string; address: string | null } {
+  const refusal = explainOauthRefusal(text);
+  if (!refusal) return { text, address: null };
+  return { text: refusal.message, address: refusal.redirect && baseUrl ? oauthRedirectAddress(baseUrl, name) : null };
+}
+
+/** The test card's line for a failed test. */
+export function testFailureLine(text: string): string {
+  return explainOauthRefusal(text)?.summary ?? text;
+}
+
 // --- the add forms (spec §5.4, §5.5, §5.9) ----------------------------------
 
 /** One value the add forms collect and hand to ConnectorSecretForm. */

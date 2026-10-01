@@ -98,6 +98,15 @@ rebuilt from the request (`base_url` + `X-Forwarded-Prefix`). The app refuses to
 authorization URL whose `redirect_uri` does not come back to the gateway address it uses
 (`checkAuthorizationUrl` in `src/lib/mcp.ts`).
 
+A provider that restricts client registration to an allow list refuses that redirect URI until it
+is added. The gateway passes the refusal through, both from the OAuth start and from
+`mcp.servers.test`, as `Registration failed: <status> <body>`. Seen on 2026-10-01 from Cloudflare
+Access: `Registration failed: 400 {"error":"invalid_client_metadata","error_description":"redirect_uri
+is not allowed by the account configuration"}`. The app puts it into words and shows the address
+to allow (`explainOauthRefusal`, `oauthRedirectAddress` in `src/lib/mcp.ts`). With the callback path
+allowed there (`<gateway>/api/mcp/oauth/callback/*`), the sign-in completed on the device, and the
+redirect was rebuilt with the `https` scheme without `HERMES_DASHBOARD_PUBLIC_URL`.
+
 ### Catalog — `GET /api/mcp/catalog`
 
 `{entries, diagnostics}`. Entry fields the app uses: `name`, `description`, `connector_slug`,

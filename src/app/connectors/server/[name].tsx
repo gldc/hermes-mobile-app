@@ -14,18 +14,20 @@ import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from '
 import { Alert, Pressable, RefreshControl, ScrollView, Switch, Text, View } from 'react-native';
 import { listMcpServers, removeMcpServer, setMcpServerEnabled, type McpServer } from '@/api/mcp';
 import type { McpRuntimeRow } from '@/api/mcpSession';
-import { consumeSignInRequest, dropSignInRequest, useConnectorSignIn } from '@/components/connector-sign-in';
-import { ConnectorSignInCard } from '@/components/connector-sign-in-card';
+import { consumeSignInRequest, dropSignInRequest, gatewayBaseUrl, useConnectorSignIn } from '@/components/connector-sign-in';
+import { ConnectorSignInCard, type ConnectorSignInNote } from '@/components/connector-sign-in-card';
 import { ConnectorTestCard, type ConnectorTestState } from '@/components/connector-test-card';
 import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
 import {
   authLabel,
   connectorError,
+  explainOauthRefusal,
   removeConfirmation,
   runtimeRowsByName,
   serverCapabilities,
   signInLabel,
+  signInProblem,
   statusLine,
   type ConnectorAction,
 } from '@/lib/mcp';
@@ -94,7 +96,7 @@ export default function ConnectorDetailScreen() {
   const readsInFlight = useRef(0);
   const { phase: signInPhase, cancelling, signIn, cancel: cancelSignIn } = useConnectorSignIn(profile);
   const signingIn = signInPhase !== null;
-  const [signInNote, setSignInNote] = useState<{ tone: 'error' | 'info'; text: string } | null>(null);
+  const [signInNote, setSignInNote] = useState<ConnectorSignInNote | null>(null);
   const [removing, setRemoving] = useState(false);
   const signInChecked = useRef(false);
   // After an await, a screen that was left must not navigate or write: `dismissTo` would
@@ -222,7 +224,7 @@ export default function ConnectorDetailScreen() {
           setSignInNote({ tone: 'info', text: 'Sign-in cancelled.' });
           void runTest(); // a sign-in that did complete on the gateway still shows
         } else {
-          setSignInNote({ tone: 'error', text: outcome.message });
+          setSignInNote({ tone: 'error', ...signInProblem(outcome.message, gatewayBaseUrl(), name) });
         }
         void fetchServer(true); // the gateway re-saves the connector when a sign-in ends
       })
@@ -314,6 +316,13 @@ export default function ConnectorDetailScreen() {
 
   const status = server && connected ? statusLine(server, row) : null;
   const lastOutcome = test.phase === 'done' ? test.outcome : null;
+  // A test already shows that the provider refuses to register the gateway: the sign-in card
+  // says what to do (and gives the address to allow) without a sign-in attempt first.
+  const refusedTest =
+    lastOutcome && lastOutcome.kind !== 'ok' && typeof name === 'string' && explainOauthRefusal(lastOutcome.message)
+      ? signInProblem(lastOutcome.message, gatewayBaseUrl(), name)
+      : null;
+  const shownSignInNote: ConnectorSignInNote | null = signInNote ?? (refusedTest ? { tone: 'error', ...refusedTest } : null);
 
   return (
     <ScrollView
@@ -380,7 +389,7 @@ export default function ConnectorDetailScreen() {
               label={signInLabel(lastOutcome)}
               phase={signInPhase}
               cancelling={cancelling}
-              note={signInNote}
+              note={shownSignInNote}
               disabled={busy || removing}
               onSignIn={() => void startSignIn()}
               onCancel={cancelSignIn}

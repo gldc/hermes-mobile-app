@@ -43,6 +43,32 @@ test('an error note is in the danger colour and not selectable (it can be gatewa
   expect(note.props.selectable).toBe(false);
 });
 
+test('a note with an address shows it under a label, selectable so it can be copied (the app built it)', async () => {
+  const address = 'https://hermes.kite-opah.ts.net/api/mcp/oauth/callback/Gmail';
+  await render(
+    <ConnectorSignInCard
+      label="Sign in"
+      phase={null}
+      cancelling={false}
+      note={{ tone: 'error', text: 'The server does not allow it.', address }}
+      onSignIn={noop}
+      onCancel={noop}
+    />,
+  );
+  expect(screen.getByText('The server does not allow it.').props.selectable).toBe(false);
+  expect(screen.getByText('Redirect address')).toBeTruthy();
+  const value = screen.getByText(address);
+  expect(value.props.selectable).toBe(true);
+  expect(value).toHaveStyle({ color: colors.text });
+});
+
+test('a note without an address shows no address label', async () => {
+  await render(
+    <ConnectorSignInCard label="Sign in" phase={null} cancelling={false} note={{ tone: 'error', text: 'No.', address: null }} onSignIn={noop} onCancel={noop} />,
+  );
+  expect(screen.queryByText('Redirect address')).toBeNull();
+});
+
 test('an info note is in the quiet colour', async () => {
   await render(
     <ConnectorSignInCard label="Sign in again" phase={null} cancelling={false} note={{ tone: 'info', text: 'Signed in.' }} onSignIn={noop} onCancel={noop} />,

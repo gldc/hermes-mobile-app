@@ -55,8 +55,10 @@ jest.mock('../src/components/connector-sign-in', () => {
     consumeSignInRequest: (name: string) => mockConsume(name),
     dropSignInRequest: (name: string) => mockDrop(name),
     requestSignInOnOpen: () => {},
+    gatewayBaseUrl: () => mockGatewayBase,
   };
 });
+let mockGatewayBase: string | null = 'https://hermes.kite-opah.ts.net';
 
 function server(over: Partial<McpServer> = {}): McpServer {
   return {
@@ -785,6 +787,85 @@ describe('Connector detail — sign in', () => {
     await open('/connectors/server/linear');
     await flush(20);
     expect(mockSignIn).not.toHaveBeenCalled();
+  });
+});
+
+// Seen on the device (2026-10-01): the provider refused the gateway's redirect address and the
+// screen showed its raw JSON, twice.
+describe('Connector detail — a provider that refuses the gateway’s redirect address', () => {
+  const RAW =
+    'Registration failed: 400 {"error":"invalid_client_metadata","error_description":"redirect_uri is not allowed by the account configuration"}';
+  const EXPLAINED =
+    'The server’s sign-in does not allow this gateway’s redirect address. Add it to the server’s allowed redirect addresses, then sign in again.';
+  const SUMMARY = 'Sign-in is not set up: the server does not allow this gateway’s redirect address.';
+  const ADDRESS = 'https://hermes.kite-opah.ts.net/api/mcp/oauth/callback/linear';
+
+  beforeEach(() => {
+    mockGatewayBase = 'https://hermes.kite-opah.ts.net';
+  });
+
+  it('a failed sign-in: the explanation and the address to allow, and none of the provider’s JSON', async () => {
+    await open('/connectors/server/linear');
+    mockSignIn.mockResolvedValue({ kind: 'error', message: RAW });
+    await act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+    });
+    await flush(20);
+    expect(screen.getByText(EXPLAINED)).toBeTruthy();
+    expect(screen.getByText(ADDRESS).props.selectable).toBe(true);
+    expect(screen.queryByText(/invalid_client_metadata/)).toBeNull();
+  });
+
+  it('a failed test alone: the sign-in card explains it once with the address; the test card has one line', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    await act(async () => testCalls[0].resolve({ kind: 'failed', message: RAW, oauthNeeded: true, tokensPresent: false }));
+    await flush();
+    expect(screen.getAllByText(EXPLAINED)).toHaveLength(1);
+    expect(screen.getAllByText(ADDRESS)).toHaveLength(1);
+    expect(screen.getAllByText(SUMMARY)).toHaveLength(1);
+    expect(screen.queryByText(/invalid_client_metadata/)).toBeNull();
+  });
+
+  it('both failed: still one explanation and one address', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    mockSignIn.mockResolvedValue({ kind: 'error', message: RAW });
+    await act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+    });
+    await flush(20);
+    await act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Test connection' }));
+    });
+    await flush();
+    await act(async () => testCalls[testCalls.length - 1].resolve({ kind: 'failed', message: RAW, oauthNeeded: true, tokensPresent: false }));
+    await flush();
+    expect(screen.getAllByText(EXPLAINED)).toHaveLength(1);
+    expect(screen.getAllByText(ADDRESS)).toHaveLength(1);
+    expect(screen.getAllByText(SUMMARY)).toHaveLength(1);
+  });
+
+  it('a connector that cannot sign in here (from a plugin): only the test card’s line, no address', async () => {
+    mockList.mockImplementation(async () => [server({ source: 'plugin', plugin: 'acme' })]);
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    await act(async () => testCalls[0].resolve({ kind: 'failed', message: RAW, oauthNeeded: true, tokensPresent: false }));
+    await flush();
+    expect(screen.getByText(SUMMARY)).toBeTruthy();
+    expect(screen.queryByText(ADDRESS)).toBeNull();
+  });
+
+  it('not connected to a gateway: the explanation without an address', async () => {
+    mockGatewayBase = null;
+    await open('/connectors/server/linear');
+    mockSignIn.mockResolvedValue({ kind: 'error', message: RAW });
+    await act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+    });
+    await flush(20);
+    expect(screen.getByText(EXPLAINED)).toBeTruthy();
+    expect(screen.queryByText('Redirect address')).toBeNull();
   });
 });
 
