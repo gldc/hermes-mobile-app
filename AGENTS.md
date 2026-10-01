@@ -50,6 +50,9 @@ src/api/          transport, all unit-tested with injected fetch/socket
   gatewayClient.ts adapter over the vendored upstream JsonRpcGatewayClient
   chat-transport.ts one per chat screen: client + turn store + request router +
                   reconnect orchestrator, all handlers registered before connect
+  mcp.ts          MCP connector REST calls (servers, OAuth flow, catalog); cleans errors of
+                  secret values. Contract: docs/contracts/mcp.md
+  mcpSession.ts   connector RPCs over an injected call: mcp.servers.test / .status
 src/vendor/hermes-gateway/  upstream client + generated contract, pinned by
                   VENDORED.json (re-vendor: scripts/sync-gateway-contract.sh <tag>)
 src/connection.ts singleton glue: SecureStore persistence, withAuthRetry, mintGatewayUrl
@@ -57,6 +60,9 @@ src/connection.ts singleton glue: SecureStore persistence, withAuthRetry, mintGa
 src/lib/turn-controller.ts pure turn state + request-card reducer; mergeRequestRows places cards
 src/lib/turn-commands.ts   Stop (15 s reconnect fallback) and steer
 src/lib/request-answers.ts answers cards (guards on the store's card, never the rendered one)
+src/lib/mcp.ts    pure connector logic (capabilities, status line, validation, error mapping,
+                  the authorization-URL check)
+src/lib/mcp-oauth.ts connector OAuth sign-in sequence, I/O injected; cancels every flow it abandons
 src/components/   message rows, tool cards, composer, theme'd pieces
   approval-card / clarify-card / secure-entry-card  server→client request cards
   sidebar-host.tsx Claude-style slide-over: wraps the Stack in root _layout;
@@ -65,6 +71,8 @@ src/components/   message rows, tool cards, composer, theme'd pieces
   sidebar.tsx     Session list, search, profile switcher, archive view, nav
                   destinations, New chat pill — lives inside the drawer.
 src/sidebar-store.ts open/close state (useSyncExternalStore, like profile-store)
+src/session-mcp-store.ts the active chat lends its socket to the Connectors screens
+                  (owner-checked clear)
 src/theme.ts      single source of color truth (warm cream light / charcoal dark,
                   terracotta accent, Georgia serif for wordmark + greetings)
 ```

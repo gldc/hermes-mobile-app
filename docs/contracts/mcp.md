@@ -1,0 +1,156 @@
+# Wire contracts: MCP connectors (servers, OAuth, catalog, test, status)
+
+Verified against the hermes-agent tree at `v2026.9.24` (0.21.5) on 2026-10-01, and read-only
+against the live gateway. Server files: `hermes_cli/web_routers/mcp.py`,
+`hermes_cli/web_server_mcp.py`, `hermes_cli/web_models.py`, `tools/mcp_dashboard_oauth.py`,
+`tui_gateway/methods_tools.py`. App modules: `src/api/mcp.ts` (REST), `src/api/mcpSession.ts` (RPC).
+
+Design: `docs/superpowers/specs/2026-10-01-mcp-connectors-design.md`.
+
+---
+
+## REST
+
+Every route accepts the cookie session. Every route except the flow and callback routes takes an
+optional `?profile=`.
+
+### List servers — `GET /api/mcp/servers`
+
+```json
+{ "servers": [ {
+  "name": "linear", "transport": "http", "url": "https://mcp.linear.app/mcp",
+  "command": null, "args": [], "env": {}, "auth": "oauth", "enabled": true,
+  "tools": null, "source": "config", "plugin": null
+} ] }
+```
+
+- Sorted by name. `transport` is `http`, `stdio` or `unknown`.
+- `auth` is `oauth`, `header`, or null. `env` values are redacted by the gateway.
+- `tools` is the tool filter as configured (a list or an object), or null for all. It is **not** a
+  tool count.
+- There is **no sign-in state** here. Use the test RPC.
+- This is not the RPC `McpServerSummary` shape (`env` there is a list of key names).
+
+### Add a server — `POST /api/mcp/servers`
+
+Body for a remote server: `{name, url, auth, bearer_token?}`.
+
+- `auth` is `none`, `header` or `oauth`. `header` requires `bearer_token`; any other mode rejects it.
+- The token is written to the profile's `.env`; `config.yaml` gets only a header template.
+- Returns the server summary.
+- 400 with a reason (validation), 409 (name exists, or provided by a plugin), 422 (malformed body).
+- The 400 reason is `str(exc)` from the gateway. The app never trusts it to be free of the token:
+  `src/api/mcp.ts` replaces any message that echoes a submitted value (as typed, trimmed, or
+  without a leading `Bearer `). A value echoed in a transformed form (URL-encoded, JSON-escaped,
+  case-changed) is not recognised.
+
+### Remove — `DELETE /api/mcp/servers/{name}`
+
+`{ok: true}`. 404 unknown, 409 plugin-provided.
+
+### Enable or disable — `PUT /api/mcp/servers/{name}/enabled`
+
+Body `{enabled}`. Returns `{ok, name, enabled}`. The server stays in the config when off.
+404 unknown, 409 plugin-provided.
+
+### Names in paths
+
+Routes use `{name}`, not `{name:path}`. A name containing `/` cannot be addressed over REST.
+
+### Start OAuth — `POST /api/mcp/servers/{name}/auth`
+
+Returns a flow: `{flow_id, server_name, status, authorization_url, error}`.
+
+- The gateway waits **up to 30 s** for the authorization URL before answering, so the app allows
+  45 s and always sends a fast request first (a slow request must not carry a token rotation; the
+  gateway writes rotated cookies only when the handler returns).
+- `status` is `starting`, `authorization_required`, `approved` or `error`.
+- 404 unknown server, 400 stdio or header-auth server, 409 when a flow for this server is already
+  running or the server is provided by a plugin, 429 when 8 flows are live (the app shows its
+  fixed 429 text).
+- A flow that ended with `error` and was **not cancelled** can be reopened by the gateway when its
+  worker retries; it then holds the per-server slot for up to 5 minutes. So the app cancels every
+  flow it stops without approval.
+
+### Flow status — `GET /api/mcp/oauth/flows/{flow_id}`
+
+The flow, plus `tools: [{name, description}]` once approved. 404 when the flow has expired
+(15 minutes) or the gateway restarted (flows are in memory).
+
+While the gateway exchanges the code and connects, the status stays `authorization_required`.
+
+### Cancel — `DELETE /api/mcp/oauth/flows/{flow_id}`
+
+`{ok: true, status}`. Idempotent. `status` is the flow's status **after** the cancel: `approved`
+means the sign-in had already succeeded; `expired` means the flow no longer exists.
+
+### Callback — `GET /api/mcp/oauth/callback/{server_name}`
+
+Public (no cookie): it is on the gate's public-prefix list and is matched by `state`. The provider
+redirects the browser here.
+
+The redirect URI is the server's own `oauth.redirect_uri` when its config has one; otherwise
+`HERMES_DASHBOARD_PUBLIC_URL` / `dashboard.public_url` plus the callback path; otherwise it is
+rebuilt from the request (`base_url` + `X-Forwarded-Prefix`). The app refuses to open an
+authorization URL whose `redirect_uri` does not come back to the gateway address it uses
+(`checkAuthorizationUrl` in `src/lib/mcp.ts`).
+
+### Catalog — `GET /api/mcp/catalog`
+
+`{entries, diagnostics}`. Entry fields the app uses: `name`, `description`, `connector_slug`,
+`source`, `transport`, `auth_type` (`oauth`/`none`/…), `required_env: [{name, prompt, required}]`,
+`url`, `needs_install`, `installed`, `enabled`.
+
+- `required_env` does **not** say whether a variable is a secret. The gateway decides that itself.
+- Live on 2026-10-01: 65 entries, all `http`, none with `needs_install`; 55 `oauth`, 10 `none`; two
+  with `required_env` (`asana`, `n8n-official`).
+
+### Install a catalog entry — `POST /api/mcp/catalog/install`
+
+Body `{name, env, enable}`. Returns `{ok, name, background}`.
+
+- `env` may contain only variables the entry declares (400 otherwise). 404 for an unknown entry.
+- Secret values are written to `.env` **before** the entry is installed, so a failed install can
+  leave them there.
+
+---
+
+## RPC (over the chat WebSocket)
+
+### `mcp.servers.test` `{profile?, name}`
+
+`{ok, tools, error?, prompts?, resources?, oauth_needed, oauth_tokens_present?}`.
+
+- Really connects, lists tools and disconnects. It runs on the gateway's RPC pool
+  (`_LONG_HANDLERS`), so a slow server does not stall the socket.
+- For an `auth: oauth` server with no token on disk it answers `ok: false` with
+  `oauth_tokens_present: false`.
+- Error code 4064 when the server is unknown.
+- The app uses this instead of the REST test route (`POST /api/mcp/servers/{name}/test`), which is
+  slow and would ride the cookie path.
+
+### `mcp.servers.status` `{profile?}`
+
+`{servers: [{name, transport, tools, connected, disabled, status, source, plugin}], checked_at}`.
+
+- From cached state; never connects. `tools` is a count.
+- `status`: `connected`, `disabled`, `connecting`, `failed`, `lazy`, `configured`.
+- Runtime state is reported for the gateway's launch profile. Under a multiplexed gateway (one
+  that has served a profile-scoped RPC) it is the scoped profile's own view. Otherwise a
+  non-launch profile's rows read `configured` or `disabled`.
+
+### `reload.mcp` — NOT USED
+
+Tears down and reconnects every MCP server for every live session and invalidates the prompt
+cache. The app does not call it (spec §5.7).
+
+---
+
+## When a change takes effect
+
+Read from `hermes_cli/mcp_startup.py` (`start_background_mcp_discovery`): discovery runs once per
+profile and is started again for a new session only when **no** server is connected or lazily
+registered. With at least one such server, a newly added server is loaded by `reload.mcp` or a
+gateway restart. After an
+OAuth sign-in the gateway reconnects the server only if it is already loaded
+(`tools/mcp_tool_loop.py`, `reconnect_mcp_server`).
