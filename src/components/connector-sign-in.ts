@@ -43,7 +43,8 @@ export function __resetConnectorSignIn(): void {
   signInOnOpen = null;
 }
 
-function gatewayUrl(): string | null {
+/** The gateway address this app is connected to, or null when it is not connected. */
+export function gatewayBaseUrl(): string | null {
   try {
     return getRest().baseUrl;
   } catch {
@@ -120,7 +121,7 @@ export function useConnectorSignIn(
   const signIn = useCallback(
     async (name: string): Promise<OauthOutcome> => {
       if (running.current) return { kind: 'error', message: 'A sign-in is already running.' };
-      const base = gatewayUrl();
+      const base = gatewayBaseUrl();
       if (!base || !gatewaySupportsOauth(base)) return { kind: 'error', message: HTTPS_NEEDED };
       running.current = true;
       cancelled.current = false;

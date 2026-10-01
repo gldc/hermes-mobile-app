@@ -7,9 +7,10 @@
 // the list offers Reload now (spec §5.7).
 import { Stack, router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { Alert, FlatList, RefreshControl, Text, View } from 'react-native';
+import { Alert, FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 import { listMcpServers, setMcpServerEnabled, type McpServer } from '@/api/mcp';
 import type { McpRuntimeRow } from '@/api/mcpSession';
+import { CardButton } from '@/components/card-button';
 import { ConnectorReloadBanner } from '@/components/connector-reload-banner';
 import { ConnectorRow } from '@/components/connector-row';
 import { Icon } from '@/components/icon';
@@ -207,7 +208,24 @@ export default function ConnectorsScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
-      <Stack.Screen options={{ title: 'Connectors' }} />
+      <Stack.Screen
+        options={{
+          title: 'Connectors',
+          headerRight: unsupported
+            ? undefined
+            : () => (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel="Add connector"
+                  hitSlop={4}
+                  onPress={() => router.push('/connectors/add')}
+                  style={({ pressed }) => ({ padding: 10, opacity: pressed ? 0.5 : 1 })}
+                >
+                  <Icon sf="plus" size={22} color={colors.accent} />
+                </Pressable>
+              ),
+        }}
+      />
 
       {error ? (
         <Text selectable style={{ color: colors.danger, fontSize: 14, paddingHorizontal: 16, paddingTop: 8 }}>
@@ -273,8 +291,9 @@ export default function ConnectorsScreen() {
               <Icon sf="powerplug" size={44} color={colors.textFaint} />
               <Text style={{ color: colors.text, fontSize: 18, fontWeight: '600' }}>No connectors yet</Text>
               <Text style={{ color: colors.textDim, fontSize: 14, textAlign: 'center' }}>
-                MCP servers configured on your gateway show up here.
+                Connectors give the agent on your gateway more tools. Add one from the catalog or by URL.
               </Text>
+              <CardButton label="Add a connector" a11y="Add a connector" onPress={() => router.push('/connectors/add')} primary />
             </View>
           ) : null
         }
