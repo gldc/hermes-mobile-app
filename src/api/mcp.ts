@@ -164,13 +164,27 @@ export function setMcpServerEnabled(
 
 // --- OAuth -----------------------------------------------------------------
 
+/** The fast request sent before the OAuth start failed, so NO flow was started.
+ * `reason` is that request's own error (a list failure, not a sign-in failure). */
+export class OauthPreflightError extends Error {
+  constructor(readonly reason: unknown) {
+    super('The gateway could not be reached before starting sign-in.');
+    this.name = 'OauthPreflightError';
+  }
+}
+
 /** Start a dashboard-mediated OAuth flow.
  *
  * The fast GET comes first on purpose (spec §6.1): the gateway writes rotated
  * cookies back only when a handler returns, so a refresh-token rotation must
  * ride a request that finishes quickly, never the slow POST that follows. */
 export async function startMcpOauth(rest: Rest, name: string, profile?: string | null): Promise<McpOauthFlow> {
-  await listMcpServers(rest, profile);
+  try {
+    await listMcpServers(rest, profile);
+  } catch (e) {
+    if (e instanceof AuthError) throw e;
+    throw new OauthPreflightError(e);
+  }
   return rest.post<McpOauthFlow>(
     `${serverPath(name, '/auth')}${profileQuery(profile, '?')}`,
     {},

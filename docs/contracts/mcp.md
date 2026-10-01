@@ -126,6 +126,9 @@ Body `{name, env, enable}`. Returns `{ok, name, background}`.
 - For an `auth: oauth` server with no token on disk it answers `ok: false` with
   `oauth_tokens_present: false`.
 - Error code 4064 when the server is unknown.
+- `error` is the raw exception text. Unlike the REST test route, the gateway does **not** redact
+  it, and a connection error can echo a server URL that carries a key in its query string. The app
+  shows it on screen and never logs it or offers to copy it.
 - The app uses this instead of the REST test route (`POST /api/mcp/servers/{name}/test`), which is
   slow and would ride the cookie path.
 
@@ -153,4 +156,5 @@ profile and is started again for a new session only when **no** server is connec
 registered. With at least one such server, a newly added server is loaded by `reload.mcp` or a
 gateway restart. After an
 OAuth sign-in the gateway reconnects the server only if it is already loaded
-(`tools/mcp_tool_loop.py`, `reconnect_mcp_server`).
+(`tools/mcp_tool_loop.py`, `reconnect_mcp_server`) and the flow belongs to the gateway's launch
+profile (`reconnect_live` in `web_routers/mcp.py`).

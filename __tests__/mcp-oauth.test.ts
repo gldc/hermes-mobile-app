@@ -1,8 +1,10 @@
 // __tests__/mcp-oauth.test.ts
 import type { McpOauthFlow } from '../src/api/mcp';
+import { OauthPreflightError } from '../src/api/mcp';
 import { AuthError, HttpError } from '../src/api/restClient';
 import {
   OAUTH_CONFLICT_RETRY_MS,
+  OAUTH_DISMISS_WAIT_MS,
   OAUTH_FINISH_GRACE_MS,
   OAUTH_MAX_FAILED_POLLS,
   OAUTH_POLL_MS,
@@ -31,6 +33,12 @@ interface Script {
   closeBrowserBeforePoll?: number;
   /** openBrowser rejects. */
   openFails?: boolean;
+  /** openBrowser throws synchronously. */
+  openThrows?: boolean;
+  /** openBrowser resolves at once with this value (no page was shown). */
+  openResult?: unknown;
+  /** dismissBrowser never settles, or rejects. */
+  dismiss?: 'hang' | 'reject';
   /** isCancelled() turns true just before this poll (0-based). */
   cancelBeforePoll?: number;
   /** Extra clock jump (ms) added to the sleep before this poll (0-based) — a background suspension. */
@@ -50,6 +58,7 @@ function harness(script: Script) {
     phases: [] as OauthPhase[],
     opened: [] as string[],
     dismissed: 0,
+    dismissWaits: 0,
     cancels: [] as string[],
     polls: 0,
     starts: 0,
@@ -78,17 +87,25 @@ function harness(script: Script) {
     },
     openBrowser: (url) => {
       log.opened.push(url);
+      if (script.openThrows) throw new Error('sync boom');
       if (script.openFails) return Promise.reject(new Error('no browser'));
+      if ('openResult' in script) return Promise.resolve(script.openResult);
       return new Promise<void>((resolve) => {
         closeBrowser = resolve;
       });
     },
     dismissBrowser: () => {
       log.dismissed += 1;
+      if (script.dismiss === 'hang') return new Promise<void>(() => {});
+      if (script.dismiss === 'reject') return Promise.reject(new Error('cannot dismiss'));
       closeBrowser();
     },
     checkUrl: script.checkUrl ?? (() => null),
     sleep: async (ms) => {
+      if (ms === OAUTH_DISMISS_WAIT_MS) {
+        log.dismissWaits += 1; // the bound on a dismiss: not a poll tick, the clock stays put
+        return;
+      }
       log.sleeps.push(ms);
       t += ms + (script.jumpBeforePoll?.[pollIndex] ?? 0);
       if (script.closeBrowserBeforePoll === pollIndex) closeBrowser();
@@ -192,6 +209,21 @@ describe('runOauthSignIn — start failures', () => {
     expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'This connector no longer exists.', gone: true });
   });
 
+  it('an error at start whose cancel answers `approved` is a success', async () => {
+    const h = harness({ start: flow({ status: 'error', authorization_url: null, error: 'x' }), cancelStatus: 'approved', polls: [approved()] });
+    expect((await runOauthSignIn(h.deps)).kind).toBe('approved');
+  });
+
+  it('a failed fast request is a list failure, not a missing connector', async () => {
+    const h = harness({ start: new OauthPreflightError(new HttpError(404, "Profile 'x' not found")) });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: "Profile 'x' not found" });
+  });
+
+  it('a timed-out fast request does not warn about a 5-minute refusal: no flow was started', async () => {
+    const h = harness({ start: new OauthPreflightError(new HttpError(0, 'request timed out after 20s')) });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'The gateway did not answer in time.' });
+  });
+
   it('a network failure at start is reported plainly', async () => {
     const h = harness({ start: new TypeError('Network request failed') });
     expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'Gateway unreachable — check your VPN or Wi-Fi.' });
@@ -273,6 +305,52 @@ describe('runOauthSignIn — while the browser is open', () => {
     expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'Could not open the sign-in page.' });
     expect(h.log.cancels).toEqual(['f1']);
     expect(h.log.dismissed).toBe(0);
+  });
+});
+
+describe('runOauthSignIn — a misbehaving browser', () => {
+  it('a dismiss that never settles does not block the cancel', async () => {
+    const h = harness({ dismiss: 'hang', polls: [flow(), flow({ status: 'error', error: 'Access denied' })] });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'Access denied' });
+    expect(h.log.dismissed).toBe(1);
+    expect(h.log.dismissWaits).toBe(1);
+    expect(h.log.cancels).toEqual(['f1']);
+  });
+
+  it('a dismiss that rejects is ignored', async () => {
+    const h = harness({ dismiss: 'reject', polls: [approved()] });
+    expect((await runOauthSignIn(h.deps)).kind).toBe('approved');
+  });
+
+  it('an open that answers `locked` is a failure to open, not a closed page', async () => {
+    const h = harness({ openResult: { type: 'locked' } });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'Could not open the sign-in page.' });
+    expect(h.log.phases).toEqual(['starting', 'browser']);
+    expect(h.log.cancels).toEqual(['f1']);
+  });
+
+  it('an open that throws synchronously still cancels the flow', async () => {
+    const h = harness({ openThrows: true });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'Could not open the sign-in page.' });
+    expect(h.log.cancels).toEqual(['f1']);
+  });
+
+  it('reports a failed open without waiting for a poll to succeed', async () => {
+    const h = harness({ openFails: true, polls: [new TypeError('Network request failed')] });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'Could not open the sign-in page.' });
+    expect(h.log.polls).toBe(0);
+    expect(h.log.cancels).toEqual(['f1']);
+  });
+
+  it('a throwing dependency cancels the flow instead of escaping', async () => {
+    const h = harness({
+      checkUrl: () => {
+        throw new Error('boom');
+      },
+    });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'Sign-in failed unexpectedly.' });
+    expect(h.log.opened).toEqual([]);
+    expect(h.log.cancels).toEqual(['f1']);
   });
 });
 

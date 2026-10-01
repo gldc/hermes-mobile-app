@@ -3,9 +3,10 @@
 // screens do not own a WebSocket. Same shape as session-model-store: module
 // state + subscribe, consumed with useSyncExternalStore.
 //
-// Unlike session-model-store, a clear is owner-checked: two chat screens can
-// overlap during a transition, and the older one's cleanup must not clear the
-// newer one's target.
+// Unlike session-model-store, targets are kept per publishing chat screen and
+// the most recently MOUNTED one is the visible target: two chat screens can
+// overlap during a transition, and neither the older one's cleanup nor a late
+// republish from it may displace the newer one's target.
 import type { McpRuntimeRow, McpTestOutcome } from '@/api/mcpSession';
 
 export interface SessionMcpTarget {
@@ -17,18 +18,21 @@ export interface SessionMcpTarget {
   status: (profile: string | null) => Promise<McpRuntimeRow[]>;
 }
 
-let owner: object | null = null;
-let target: SessionMcpTarget | null = null;
+// Insertion order = mount order; a republish by the same chat keeps its place.
+const targets = new Map<object, SessionMcpTarget>();
+let current: SessionMcpTarget | null = null;
 const listeners = new Set<() => void>();
 
-function emit(nextOwner: object | null, next: SessionMcpTarget | null): void {
-  owner = nextOwner;
-  target = next;
+function refresh(): void {
+  let newest: SessionMcpTarget | null = null;
+  for (const t of targets.values()) newest = t;
+  if (newest === current) return;
+  current = newest;
   for (const l of [...listeners]) l();
 }
 
 export function getSessionMcpTarget(): SessionMcpTarget | null {
-  return target;
+  return current;
 }
 
 export function subscribeSessionMcpTarget(listener: () => void): () => void {
@@ -38,20 +42,21 @@ export function subscribeSessionMcpTarget(listener: () => void): () => void {
   };
 }
 
-/** Publish the active chat's target. `by` identifies the publishing chat screen. */
+/** Publish (or update) a chat's target. `by` identifies the publishing chat screen. */
 export function publishSessionMcpTarget(by: object, next: SessionMcpTarget): void {
-  emit(by, next);
+  targets.set(by, next);
+  refresh();
 }
 
-/** Clear the target, but only if `by` is the chat that published it. */
+/** Withdraw a chat's target (its screen unmounted). */
 export function clearSessionMcpTarget(by: object): void {
-  if (owner !== by) return;
-  emit(null, null);
+  if (!targets.delete(by)) return;
+  refresh();
 }
 
 /** Test-only: reset module state between cases. */
 export function __resetSessionMcpStore(): void {
-  owner = null;
-  target = null;
+  targets.clear();
+  current = null;
   listeners.clear();
 }

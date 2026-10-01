@@ -7,7 +7,7 @@
 // cancels the flow — a flow left behind can be reopened by the gateway and
 // block the server for 5 minutes. A cancel that answers `approved` means the
 // sign-in had already succeeded.
-import type { McpOauthFlow, McpTool } from '@/api/mcp';
+import { OauthPreflightError, type McpOauthFlow, type McpTool } from '@/api/mcp';
 import { AuthError, HttpError } from '@/api/restClient';
 import { connectorError } from './mcp';
 
@@ -18,6 +18,8 @@ export const OAUTH_FINISH_GRACE_MS = 60_000;
 export const OAUTH_TOTAL_LIMIT_MS = 360_000;
 export const OAUTH_MAX_FAILED_POLLS = 15;
 export const OAUTH_CONFLICT_RETRY_MS = 2_000;
+/** Longest wait for the browser to close before carrying on (see closeBrowser). */
+export const OAUTH_DISMISS_WAIT_MS = 1_500;
 
 export type OauthPhase = 'starting' | 'browser' | 'finishing';
 
@@ -32,7 +34,8 @@ export interface OauthDeps {
   poll: (flowId: string) => Promise<McpOauthFlow>;
   /** Resolves with the flow's status AFTER the cancel. */
   cancel: (flowId: string) => Promise<{ status: string }>;
-  /** Resolves when the browser closes, for any reason; rejects if it cannot open. */
+  /** Resolves when the browser closes, for any reason. Rejecting, or resolving
+   * `{type: 'locked'}` (iOS: another browser session exists), means no page was shown. */
   openBrowser: (url: string) => Promise<unknown>;
   dismissBrowser: () => void | Promise<unknown>;
   /** Rule B: null when the URL is safe to open, otherwise the message to show. */
@@ -44,6 +47,21 @@ export interface OauthDeps {
   isCancelled?: () => boolean;
   /** Retry the start once after a 409: the app has just cancelled a flow for this server. */
   retryConflict?: boolean;
+}
+
+interface BrowserState {
+  opened: boolean;
+  closed: boolean;
+  /** No page was ever shown. */
+  openFailed: boolean;
+}
+
+function announce(deps: OauthDeps, phase: OauthPhase): void {
+  try {
+    deps.onPhase?.(phase);
+  } catch {
+    // a listener must not break the sequence
+  }
 }
 
 /** Start the flow; null when he cancelled during the one retry wait. */
@@ -58,8 +76,14 @@ async function startFlow(deps: OauthDeps): Promise<McpOauthFlow | null> {
   }
 }
 
+/** The start failed and no flow id came back, so nothing can be cancelled from here. */
 function startFailure(e: unknown): OauthOutcome {
-  // No flow id came back, so the flow cannot be cancelled from here.
+  // The fast request before the start failed: no flow exists, and its error is
+  // about reading the list, not about this connector.
+  if (e instanceof OauthPreflightError) {
+    const mapped = connectorError(e.reason, 'list');
+    return { kind: 'error', message: mapped.kind === 'auth' ? 'Session expired.' : mapped.message };
+  }
   if (e instanceof HttpError && e.status === 0) {
     return {
       kind: 'error',
@@ -94,17 +118,28 @@ async function stop(deps: OauthDeps, flowId: string, fallback: OauthOutcome): Pr
   return fallback;
 }
 
-/** Run one sign-in. Rejects only with AuthError (after closing the browser). */
-export async function runOauthSignIn(deps: OauthDeps): Promise<OauthOutcome> {
-  deps.onPhase?.('starting');
-  let flow: McpOauthFlow | null;
+/** Close the browser if this sequence opened it and it is still up. Never throws, and never
+ * waits long: iOS resolves the dismiss inside a UIKit completion that may not run (a page that
+ * was never presented), and the cancel that follows must not wait on it. */
+async function closeBrowser(deps: OauthDeps, browser: BrowserState): Promise<void> {
+  if (!browser.opened || browser.closed) return;
   try {
-    flow = await startFlow(deps);
-  } catch (e) {
-    if (e instanceof AuthError) throw e;
-    return startFailure(e);
+    await Promise.race([
+      Promise.resolve()
+        .then(() => deps.dismissBrowser())
+        .catch(() => undefined),
+      deps.sleep(OAUTH_DISMISS_WAIT_MS),
+    ]);
+  } catch {
+    // closing is best-effort
   }
-  if (!flow) return { kind: 'cancelled' };
+}
+
+const isLocked = (result: unknown): boolean =>
+  typeof result === 'object' && result !== null && (result as { type?: unknown }).type === 'locked';
+
+/** Everything after the flow id is known. May throw; the caller applies rule A to anything thrown. */
+async function signIn(deps: OauthDeps, flow: McpOauthFlow, browser: BrowserState): Promise<OauthOutcome> {
   const id = flow.flow_id;
 
   if (flow.status === 'approved') return approvedOutcome(deps, id);
@@ -119,26 +154,24 @@ export async function runOauthSignIn(deps: OauthDeps): Promise<OauthOutcome> {
   const refusal = deps.checkUrl(url);
   if (refusal) return stop(deps, id, { kind: 'error', message: refusal });
 
-  deps.onPhase?.('browser');
-  let closed = false;
-  let openFailed = false;
-  deps.openBrowser(url).then(
-    () => {
-      closed = true;
+  announce(deps, 'browser');
+  let opening: Promise<unknown>;
+  try {
+    opening = deps.openBrowser(url);
+  } catch (e) {
+    opening = Promise.reject(e);
+  }
+  browser.opened = true;
+  opening.then(
+    (result) => {
+      browser.closed = true;
+      if (isLocked(result)) browser.openFailed = true;
     },
     () => {
-      closed = true;
-      openFailed = true;
+      browser.closed = true;
+      browser.openFailed = true;
     },
   );
-  const dismiss = async (): Promise<void> => {
-    if (closed) return;
-    try {
-      await deps.dismissBrowser();
-    } catch {
-      // closing is best-effort
-    }
-  };
 
   const startedAt = deps.now();
   let closedAt: number | null = null;
@@ -147,9 +180,11 @@ export async function runOauthSignIn(deps: OauthDeps): Promise<OauthOutcome> {
 
   for (;;) {
     await deps.sleep(OAUTH_POLL_MS);
-    if (closed && !openFailed && !finishing) {
+    // Not a time limit: without a page there is nothing to wait for.
+    if (browser.openFailed) return stop(deps, id, { kind: 'error', message: 'Could not open the sign-in page.' });
+    if (browser.closed && !finishing) {
       finishing = true;
-      deps.onPhase?.('finishing'); // shown as soon as he closes the page, even if the next poll fails
+      announce(deps, 'finishing'); // shown as soon as he closes the page, even if the next poll fails
     }
 
     let snap: McpOauthFlow | null = null;
@@ -157,12 +192,9 @@ export async function runOauthSignIn(deps: OauthDeps): Promise<OauthOutcome> {
       snap = await deps.poll(id);
       failedPolls = 0;
     } catch (e) {
-      if (e instanceof AuthError) {
-        await dismiss();
-        throw e;
-      }
+      if (e instanceof AuthError) throw e; // the caller closes the browser first
       if (e instanceof HttpError && e.status === 404) {
-        await dismiss();
+        await closeBrowser(deps, browser);
         return { kind: 'error', message: 'Sign-in expired. Try again.' }; // the flow is gone: nothing to cancel
       }
       failedPolls += 1;
@@ -170,33 +202,32 @@ export async function runOauthSignIn(deps: OauthDeps): Promise<OauthOutcome> {
 
     if (snap) {
       if (snap.status === 'approved') {
-        await dismiss();
+        await closeBrowser(deps, browser);
         return { kind: 'approved', tools: snap.tools ?? [] };
       }
       if (snap.status === 'error') {
-        await dismiss();
+        await closeBrowser(deps, browser);
         return stop(deps, id, { kind: 'error', message: snap.error || 'Sign-in failed.' });
       }
       if (snap.status === 'authorization_required' && snap.authorization_url && snap.authorization_url !== url) {
-        await dismiss();
+        await closeBrowser(deps, browser);
         return stop(deps, id, { kind: 'error', message: 'The gateway restarted the sign-in. Try again.' });
       }
     }
 
     if (deps.isCancelled?.()) {
-      await dismiss();
+      await closeBrowser(deps, browser);
       return stop(deps, id, { kind: 'cancelled' });
     }
     if (failedPolls >= OAUTH_MAX_FAILED_POLLS) {
-      await dismiss();
+      await closeBrowser(deps, browser);
       return stop(deps, id, { kind: 'error', message: 'Lost contact with the gateway during sign-in.' });
     }
     // Time limits apply only directly after a poll that succeeded, so returning
     // from another app can never cancel a flow that finished in the meantime.
     if (!snap) continue;
 
-    if (openFailed) return stop(deps, id, { kind: 'error', message: 'Could not open the sign-in page.' });
-    if (closed) {
+    if (browser.closed) {
       if (closedAt === null) {
         closedAt = deps.now(); // the grace runs from the first poll that succeeded after the close
       } else if (deps.now() - closedAt >= OAUTH_FINISH_GRACE_MS) {
@@ -204,8 +235,31 @@ export async function runOauthSignIn(deps: OauthDeps): Promise<OauthOutcome> {
       }
     }
     if (deps.now() - startedAt >= OAUTH_TOTAL_LIMIT_MS) {
-      await dismiss();
+      await closeBrowser(deps, browser);
       return stop(deps, id, { kind: 'error', message: 'Sign-in timed out.' });
     }
+  }
+}
+
+/** Run one sign-in. Rejects only with AuthError, and only after closing the browser. */
+export async function runOauthSignIn(deps: OauthDeps): Promise<OauthOutcome> {
+  announce(deps, 'starting');
+  let flow: McpOauthFlow | null;
+  try {
+    flow = await startFlow(deps);
+  } catch (e) {
+    if (e instanceof AuthError) throw e;
+    return startFailure(e);
+  }
+  if (!flow) return { kind: 'cancelled' };
+
+  const browser: BrowserState = { opened: false, closed: false, openFailed: false };
+  try {
+    return await signIn(deps, flow, browser);
+  } catch (e) {
+    await closeBrowser(deps, browser);
+    if (e instanceof AuthError) throw e;
+    // A dependency threw. Rule A still holds: do not leave the flow behind.
+    return stop(deps, flow.flow_id, { kind: 'error', message: 'Sign-in failed unexpectedly.' });
   }
 }

@@ -381,6 +381,30 @@ describe('RestClient per-request timeout', () => {
     }
   });
 
+  it('honours the longer limit on the chained path too (token expiry unknown)', async () => {
+    jest.useFakeTimers();
+    try {
+      let captured: AbortSignal | undefined;
+      const hang = (_url: string, init: RequestInit = {}) =>
+        new Promise<Response>((_resolve, reject) => {
+          captured = init.signal as AbortSignal | undefined;
+          captured?.addEventListener('abort', () => reject(abortError()));
+        });
+      const c = new RestClient('http://h', new CookieJar(), hang as any); // no AT seen → chained
+      const p = c.post('/slow', {}, { timeoutMs: 45_000 });
+      p.catch(() => {});
+      await Promise.resolve();
+      await Promise.resolve();
+      jest.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+      expect(captured?.aborted).toBe(false);
+      jest.advanceTimersByTime(45_000 - REQUEST_TIMEOUT_MS);
+      expect(captured?.aborted).toBe(true);
+      await expect(p).rejects.toThrow('request timed out after 45s');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
   it('clamps a limit above the ceiling', async () => {
     jest.useFakeTimers();
     try {

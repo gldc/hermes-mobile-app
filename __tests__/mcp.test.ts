@@ -1,6 +1,7 @@
 // __tests__/mcp.test.ts
 import {
   OAUTH_START_TIMEOUT_MS,
+  OauthPreflightError,
   addMcpServer,
   cancelMcpOauthFlow,
   containsSecret,
@@ -141,6 +142,29 @@ describe('mcp api — OAuth', () => {
     expect(f.calls).toHaveLength(1);
   });
 
+  it('a failure of the fast request is marked as such: no flow was started', async () => {
+    const f = fakeFetch(404, { detail: "Profile 'x' not found" });
+    const err = await startMcpOauth(client(f), 'linear', 'x').catch((e) => e);
+    expect(err).toBeInstanceOf(OauthPreflightError);
+    expect(err.reason).toBeInstanceOf(HttpError);
+    expect(err.reason.message).toBe("Profile 'x' not found");
+    expect(f.calls).toHaveLength(1);
+  });
+
+  it('a failure of the POST itself is passed through', async () => {
+    const rest = {
+      get: async () => ({ servers: [] }),
+      post: async () => {
+        throw new HttpError(409, "MCP OAuth for 'linear' is already in progress");
+      },
+      put: async () => ({}),
+      del: async () => ({}),
+    };
+    const err = await startMcpOauth(rest as any, 'linear').catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.status).toBe(409);
+  });
+
   it('flow status and cancel are keyed by flow id, with no profile', async () => {
     const f = fakeFetch(200, { ok: true, status: 'error', flow_id: 'a/b', server_name: 'x', authorization_url: null, error: null });
     await getMcpOauthFlow(client(f), 'a/b');
@@ -173,9 +197,14 @@ describe('mcp api — secret-safe errors', () => {
   const add = (f: ReturnType<typeof fakeFetch>, token: string) =>
     addMcpServer(client(f), { name: 'mine', url: 'https://x.example/mcp', auth: 'header', bearer_token: token });
 
-  it('replaces a gateway message that echoes the token', async () => {
+  it('replaces a gateway message that echoes the token, and logs nothing', async () => {
+    const spies = (['log', 'info', 'warn', 'error', 'debug'] as const).map((m) => jest.spyOn(console, m).mockImplementation(() => {}));
     const f = fakeFetch(400, { detail: 'bad header value tok-12345 rejected' });
     const err = await add(f, 'tok-12345').catch((e) => e);
+    for (const spy of spies) {
+      expect(spy).not.toHaveBeenCalled();
+      spy.mockRestore();
+    }
     expect(err).toBeInstanceOf(HttpError);
     expect(err.status).toBe(400);
     expect(err.message).not.toContain('tok-12345');

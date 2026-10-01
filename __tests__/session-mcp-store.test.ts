@@ -55,6 +55,42 @@ describe('session-mcp-store', () => {
     expect(getSessionMcpTarget()).toBe(current);
   });
 
+  it('an older chat that republishes does not take over from a newer one', () => {
+    const older = {};
+    const newer = {};
+    publishSessionMcpTarget(older, target());
+    const current = target();
+    publishSessionMcpTarget(newer, current);
+    publishSessionMcpTarget(older, target({ connected: false }));
+    expect(getSessionMcpTarget()).toBe(current);
+    clearSessionMcpTarget(older);
+    expect(getSessionMcpTarget()).toBe(current);
+  });
+
+  it('clearing the newest chat falls back to an older one that is still mounted', () => {
+    const older = {};
+    const newer = {};
+    const first = target();
+    publishSessionMcpTarget(older, first);
+    publishSessionMcpTarget(newer, target());
+    clearSessionMcpTarget(newer);
+    expect(getSessionMcpTarget()).toBe(first);
+  });
+
+  it('does not notify when the visible target is unchanged', () => {
+    const older = {};
+    const newer = {};
+    publishSessionMcpTarget(older, target());
+    publishSessionMcpTarget(newer, target());
+    let n = 0;
+    subscribeSessionMcpTarget(() => {
+      n++;
+    });
+    publishSessionMcpTarget(older, target()); // hidden behind the newer chat
+    clearSessionMcpTarget(older);
+    expect(n).toBe(0);
+  });
+
   it('notifies on publish and on an effective clear only', () => {
     let n = 0;
     const unsub = subscribeSessionMcpTarget(() => {
