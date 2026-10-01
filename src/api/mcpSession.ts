@@ -3,7 +3,7 @@
 // connects and can take a minute: a slow REST request can lose a refresh-token
 // rotation (spec §4). I/O is injected (`call`) so this is unit-testable.
 import type { RpcMethods } from '@/vendor/hermes-gateway';
-import type { GatewayClient } from './gatewayClient';
+import { RpcError, type GatewayClient } from './gatewayClient';
 import type { McpTool } from './mcp';
 import { withProfile } from './profiles';
 
@@ -47,5 +47,29 @@ export async function mcpServerStatus(call: GatewayClient['call'], profile?: str
     return res.servers ?? [];
   } catch {
     return [];
+  }
+}
+
+export type McpReloadOutcome =
+  /** `thisChatOnly`: the chat runs on a compute host, which reloaded only itself. */
+  | { kind: 'reloaded'; thisChatOnly: boolean }
+  /** The call never came back (socket closed, timeout): the gateway may or may not have reloaded. */
+  | { kind: 'unknown' }
+  | { kind: 'error'; message: string };
+
+/** Tear down and reconnect every MCP server on the gateway, and refresh the tools of every
+ * live session. The next message in each chat re-sends the whole conversation (the prompt
+ * cache is invalidated), so the SCREEN asks first and this always sends `confirm: true`.
+ * It never sends `always`: that would write a permanent opt-out to the gateway's config.yaml.
+ * Never rejects. */
+export async function reloadMcp(call: GatewayClient['call'], sessionId?: string | null): Promise<McpReloadOutcome> {
+  try {
+    const res = await call('reload.mcp', sessionId ? { session_id: sessionId, confirm: true } : { confirm: true });
+    if (res.status !== 'reloaded') return { kind: 'error', message: res.message || 'The gateway did not reload.' };
+    return { kind: 'reloaded', thisChatOnly: res.turn_isolation === true };
+  } catch (e) {
+    // -1 = no gateway error code: the socket closed or the call timed out before an answer.
+    if (e instanceof RpcError && e.code === -1) return { kind: 'unknown' };
+    return { kind: 'error', message: e instanceof Error ? e.message : String(e) };
   }
 }

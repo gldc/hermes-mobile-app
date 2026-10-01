@@ -142,6 +142,15 @@ const tools = (n: unknown): string => {
   return `${count} ${count === 1 ? 'tool' : 'tools'}`;
 };
 
+/** True when the switch and the running gateway disagree: the config says on but the server
+ * is not loaded, or off but it still is. A reload (or a gateway restart) settles it. */
+export function needsReload(server: McpServer, row?: McpRuntimeRow): boolean {
+  if (!row) return false;
+  const loaded = row.status === 'connected' || row.status === 'lazy';
+  if (server.enabled) return row.status === 'disabled' || row.status === 'configured';
+  return loaded;
+}
+
 /** The runtime status line (spec §5.8); null when there is nothing to show. */
 export function statusLine(server: McpServer, row?: McpRuntimeRow): string | null {
   if (!row) return null;
@@ -166,9 +175,7 @@ export function statusLine(server: McpServer, row?: McpRuntimeRow): string | nul
     default:
       return null;
   }
-  const loaded = row.status === 'connected' || row.status === 'lazy';
-  const mismatch = server.enabled ? !loaded : loaded;
-  return mismatch ? `${line} · changes after restart` : line;
+  return needsReload(server, row) ? `${line} · changes after reload` : line;
 }
 
 const RUNTIME_STATES = new Set(['connected', 'lazy', 'connecting', 'failed']);

@@ -7,6 +7,7 @@ import {
   StoredConnectionV2,
   migrateStoredConnection,
 } from './lib/stored-connection';
+import { clearMcpChanged } from './session-mcp-store';
 
 const STORE_KEY = 'hermes-connection';
 
@@ -217,6 +218,7 @@ export async function disconnect(): Promise<void> {
   await persistSaved(); // deletes the stored blob
   jar.clear();
   rest = null;
+  clearMcpChanged(); // "connectors changed, reload pending" belongs to the gateway just left
 }
 
 /** Mint a fresh single-use ticket and return the ws URL to dial (tickets live

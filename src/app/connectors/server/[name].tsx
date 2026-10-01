@@ -22,7 +22,7 @@ import {
   type ConnectorAction,
 } from '@/lib/mcp';
 import { getProfileState, subscribeProfiles } from '@/profile-store';
-import { getSessionMcpTarget, subscribeSessionMcpTarget } from '@/session-mcp-store';
+import { getSessionMcpTarget, markMcpChanged, subscribeSessionMcpTarget } from '@/session-mcp-store';
 import { useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
@@ -183,6 +183,7 @@ export default function ConnectorDetailScreen() {
     try {
       const res = await withAuthRetry((r) => setMcpServerEnabled(r, current.name, enabling, profile));
       setServer({ ...current, enabled: res.enabled });
+      markMcpChanged(); // the running gateway does not have this yet: the list offers a reload
     } catch (e) {
       setServer(current); // revert
       failed = fail(e, 'switch');
@@ -266,7 +267,7 @@ export default function ConnectorDetailScreen() {
                 : server.transport === 'stdio'
                   ? 'Local connectors run on the gateway. They can be switched and tested here; edit them on the gateway. '
                   : ''}
-            The agent uses changes after the gateway restarts.
+            The agent uses changes after a reload (on the Connectors list) or a gateway restart.
           </Text>
         </>
       ) : !error ? (

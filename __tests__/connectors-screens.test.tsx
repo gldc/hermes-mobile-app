@@ -2,15 +2,17 @@
 // around a failed switch. The REST layer is mocked; the session-mcp-store is the real one.
 import { Stack, router } from 'expo-router';
 import { act, fireEvent, renderRouter, screen } from 'expo-router/testing-library';
-import { Text } from 'react-native';
+import { Alert, Text } from 'react-native';
 import type { McpServer } from '../src/api/mcp';
-import type { McpTestOutcome } from '../src/api/mcpSession';
+import type { McpReloadOutcome, McpRuntimeRow, McpTestOutcome } from '../src/api/mcpSession';
 import { AuthError, HttpError } from '../src/api/restClient';
 import ConnectorsScreen from '../src/app/connectors';
 import ConnectorDetailScreen from '../src/app/connectors/server/[name]';
 import {
   __resetSessionMcpStore,
   clearSessionMcpTarget,
+  getMcpChangePending,
+  markMcpChanged,
   publishSessionMcpTarget,
   type SessionMcpTarget,
 } from '../src/session-mcp-store';
@@ -49,18 +51,27 @@ const local = server({ name: 'yt', transport: 'stdio', url: null, command: 'uvx'
 const owner = {};
 let statusCalls = 0;
 let testCalls: { resolve: (o: McpTestOutcome) => void }[] = [];
+let reloads = 0;
+let reloadOutcome: McpReloadOutcome = { kind: 'reloaded', thisChatOnly: false };
+const alertSpy = jest.spyOn(Alert, 'alert').mockImplementation(() => {});
 
-/** A chat's target: status answers at once, tests stay pending until the case resolves them. */
-function target(connected: boolean): SessionMcpTarget {
+/** A chat's target: status answers at once, tests stay pending until the case resolves them.
+ * `linearRow` overrides what the gateway reports for the `linear` connector. */
+function target(connected: boolean, linearRow: Partial<McpRuntimeRow> = {}): SessionMcpTarget {
   return {
     connected,
+    streaming: false,
     status: async () => {
       statusCalls++;
       return [
-        { name: 'linear', transport: 'http', tools: 3, connected: true, disabled: false, status: 'connected', source: 'config', plugin: null },
+        { name: 'linear', transport: 'http', tools: 3, connected: true, disabled: false, status: 'connected', source: 'config', plugin: null, ...linearRow },
       ];
     },
     test: () => new Promise<McpTestOutcome>((resolve) => testCalls.push({ resolve })),
+    reload: async () => {
+      reloads++;
+      return reloadOutcome;
+    },
   };
 }
 
@@ -94,6 +105,9 @@ beforeEach(() => {
   __resetSessionMcpStore();
   statusCalls = 0;
   testCalls = [];
+  reloads = 0;
+  reloadOutcome = { kind: 'reloaded', thisChatOnly: false };
+  alertSpy.mockClear();
   mockList.mockReset();
   mockSet.mockReset();
   mockList.mockImplementation(async () => [server(), local]);
@@ -104,7 +118,7 @@ describe('Connectors list', () => {
     publishSessionMcpTarget(owner, target(true));
     await open('/connectors');
     expect(screen.getByText('Connected · 3 tools')).toBeTruthy();
-    expect(screen.getByText('The agent uses changes after the gateway restarts.')).toBeTruthy();
+    expect(screen.getByText('The agent uses changes after a reload or a gateway restart.')).toBeTruthy();
     const before = mockList.mock.calls.length;
     await flush(50);
     expect(mockList.mock.calls.length).toBe(before);
@@ -175,7 +189,7 @@ describe('Connectors list', () => {
     mockList.mockImplementation(async () => []);
     await open('/connectors');
     expect(screen.getByText('No connectors yet')).toBeTruthy();
-    expect(screen.queryByText('The agent uses changes after the gateway restarts.')).toBeNull();
+    expect(screen.queryByText('The agent uses changes after a reload or a gateway restart.')).toBeNull();
   });
 
   it('a dead session goes to sign-in', async () => {
@@ -440,5 +454,162 @@ describe('Connector detail — a switch against other requests', () => {
     await flush();
     expect(screen.getByText('Config is locked')).toBeTruthy();
     expect(refreshControl('connector-detail').refreshing).toBe(false);
+  });
+});
+
+// --- Reload now (spec §5.7) -------------------------------------------------------------------
+
+describe('Connectors list — reload', () => {
+  const RELOAD_TITLE = 'Reload connectors?';
+  const banner = () => screen.queryByText('The agent doesn’t have your changes yet.');
+  const reloadButton = () => screen.getByRole('button', { name: 'Reload now' });
+
+  /** Press the alert's button with this label (the alert is mocked, so nothing is shown). */
+  async function answerAlert(label: string) {
+    const call = alertSpy.mock.calls[alertSpy.mock.calls.length - 1];
+    const button = (call[2] ?? []).find((b) => b.text === label);
+    await act(async () => {
+      void button?.onPress?.();
+    });
+    await flush(20);
+  }
+
+  it('no banner until something changes', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors');
+    expect(banner()).toBeNull();
+  });
+
+  it('appears after a switch succeeds', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors');
+    mockSet.mockResolvedValue({ ok: true, name: 'linear', enabled: false });
+    await act(async () => fireEvent(firstSwitch(), 'valueChange', false));
+    await flush();
+    expect(banner()).toBeTruthy();
+    expect(reloadButton()).not.toBeDisabled();
+  });
+
+  it('does not appear after a switch fails', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors');
+    mockSet.mockRejectedValue(new HttpError(409, 'Config is locked'));
+    await act(async () => fireEvent(firstSwitch(), 'valueChange', false));
+    await flush(30);
+    expect(banner()).toBeNull();
+  });
+
+  it('also appears, with nothing changed in this app session, when the gateway and the config disagree', async () => {
+    publishSessionMcpTarget(owner, target(true, { status: 'configured', tools: 0, connected: false }));
+    await open('/connectors');
+    expect(screen.getByText('Not loaded yet · changes after reload')).toBeTruthy();
+    expect(banner()).toBeTruthy();
+  });
+
+  it('asks first; Cancel does nothing', async () => {
+    const t = target(true);
+    publishSessionMcpTarget(owner, t);
+    markMcpChanged();
+    await open('/connectors');
+    await act(async () => {
+      await fireEvent.press(reloadButton());
+    });
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy.mock.calls[0][0]).toBe(RELOAD_TITLE);
+    expect(alertSpy.mock.calls[0][1]).toMatch(/every open chat/);
+    expect(alertSpy.mock.calls[0][1]).toMatch(/re-sends the whole conversation/);
+    await answerAlert('Cancel');
+    expect(reloads).toBe(0);
+    expect(banner()).toBeTruthy();
+  });
+
+  it('on confirm it reloads, clears the banner, says Reloaded, and re-reads the list and status', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    markMcpChanged();
+    await open('/connectors');
+    const listBefore = mockList.mock.calls.length;
+    const statusBefore = statusCalls;
+    await act(async () => {
+      await fireEvent.press(reloadButton());
+    });
+    await answerAlert('Reload');
+    expect(reloads).toBe(1);
+    expect(banner()).toBeNull();
+    expect(screen.getByText('Reloaded.')).toBeTruthy();
+    expect(getMcpChangePending()).toBe(false);
+    expect(mockList.mock.calls.length).toBe(listBefore + 1);
+    expect(statusCalls).toBeGreaterThan(statusBefore);
+  });
+
+  it('a compute-host reload says only this chat was reloaded', async () => {
+    reloadOutcome = { kind: 'reloaded', thisChatOnly: true };
+    publishSessionMcpTarget(owner, target(true));
+    markMcpChanged();
+    await open('/connectors');
+    await act(async () => {
+      await fireEvent.press(reloadButton());
+    });
+    await answerAlert('Reload');
+    expect(screen.getByText('Reloaded for this chat only.')).toBeTruthy();
+  });
+
+  it('a failed reload keeps the banner and shows the gateway message', async () => {
+    reloadOutcome = { kind: 'error', message: 'compute-host reload_mcp failed: boom' };
+    publishSessionMcpTarget(owner, target(true));
+    markMcpChanged();
+    await open('/connectors');
+    await act(async () => {
+      await fireEvent.press(reloadButton());
+    });
+    await answerAlert('Reload');
+    expect(banner()).toBeTruthy();
+    expect(screen.getByText('compute-host reload_mcp failed: boom')).toBeTruthy();
+    expect(getMcpChangePending()).toBe(true);
+  });
+
+  it('a reload that never answered is reported as unknown, and the banner stays', async () => {
+    reloadOutcome = { kind: 'unknown' };
+    publishSessionMcpTarget(owner, target(true));
+    markMcpChanged();
+    await open('/connectors');
+    await act(async () => {
+      await fireEvent.press(reloadButton());
+    });
+    await answerAlert('Reload');
+    expect(banner()).toBeTruthy();
+    expect(screen.getByText('The connection dropped during the reload, so its result is unknown. Check the status lines.')).toBeTruthy();
+  });
+
+  it('is disabled with the reason when no chat is connected', async () => {
+    markMcpChanged();
+    await open('/connectors');
+    expect(reloadButton()).toBeDisabled();
+    expect(screen.getByText('Reloading needs a connected chat. Go back to the chat, wait for it to connect, then return.')).toBeTruthy();
+  });
+
+  it('is disabled with the reason while a turn runs in the chat', async () => {
+    publishSessionMcpTarget(owner, { ...target(true), streaming: true });
+    markMcpChanged();
+    await open('/connectors');
+    expect(reloadButton()).toBeDisabled();
+    expect(screen.getByText('Wait for the chat’s current turn to finish.')).toBeTruthy();
+  });
+});
+
+describe('Connector detail — reload', () => {
+  it('a successful switch marks a change as pending', async () => {
+    await open('/connectors/server/linear');
+    mockSet.mockResolvedValue({ ok: true, name: 'linear', enabled: false });
+    await act(async () => fireEvent(screen.getByRole('switch'), 'valueChange', false));
+    await flush();
+    expect(getMcpChangePending()).toBe(true);
+  });
+
+  it('a failed switch does not', async () => {
+    await open('/connectors/server/linear');
+    mockSet.mockRejectedValue(new HttpError(409, 'Config is locked'));
+    await act(async () => fireEvent(screen.getByRole('switch'), 'valueChange', false));
+    await flush(30);
+    expect(getMcpChangePending()).toBe(false);
   });
 });

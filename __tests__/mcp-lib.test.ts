@@ -11,6 +11,7 @@ import {
   gatewaySupportsOauth,
   isCustomServerValid,
   isPlainEnvField,
+  needsReload,
   remoteCatalogEntries,
   runtimeRowsByName,
   serverCapabilities,
@@ -209,10 +210,10 @@ describe('statusLine (spec §5.8)', () => {
     expect(statusLine(server(), r)).toBe(line);
   });
   it('marks a mismatch between the switch and the running gateway', () => {
-    expect(statusLine(server({ enabled: false }), row({ status: 'connected', tools: 2 }))).toBe('Connected · 2 tools · changes after restart');
-    expect(statusLine(server({ enabled: false }), row({ status: 'lazy', tools: 2 }))).toBe('Ready · 2 tools · changes after restart');
-    expect(statusLine(server({ enabled: true }), row({ status: 'disabled' }))).toBe('Off · changes after restart');
-    expect(statusLine(server({ enabled: true }), row({ status: 'configured' }))).toBe('Not loaded yet · changes after restart');
+    expect(statusLine(server({ enabled: false }), row({ status: 'connected', tools: 2 }))).toBe('Connected · 2 tools · changes after reload');
+    expect(statusLine(server({ enabled: false }), row({ status: 'lazy', tools: 2 }))).toBe('Ready · 2 tools · changes after reload');
+    expect(statusLine(server({ enabled: true }), row({ status: 'disabled' }))).toBe('Off · changes after reload');
+    expect(statusLine(server({ enabled: true }), row({ status: 'configured' }))).toBe('Not loaded yet · changes after reload');
   });
   it('has no suffix when they agree', () => {
     expect(statusLine(server({ enabled: false }), row({ status: 'disabled' }))).toBe('Off');
@@ -379,5 +380,22 @@ describe('testSummary', () => {
     expect(testSummary({ tools: [1, 2, 3], prompts: 0, resources: 0 })).toBe('Working · 3 tools');
     expect(testSummary({ tools: [1], prompts: 2, resources: 1 })).toBe('Working · 1 tool · 2 prompts · 1 resource');
     expect(testSummary({ tools: [], prompts: 1, resources: 0 })).toBe('Working · 0 tools · 1 prompt');
+  });
+});
+
+describe('needsReload', () => {
+  it('is true when the switch and the running gateway disagree', () => {
+    expect(needsReload(server({ enabled: true }), row({ status: 'configured' }))).toBe(true);
+    expect(needsReload(server({ enabled: true }), row({ status: 'disabled' }))).toBe(true);
+    expect(needsReload(server({ enabled: false }), row({ status: 'connected' }))).toBe(true);
+    expect(needsReload(server({ enabled: false }), row({ status: 'lazy' }))).toBe(true);
+  });
+  it('is false when they agree, while connecting or failed, and without a row', () => {
+    expect(needsReload(server({ enabled: true }), row({ status: 'connected' }))).toBe(false);
+    expect(needsReload(server({ enabled: false }), row({ status: 'disabled' }))).toBe(false);
+    expect(needsReload(server({ enabled: false }), row({ status: 'configured' }))).toBe(false);
+    expect(needsReload(server({ enabled: true }), row({ status: 'connecting' }))).toBe(false);
+    expect(needsReload(server({ enabled: true }), row({ status: 'failed' }))).toBe(false);
+    expect(needsReload(server())).toBe(false);
   });
 });

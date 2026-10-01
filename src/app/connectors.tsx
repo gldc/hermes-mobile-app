@@ -3,29 +3,39 @@
 // MCP connectors configured on the gateway (docs/contracts/mcp.md, spec §5.2).
 // The list and the on/off switch are REST. The status line comes from the
 // active chat's socket (session-mcp-store) and is simply absent without one.
-// The agent picks a change up after the gateway restarts (spec §5.7).
+// The running gateway picks a change up only on a reload or a restart, so after a change
+// the list offers Reload now (spec §5.7).
 import { Stack, router, useFocusEffect } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
-import { FlatList, RefreshControl, Text, View } from 'react-native';
+import { Alert, FlatList, RefreshControl, Text, View } from 'react-native';
 import { listMcpServers, setMcpServerEnabled, type McpServer } from '@/api/mcp';
 import type { McpRuntimeRow } from '@/api/mcpSession';
+import { ConnectorReloadBanner } from '@/components/connector-reload-banner';
 import { ConnectorRow } from '@/components/connector-row';
 import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
-import { connectorError, runtimeRowsByName, statusLine, type ConnectorAction } from '@/lib/mcp';
+import { connectorError, needsReload, runtimeRowsByName, statusLine, type ConnectorAction } from '@/lib/mcp';
 import { getProfileState, subscribeProfiles } from '@/profile-store';
-import { getSessionMcpTarget, subscribeSessionMcpTarget } from '@/session-mcp-store';
+import {
+  clearMcpChanged,
+  getMcpChangePending,
+  getSessionMcpTarget,
+  markMcpChanged,
+  subscribeMcpChange,
+  subscribeSessionMcpTarget,
+} from '@/session-mcp-store';
 import { useTheme } from '@/theme';
 
 export { RouteError as ErrorBoundary } from '@/components/route-error';
 
-const RESTART_NOTE = 'The agent uses changes after the gateway restarts.';
+const RELOAD_NOTE = 'The agent uses changes after a reload or a gateway restart.';
 
 export default function ConnectorsScreen() {
   const { colors } = useTheme();
   const profiles = useSyncExternalStore(subscribeProfiles, getProfileState);
   const target = useSyncExternalStore(subscribeSessionMcpTarget, getSessionMcpTarget);
   const connected = target?.connected ?? false;
+  const pending = useSyncExternalStore(subscribeMcpChange, getMcpChangePending);
   const profile = profiles.selected;
   const [servers, setServers] = useState<McpServer[]>([]);
   const [rows, setRows] = useState<Map<string, McpRuntimeRow>>(() => new Map());
@@ -34,6 +44,8 @@ export default function ConnectorsScreen() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unsupported, setUnsupported] = useState<string | null>(null);
+  const [reloading, setReloading] = useState(false);
+  const [reloadNote, setReloadNote] = useState<{ tone: 'error' | 'info'; text: string } | null>(null);
   // Reads and writes overlap here: a silent re-read on focus, a pull, a switch. Only the
   // newest read may write state, and a switch drops every read that started before it.
   const readGen = useRef(0);
@@ -128,6 +140,7 @@ export default function ConnectorsScreen() {
       try {
         const res = await withAuthRetry((r) => setMcpServerEnabled(r, server.name, enabling, profile));
         replaceServer(server.name, { ...server, enabled: res.enabled });
+        markMcpChanged(); // the running gateway does not have this yet
       } catch (e) {
         replaceServer(server.name, server); // revert
         failed = fail(e, 'switch');
@@ -141,11 +154,56 @@ export default function ConnectorsScreen() {
     [replaceServer, fail, fetchList, profile],
   );
 
+  /** Reload the gateway's connectors over the chat socket. The alert has already asked. */
+  const runReload = useCallback(async () => {
+    const t = getSessionMcpTarget();
+    if (!t?.connected || t.streaming) return;
+    setReloading(true);
+    setReloadNote(null);
+    const outcome = await t.reload();
+    setReloading(false);
+    if (outcome.kind === 'error') {
+      setReloadNote({ tone: 'error', text: outcome.message });
+      return;
+    }
+    if (outcome.kind === 'unknown') {
+      setReloadNote({
+        tone: 'error',
+        text: 'The connection dropped during the reload, so its result is unknown. Check the status lines.',
+      });
+    } else {
+      clearMcpChanged();
+      setReloadNote({ tone: 'info', text: outcome.thisChatOnly ? 'Reloaded for this chat only.' : 'Reloaded.' });
+    }
+    void fetchList(); // the list and the status lines, as the gateway has them now
+  }, [fetchList]);
+
+  /** A reload reaches every open chat and drops their prompt cache, so ask first. */
+  const confirmReload = useCallback(() => {
+    Alert.alert(
+      'Reload connectors?',
+      'This reconnects every connector for every open chat on the gateway, including a chat that is mid-turn on another device. The next message in each chat re-sends the whole conversation, so it costs more.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        { text: 'Reload', onPress: () => void runReload() },
+      ],
+    );
+  }, [runReload]);
+
   const openDetail = useCallback((server: McpServer) => {
     router.push({ pathname: '/connectors/server/[name]', params: { name: server.name } });
   }, []);
 
   const profileName = profile ?? profiles.serverCurrent;
+  // Shown after a change made here, and whenever the status rows say the running gateway
+  // and the config disagree (which also covers a change made before the app restarted).
+  const mismatch = connected && servers.some((s) => needsReload(s, rows.get(s.name)));
+  const showBanner = !unsupported && (pending || mismatch);
+  const reloadBlocked = !connected
+    ? 'Reloading needs a connected chat. Go back to the chat, wait for it to connect, then return.'
+    : target?.streaming
+      ? 'Wait for the chat’s current turn to finish.'
+      : null;
 
   return (
     <View style={{ flex: 1, backgroundColor: colors.bg }}>
@@ -173,14 +231,31 @@ export default function ConnectorsScreen() {
           />
         )}
         ListHeaderComponent={
-          profiles.names.length > 1 && profileName && !unsupported ? (
-            <Text style={{ color: colors.textFaint, fontSize: 13, marginHorizontal: 4 }}>Profile: {profileName}</Text>
-          ) : null
+          <View style={{ gap: 10 }}>
+            {profiles.names.length > 1 && profileName && !unsupported ? (
+              <Text style={{ color: colors.textFaint, fontSize: 13, marginHorizontal: 4 }}>Profile: {profileName}</Text>
+            ) : null}
+            {showBanner ? (
+              <ConnectorReloadBanner
+                running={reloading}
+                disabledReason={reloadBlocked}
+                note={reloadNote}
+                onReload={confirmReload}
+              />
+            ) : reloadNote ? (
+              <Text
+                accessibilityLiveRegion="polite"
+                style={{ color: reloadNote.tone === 'error' ? colors.danger : colors.textDim, fontSize: 13.5, marginHorizontal: 4 }}
+              >
+                {reloadNote.text}
+              </Text>
+            ) : null}
+          </View>
         }
         ListFooterComponent={
           servers.length > 0 && !unsupported ? (
             <Text style={{ color: colors.textFaint, fontSize: 12.5, marginHorizontal: 4, marginTop: 6 }}>
-              {RESTART_NOTE}
+              {RELOAD_NOTE}
             </Text>
           ) : null
         }

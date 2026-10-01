@@ -142,10 +142,22 @@ Body `{name, env, enable}`. Returns `{ok, name, background}`.
   that has served a profile-scoped RPC) it is the scoped profile's own view. Otherwise a
   non-launch profile's rows read `configured` or `disabled`.
 
-### `reload.mcp` — NOT USED
+### `reload.mcp` `{session_id?, confirm?, always?}`
 
-Tears down and reconnects every MCP server for every live session and invalidates the prompt
-cache. The app does not call it (spec §5.7).
+`{status, message?, turn_isolation?, …}`. Tears down and reconnects every MCP server on the gateway
+and refreshes the tools of every live session; the prompt cache of each is invalidated, so the next
+message in each chat re-sends the whole conversation.
+
+- This is how a connector added, switched or removed from the app reaches the running gateway
+  (see "When a change takes effect"). The Connectors list offers it as "Reload now" after an alert.
+- The app always sends `confirm: true` (it has asked already) and `session_id` when the chat has
+  a live session. Without `confirm`, and while the gateway's `approvals.mcp_reload_confirm` is on,
+  the answer is `status: "confirm_required"`.
+- The app **never** sends `always`: it writes a permanent opt-out to the gateway's `config.yaml`.
+- For a session on a compute host the gateway reloads only that host and answers
+  `{status: "reloaded", turn_isolation: true}`.
+- It runs on the gateway's RPC pool (`_LONG_HANDLERS`). The chat socket's request timeout is
+  120 s; a call that does not come back is reported as "unknown", not as a failure.
 
 ---
 

@@ -706,19 +706,24 @@ export default function ChatScreen() {
     return () => setSessionModelTarget(null);
   }, [id, currentModelId, busy, ready]);
 
-  // Lend this chat's socket to the Connectors screens (test + runtime status).
+  // Lend this chat's socket to the Connectors screens (test, runtime status, reload).
   // One identity per mounted chat screen: the store shows the newest mounted chat,
   // so an overlap during a route transition cannot hide or clear the live one.
   const [mcpOwner] = useState(() => ({}));
   useEffect(() => {
     publishSessionMcpTarget(
       mcpOwner,
-      createSessionMcpTarget(ready, () => {
-        const t = transportRef.current;
-        return t ? t.client.call.bind(t.client) : null;
+      createSessionMcpTarget({
+        connected: ready,
+        streaming: busy,
+        getCall: () => {
+          const t = transportRef.current;
+          return t ? t.client.call.bind(t.client) : null;
+        },
+        getSessionId: () => liveIdRef.current,
       }),
     );
-  }, [mcpOwner, ready]);
+  }, [mcpOwner, ready, busy]);
   useEffect(() => () => clearSessionMcpTarget(mcpOwner), [mcpOwner]);
 
   /** Photo picking — staged locally, uploaded via image.attach_bytes on send. */

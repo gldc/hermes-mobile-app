@@ -1,6 +1,6 @@
 // __tests__/mcpSession.test.ts
 import { RpcError } from '../src/api/gatewayClient';
-import { mcpServerStatus, testMcpServer } from '../src/api/mcpSession';
+import { mcpServerStatus, reloadMcp, testMcpServer } from '../src/api/mcpSession';
 
 function recorder(result: unknown) {
   const calls: { method: string; params: unknown }[] = [];
@@ -92,5 +92,47 @@ describe('mcpServerStatus', () => {
   it('returns [] when the call fails', async () => {
     const r = recorder(new RpcError('socket closed', -1));
     expect(await mcpServerStatus(r.call)).toEqual([]);
+  });
+});
+
+describe('reloadMcp', () => {
+  it('always confirms, never sends `always`, and passes the live session id', async () => {
+    const r = recorder({ status: 'reloaded' });
+    expect(await reloadMcp(r.call, 's1')).toEqual({ kind: 'reloaded', thisChatOnly: false });
+    expect(r.calls).toEqual([{ method: 'reload.mcp', params: { session_id: 's1', confirm: true } }]);
+  });
+
+  it('omits the session id for a chat that has none yet', async () => {
+    const r = recorder({ status: 'reloaded' });
+    await reloadMcp(r.call, null);
+    await reloadMcp(r.call, '');
+    expect(r.calls[0].params).toEqual({ confirm: true });
+    expect(r.calls[1].params).toEqual({ confirm: true });
+  });
+
+  it('reports a compute-host reload as this chat only', async () => {
+    const r = recorder({ status: 'reloaded', turn_isolation: true, host_ack: {} });
+    expect(await reloadMcp(r.call, 's1')).toEqual({ kind: 'reloaded', thisChatOnly: true });
+  });
+
+  it('treats any other answer as a failure, with the gateway message when there is one', async () => {
+    expect(await reloadMcp(recorder({ status: 'confirm_required', message: 'Reply now' }).call, 's1')).toEqual({
+      kind: 'error',
+      message: 'Reply now',
+    });
+    expect(await reloadMcp(recorder({ status: 'confirm_required' }).call, 's1')).toEqual({
+      kind: 'error',
+      message: 'The gateway did not reload.',
+    });
+  });
+
+  it('a gateway error is a failure with its message', async () => {
+    const r = recorder(new RpcError('compute-host reload_mcp failed: boom', 5019));
+    expect(await reloadMcp(r.call, 's1')).toEqual({ kind: 'error', message: 'compute-host reload_mcp failed: boom' });
+  });
+
+  it('a call that never came back (socket closed, timeout) is unknown, not a failure', async () => {
+    const r = recorder(new RpcError('socket closed', -1));
+    expect(await reloadMcp(r.call, 's1')).toEqual({ kind: 'unknown' });
   });
 });

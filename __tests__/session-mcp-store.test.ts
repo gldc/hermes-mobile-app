@@ -2,10 +2,14 @@
 import {
   NOT_CONNECTED_MESSAGE,
   __resetSessionMcpStore,
+  clearMcpChanged,
   clearSessionMcpTarget,
   createSessionMcpTarget,
+  getMcpChangePending,
   getSessionMcpTarget,
+  markMcpChanged,
   publishSessionMcpTarget,
+  subscribeMcpChange,
   subscribeSessionMcpTarget,
   type SessionMcpTarget,
 } from '../src/session-mcp-store';
@@ -13,8 +17,10 @@ import {
 function target(over: Partial<SessionMcpTarget> = {}): SessionMcpTarget {
   return {
     connected: true,
+    streaming: false,
     test: async () => ({ kind: 'error', message: 'unused' }),
     status: async () => [],
+    reload: async () => ({ kind: 'unknown' }),
     ...over,
   };
 }
@@ -130,8 +136,9 @@ describe('session-mcp-store', () => {
 
 describe('createSessionMcpTarget', () => {
   it('without a socket: test reports not connected and status is empty (review focus 1)', async () => {
-    const t = createSessionMcpTarget(false, () => null);
+    const t = createSessionMcpTarget({ connected: false, streaming: false, getCall: () => null, getSessionId: () => null });
     expect(t.connected).toBe(false);
+    expect(await t.reload()).toEqual({ kind: 'error', message: NOT_CONNECTED_MESSAGE });
     expect(await t.test('linear', null)).toEqual({ kind: 'error', message: NOT_CONNECTED_MESSAGE });
     expect(await t.status(null)).toEqual([]);
   });
@@ -144,7 +151,8 @@ describe('createSessionMcpTarget', () => {
         ? { servers: [{ name: 'linear', status: 'connected', tools: 3 }], checked_at: 1 }
         : { ok: true, tools: [], oauth_needed: false };
     }) as any;
-    const t = createSessionMcpTarget(true, () => call);
+    const t = createSessionMcpTarget({ connected: true, streaming: true, getCall: () => call, getSessionId: () => 's1' });
+    expect(t.streaming).toBe(true);
     expect(t.connected).toBe(true);
     expect((await t.test('linear', 'work')).kind).toBe('ok');
     expect(await t.status('work')).toHaveLength(1);
@@ -156,9 +164,64 @@ describe('createSessionMcpTarget', () => {
 
   it('reads the socket at call time, not when the target was created', async () => {
     let live: any = null;
-    const t = createSessionMcpTarget(true, () => live);
+    const t = createSessionMcpTarget({ connected: true, streaming: false, getCall: () => live, getSessionId: () => null });
     expect((await t.test('x', null)).kind).toBe('error');
     live = async () => ({ ok: true, tools: [], oauth_needed: false });
     expect((await t.test('x', null)).kind).toBe('ok');
+  });
+});
+
+describe('createSessionMcpTarget — reload', () => {
+  it('reloads through the socket with the chat\'s live session id, read at call time', async () => {
+    const calls: { method: string; params: unknown }[] = [];
+    const call = (async (method: string, params: unknown) => {
+      calls.push({ method, params });
+      return { status: 'reloaded' };
+    }) as any;
+    let sid: string | null = null;
+    const t = createSessionMcpTarget({ connected: true, streaming: false, getCall: () => call, getSessionId: () => sid });
+    expect(await t.reload()).toEqual({ kind: 'reloaded', thisChatOnly: false });
+    sid = 's9';
+    await t.reload();
+    expect(calls).toEqual([
+      { method: 'reload.mcp', params: { confirm: true } },
+      { method: 'reload.mcp', params: { session_id: 's9', confirm: true } },
+    ]);
+  });
+});
+
+describe('change-pending flag', () => {
+  it('starts clear, is set by a change and cleared by a reload', () => {
+    expect(getMcpChangePending()).toBe(false);
+    markMcpChanged();
+    expect(getMcpChangePending()).toBe(true);
+    clearMcpChanged();
+    expect(getMcpChangePending()).toBe(false);
+  });
+
+  it('notifies only when the value changes', () => {
+    let n = 0;
+    const unsub = subscribeMcpChange(() => {
+      n++;
+    });
+    markMcpChanged();
+    markMcpChanged();
+    expect(n).toBe(1);
+    clearMcpChanged();
+    clearMcpChanged();
+    expect(n).toBe(2);
+    unsub();
+    markMcpChanged();
+    expect(n).toBe(2);
+  });
+
+  it('survives a chat unmounting, and is cleared by a store reset', () => {
+    const owner = {};
+    publishSessionMcpTarget(owner, target());
+    markMcpChanged();
+    clearSessionMcpTarget(owner);
+    expect(getMcpChangePending()).toBe(true);
+    __resetSessionMcpStore();
+    expect(getMcpChangePending()).toBe(false);
   });
 });
