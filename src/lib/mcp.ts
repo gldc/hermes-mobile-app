@@ -171,6 +171,37 @@ export function statusLine(server: McpServer, row?: McpRuntimeRow): string | nul
   return mismatch ? `${line} · changes after restart` : line;
 }
 
+const RUNTIME_STATES = new Set(['connected', 'lazy', 'connecting', 'failed']);
+
+/** Runtime rows by server name (spec §5.8). For an explicitly selected profile the gateway may
+ * report no runtime state at all — every row then reads `configured` or `disabled` — and the map
+ * is empty so the list shows no misleading "Not loaded yet". */
+export function runtimeRowsByName(rows: McpRuntimeRow[], profileSelected: boolean): Map<string, McpRuntimeRow> {
+  const list = rows ?? [];
+  if (profileSelected && !list.some((r) => RUNTIME_STATES.has(r.status))) return new Map();
+  return new Map(list.map((r) => [r.name, r]));
+}
+
+/** Small labels on a row: how it authenticates, whether it runs on the gateway, who provides it. */
+export function connectorBadges(server: McpServer): string[] {
+  const badges: string[] = [];
+  const auth = authLabel(server);
+  if (auth) badges.push(auth);
+  if (server.transport === 'stdio') badges.push('Local');
+  if (server.source === 'plugin') badges.push('Plugin');
+  return badges;
+}
+
+const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+/** First line of a passed test: "Working · 3 tools · 2 prompts". */
+export function testSummary(outcome: { tools: unknown[]; prompts: number; resources: number }): string {
+  const parts = [`Working · ${plural(outcome.tools.length, 'tool')}`];
+  if (outcome.prompts > 0) parts.push(plural(outcome.prompts, 'prompt'));
+  if (outcome.resources > 0) parts.push(plural(outcome.resources, 'resource'));
+  return parts.join(' · ');
+}
+
 /** Catalog credential fields are masked unless the name says the value is not a secret (spec §5.9). */
 export function isPlainEnvField(name: string): boolean {
   return /_(URL|HOST|ID)$/i.test(name);

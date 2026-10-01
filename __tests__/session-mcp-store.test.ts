@@ -1,7 +1,9 @@
 // __tests__/session-mcp-store.test.ts
 import {
+  NOT_CONNECTED_MESSAGE,
   __resetSessionMcpStore,
   clearSessionMcpTarget,
+  createSessionMcpTarget,
   getSessionMcpTarget,
   publishSessionMcpTarget,
   subscribeSessionMcpTarget,
@@ -123,5 +125,40 @@ describe('session-mcp-store', () => {
     expect(getSessionMcpTarget()).toBeNull();
     publishSessionMcpTarget({}, target());
     expect(n).toBe(1);
+  });
+});
+
+describe('createSessionMcpTarget', () => {
+  it('without a socket: test reports not connected and status is empty (review focus 1)', async () => {
+    const t = createSessionMcpTarget(false, () => null);
+    expect(t.connected).toBe(false);
+    expect(await t.test('linear', null)).toEqual({ kind: 'error', message: NOT_CONNECTED_MESSAGE });
+    expect(await t.status(null)).toEqual([]);
+  });
+
+  it('with a socket: delegates to the two RPCs with the profile', async () => {
+    const calls: { method: string; params: unknown }[] = [];
+    const call = (async (method: string, params: unknown) => {
+      calls.push({ method, params });
+      return method === 'mcp.servers.status'
+        ? { servers: [{ name: 'linear', status: 'connected', tools: 3 }], checked_at: 1 }
+        : { ok: true, tools: [], oauth_needed: false };
+    }) as any;
+    const t = createSessionMcpTarget(true, () => call);
+    expect(t.connected).toBe(true);
+    expect((await t.test('linear', 'work')).kind).toBe('ok');
+    expect(await t.status('work')).toHaveLength(1);
+    expect(calls).toEqual([
+      { method: 'mcp.servers.test', params: { name: 'linear', profile: 'work' } },
+      { method: 'mcp.servers.status', params: { profile: 'work' } },
+    ]);
+  });
+
+  it('reads the socket at call time, not when the target was created', async () => {
+    let live: any = null;
+    const t = createSessionMcpTarget(true, () => live);
+    expect((await t.test('x', null)).kind).toBe('error');
+    live = async () => ({ ok: true, tools: [], oauth_needed: false });
+    expect((await t.test('x', null)).kind).toBe('ok');
   });
 });

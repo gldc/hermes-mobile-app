@@ -7,7 +7,8 @@
 // the most recently MOUNTED one is the visible target: two chat screens can
 // overlap during a transition, and neither the older one's cleanup nor a late
 // republish from it may displace the newer one's target.
-import type { McpRuntimeRow, McpTestOutcome } from '@/api/mcpSession';
+import type { GatewayClient } from '@/api/gatewayClient';
+import { mcpServerStatus, testMcpServer, type McpRuntimeRow, type McpTestOutcome } from '@/api/mcpSession';
 
 export interface SessionMcpTarget {
   /** True while the chat's socket is ready for calls. */
@@ -16,6 +17,29 @@ export interface SessionMcpTarget {
   test: (name: string, profile: string | null) => Promise<McpTestOutcome>;
   /** What the running gateway has loaded. `[]` when unavailable. */
   status: (profile: string | null) => Promise<McpRuntimeRow[]>;
+}
+
+export const NOT_CONNECTED_MESSAGE =
+  'This needs a connected chat. Go back to the chat, wait for it to connect, then return.';
+
+/** Build a chat's target. `getCall` is read at call time, so a reconnect that swaps the
+ * socket is picked up without republishing. */
+export function createSessionMcpTarget(
+  connected: boolean,
+  getCall: () => GatewayClient['call'] | null,
+): SessionMcpTarget {
+  return {
+    connected,
+    test: (name, profile) => {
+      const call = getCall();
+      if (!call) return Promise.resolve({ kind: 'error', message: NOT_CONNECTED_MESSAGE });
+      return testMcpServer(call, name, profile);
+    },
+    status: (profile) => {
+      const call = getCall();
+      return call ? mcpServerStatus(call, profile) : Promise.resolve([]);
+    },
+  };
 }
 
 // Insertion order = mount order; a republish by the same chat keeps its place.

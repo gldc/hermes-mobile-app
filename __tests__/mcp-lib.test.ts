@@ -5,16 +5,19 @@ import { AuthError, HttpError } from '../src/api/restClient';
 import {
   authLabel,
   checkAuthorizationUrl,
+  connectorBadges,
   connectorError,
   filterCatalog,
   gatewaySupportsOauth,
   isCustomServerValid,
   isPlainEnvField,
   remoteCatalogEntries,
+  runtimeRowsByName,
   serverCapabilities,
   serverSubtitle,
   statusLine,
   suggestServerName,
+  testSummary,
   validateCustomServer,
 } from '../src/lib/mcp';
 
@@ -330,5 +333,51 @@ describe('checkAuthorizationUrl (rule B, spec §5.6)', () => {
     expect(gatewaySupportsOauth('https://hermes.kite-opah.ts.net')).toBe(true);
     expect(gatewaySupportsOauth('HTTPS://h')).toBe(true);
     expect(gatewaySupportsOauth('http://100.89.28.11:9119')).toBe(false);
+  });
+});
+
+describe('runtimeRowsByName (spec §5.8)', () => {
+  it('indexes rows by server name', () => {
+    const map = runtimeRowsByName([row({ name: 'a' }), row({ name: 'b', status: 'failed' })], false);
+    expect([...map.keys()]).toEqual(['a', 'b']);
+    expect(map.get('b')?.status).toBe('failed');
+  });
+
+  it('keeps every row for the gateway default profile, even when nothing is loaded', () => {
+    const map = runtimeRowsByName([row({ name: 'a', status: 'configured' })], false);
+    expect(map.size).toBe(1);
+  });
+
+  it('hides all rows for a selected profile when the gateway reports no runtime state (review focus 2)', () => {
+    const rows = [row({ name: 'a', status: 'configured' }), row({ name: 'b', status: 'disabled' })];
+    expect(runtimeRowsByName(rows, true).size).toBe(0);
+  });
+
+  it('keeps rows for a selected profile once any row shows runtime state', () => {
+    const rows = [row({ name: 'a', status: 'configured' }), row({ name: 'b', status: 'failed' })];
+    expect(runtimeRowsByName(rows, true).size).toBe(2);
+  });
+
+  it('tolerates an empty or missing list (review focus 1)', () => {
+    expect(runtimeRowsByName([], false).size).toBe(0);
+    expect(runtimeRowsByName(undefined as unknown as McpRuntimeRow[], true).size).toBe(0);
+  });
+});
+
+describe('connectorBadges', () => {
+  it('lists auth, Local and Plugin in that order', () => {
+    expect(connectorBadges(server())).toEqual(['OAuth']);
+    expect(connectorBadges(server({ auth: 'header' }))).toEqual(['Token']);
+    expect(connectorBadges(server({ auth: null }))).toEqual([]);
+    expect(connectorBadges(server({ transport: 'stdio', url: null, command: 'uvx', auth: null }))).toEqual(['Local']);
+    expect(connectorBadges(server({ source: 'plugin', plugin: 'p' }))).toEqual(['OAuth', 'Plugin']);
+  });
+});
+
+describe('testSummary', () => {
+  it('counts tools, and prompts and resources only when there are any', () => {
+    expect(testSummary({ tools: [1, 2, 3], prompts: 0, resources: 0 })).toBe('Working · 3 tools');
+    expect(testSummary({ tools: [1], prompts: 2, resources: 1 })).toBe('Working · 1 tool · 2 prompts · 1 resource');
+    expect(testSummary({ tools: [], prompts: 1, resources: 0 })).toBe('Working · 0 tools · 1 prompt');
   });
 });
