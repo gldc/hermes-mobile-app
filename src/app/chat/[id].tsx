@@ -972,6 +972,9 @@ export default function ChatScreen() {
             scrollOffsetRef.current = e.nativeEvent.contentOffset.y;
           }}
           scrollEventThrottle={16}
+          // iOS 27 draws the scroll indicator mid-screen on long chats when UIKit adjusts the
+          // indicator insets itself; this list has no bars to avoid, so opt out.
+          automaticallyAdjustsScrollIndicatorInsets={false}
           keyExtractor={(r: Row) => (r.kind === 'item' ? r.item.key : `req:${r.card.id}`)}
           // 'interactive' is iOS-only; Android ignores it, so fall back to on-drag.
           keyboardDismissMode={process.env.EXPO_OS === 'ios' ? 'interactive' : 'on-drag'}
