@@ -44,6 +44,8 @@ src/app/          expo-router routes — THIS is the router root, not a top-leve
   settings.tsx    formSheet (gateway info, disconnect)
   dev-cards.tsx   __DEV__-only gallery of every turn-control/card state for sim screenshots
                   (`xcrun simctl openurl booted hermesmobileapp://dev-cards`); release redirects
+  connectors.tsx  MCP connectors on the gateway: list, on/off, status from the chat socket
+  connectors/server/[name].tsx  one connector: details, on/off, Test (over the chat socket)
 src/api/          transport, all unit-tested with injected fetch/socket
   cookieJar.ts    manual cookie store (RN fetch doesn't manage cookies)
   restClient.ts   login / ws-ticket / sessions / history
@@ -65,6 +67,7 @@ src/lib/mcp.ts    pure connector logic (capabilities, status line, validation, e
 src/lib/mcp-oauth.ts connector OAuth sign-in sequence, I/O injected; cancels every flow it abandons
 src/components/   message rows, tool cards, composer, theme'd pieces
   approval-card / clarify-card / secure-entry-card  server→client request cards
+  connector-row / connector-test-card  the Connectors list row; the Test button + result
   sidebar-host.tsx Claude-style slide-over: wraps the Stack in root _layout;
                   custom Reanimated drawer (no @react-navigation/drawer — banned
                   since SDK 56). Active on /chat/* only; left edge opens it there.

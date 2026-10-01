@@ -29,7 +29,8 @@ export default function ConnectorsScreen() {
   const profile = profiles.selected;
   const [servers, setServers] = useState<McpServer[]>([]);
   const [rows, setRows] = useState<Map<string, McpRuntimeRow>>(() => new Map());
-  const [refreshing, setRefreshing] = useState(false);
+  // true until the first fetch settles: the RefreshControl spins on first load.
+  const [refreshing, setRefreshing] = useState(true);
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unsupported, setUnsupported] = useState<string | null>(null);
@@ -69,16 +70,20 @@ export default function ConnectorsScreen() {
     }
   }, [profile, loadStatus, fail]);
 
+  /** Pull to refresh. */
   const load = useCallback(() => {
     setRefreshing(true);
     setError(null);
     return fetchList();
   }, [fetchList]);
 
+  // Re-read on every focus (a change made on the detail screen shows on return), without
+  // raising the spinner: started from code on a re-focus, it leaves the list pushed down.
   useFocusEffect(
     useCallback(() => {
-      load();
-    }, [load]),
+      setError(null);
+      void fetchList();
+    }, [fetchList]),
   );
 
   // The chat socket came up (or back) after the list loaded: fill in the status lines.
