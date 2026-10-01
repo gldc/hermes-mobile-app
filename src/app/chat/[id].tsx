@@ -11,6 +11,7 @@ import { createChatTransport, type ChatTransport } from '@/api/chat-transport';
 import { RpcError, makeNativeSocket, type GatewayClient } from '@/api/gatewayClient';
 import { getModelInfo } from '@/api/models';
 import { clearStartedDraft, setStartedDraft } from '@/draft-chat-store';
+import { clearSessionMcpTarget, createSessionMcpTarget, publishSessionMcpTarget } from '@/session-mcp-store';
 import { setSessionModelTarget } from '@/session-model-store';
 import { switchSessionModel, type SwitchOutcome } from '@/api/sessionModel';
 import {
@@ -704,6 +705,21 @@ export default function ChatScreen() {
     });
     return () => setSessionModelTarget(null);
   }, [id, currentModelId, busy, ready]);
+
+  // Lend this chat's socket to the Connectors screens (test + runtime status).
+  // One identity per mounted chat screen: the store shows the newest mounted chat,
+  // so an overlap during a route transition cannot hide or clear the live one.
+  const [mcpOwner] = useState(() => ({}));
+  useEffect(() => {
+    publishSessionMcpTarget(
+      mcpOwner,
+      createSessionMcpTarget(ready, () => {
+        const t = transportRef.current;
+        return t ? t.client.call.bind(t.client) : null;
+      }),
+    );
+  }, [mcpOwner, ready]);
+  useEffect(() => () => clearSessionMcpTarget(mcpOwner), [mcpOwner]);
 
   /** Photo picking — staged locally, uploaded via image.attach_bytes on send. */
   async function pickImage(source: 'camera' | 'library') {
