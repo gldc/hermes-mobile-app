@@ -7,9 +7,6 @@
 // the most recently MOUNTED one is the visible target: two chat screens can
 // overlap during a transition, and neither the older one's cleanup nor a late
 // republish from it may displace the newer one's target.
-//
-// It also holds the "change pending" flag: a connector was changed from the
-// app and the running gateway has not been reloaded since.
 import type { GatewayClient } from '@/api/gatewayClient';
 import {
   mcpServerStatus,
@@ -19,6 +16,7 @@ import {
   type McpRuntimeRow,
   type McpTestOutcome,
 } from '@/api/mcpSession';
+import { resetConnectorState } from '@/connector-state';
 
 export interface SessionMcpTarget {
   /** True while the chat's socket is ready for calls. */
@@ -103,45 +101,14 @@ export function clearSessionMcpTarget(by: object): void {
   refresh();
 }
 
-// --- change pending --------------------------------------------------------
-// Not persisted: after an app restart the list still shows a mismatch between
-// the config and the running gateway from the status rows (lib/mcp needsReload).
-
-let changePending = false;
-const changeListeners = new Set<() => void>();
-
-function setChangePending(next: boolean): void {
-  if (changePending === next) return;
-  changePending = next;
-  for (const l of [...changeListeners]) l();
-}
-
-export function getMcpChangePending(): boolean {
-  return changePending;
-}
-
-export function subscribeMcpChange(listener: () => void): () => void {
-  changeListeners.add(listener);
-  return () => {
-    changeListeners.delete(listener);
-  };
-}
-
-/** A connector was added, switched, removed or signed in to: the gateway needs a reload. */
-export function markMcpChanged(): void {
-  setChangePending(true);
-}
-
-/** The gateway reloaded (or the app disconnected from it). */
-export function clearMcpChanged(): void {
-  setChangePending(false);
-}
+// The "change pending" flag lives in connector-state (import-free, so connection.ts can reset
+// it); it is re-exported here because the Connectors screens read it next to the target.
+export { clearMcpChanged, getMcpChangePending, markMcpChanged, mcpChangeMark, subscribeMcpChange } from '@/connector-state';
 
 /** Test-only: reset module state between cases. */
 export function __resetSessionMcpStore(): void {
   targets.clear();
   current = null;
   listeners.clear();
-  changePending = false;
-  changeListeners.clear();
+  resetConnectorState();
 }

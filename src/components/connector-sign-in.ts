@@ -8,6 +8,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { AppState } from 'react-native';
 import { cancelMcpOauthFlow, getMcpOauthFlow, startMcpOauth } from '@/api/mcp';
 import { getRest, withAuthRetry } from '@/connection';
+import { lastSignInCancel, noteSignInCancelled, resetConnectorState } from '@/connector-state';
 import { checkAuthorizationUrl, gatewaySupportsOauth } from '@/lib/mcp';
 import { runOauthSignIn, type OauthDeps, type OauthOutcome, type OauthPhase } from '@/lib/mcp-oauth';
 
@@ -17,30 +18,13 @@ const RETRY_CONFLICT_WINDOW_MS = 10_000;
 const HTTPS_NEEDED =
   'Sign-in needs the gateway on an https:// address; providers do not accept a plain-HTTP redirect.';
 
-// When this app last cancelled a flow, per connector. Module scope: a re-opened detail
-// screen is a new hook instance and must still know.
-const lastCancel = new Map<string, number>();
-
-// "Start a sign-in when this connector's detail opens": set by the add screens, consumed
-// once by the detail. In memory on purpose — as a route param, a link could start an OAuth
-// flow without a tap, and a re-mount would start another.
-let signInOnOpen: string | null = null;
-
-export function requestSignInOnOpen(name: string): void {
-  signInOnOpen = name;
-}
-
-/** True once for the connector the add screens named; false otherwise. */
-export function consumeSignInRequest(name: string): boolean {
-  if (signInOnOpen !== name) return false;
-  signInOnOpen = null;
-  return true;
-}
+// The "sign in when the detail opens" request and the per-connector "last cancelled" time
+// live in connector-state, which connection.ts resets when the gateway changes.
+export { consumeSignInRequest, dropSignInRequest, requestSignInOnOpen } from '@/connector-state';
 
 /** Test-only: reset module state between cases. */
 export function __resetConnectorSignIn(): void {
-  lastCancel.clear();
-  signInOnOpen = null;
+  resetConnectorState();
 }
 
 /** The gateway address this app is connected to, or null when it is not connected. */
@@ -61,15 +45,25 @@ async function openAuthBrowser(url: string): Promise<unknown> {
   }
   await WebBrowser.openBrowserAsync(url);
   return new Promise<void>((resolve) => {
-    let left = false;
-    const sub = AppState.addEventListener('change', (state) => {
+    // The app may already be in the background by the time this runs.
+    let left = AppState.currentState !== 'active';
+    stopWaitingForReturn();
+    returnWatch = AppState.addEventListener('change', (state) => {
       if (state !== 'active') left = true;
       else if (left) {
-        sub.remove();
+        stopWaitingForReturn();
         resolve();
       }
     });
   });
+}
+
+// The AppState listener of the sign-in in progress (non-iOS), removed when the sign-in ends.
+let returnWatch: { remove: () => void } | null = null;
+
+function stopWaitingForReturn(): void {
+  returnWatch?.remove();
+  returnWatch = null;
 }
 
 /** Close the page if the platform lets the app do it (iOS). Best-effort. */
@@ -126,7 +120,7 @@ export function useConnectorSignIn(
       running.current = true;
       cancelled.current = false;
       if (mounted.current) setCancelling(false);
-      const recent = lastCancel.get(name);
+      const recent = lastSignInCancel(name);
       try {
         const outcome = await runOauthSignIn({
           start: () => withAuthRetry((r) => startMcpOauth(r, name, profile)),
@@ -143,9 +137,10 @@ export function useConnectorSignIn(
           isCancelled: () => cancelled.current,
           retryConflict: recent !== undefined && timing.now() - recent < RETRY_CONFLICT_WINDOW_MS,
         });
-        if (outcome.kind === 'cancelled') lastCancel.set(name, timing.now());
+        if (outcome.kind === 'cancelled') noteSignInCancelled(name, timing.now());
         return outcome;
       } finally {
+        stopWaitingForReturn();
         running.current = false;
         if (mounted.current) {
           setPhase(null);

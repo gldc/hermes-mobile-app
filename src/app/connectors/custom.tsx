@@ -6,8 +6,8 @@
 // it is sent (spec §5.9); this screen never holds it. The form is keyed by the
 // authentication choice, so switching away from "Bearer token" drops what was typed.
 // The gateway does the real validation; the checks here only save a round trip.
-import { Stack, router } from 'expo-router';
-import { useEffect, useRef, useState, useSyncExternalStore } from 'react';
+import { Stack, router, useFocusEffect } from 'expo-router';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Pressable, ScrollView, Text, TextInput, View, useWindowDimensions } from 'react-native';
 import { addMcpServer, listMcpServers, type McpAddBody } from '@/api/mcp';
 import { HttpError } from '@/api/restClient';
@@ -82,6 +82,8 @@ export default function CustomConnectorScreen() {
   const [auth, setAuth] = useState<Auth>('none');
   const [showIssues, setShowIssues] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  // Shown when the add succeeded while he was on another screen (no automatic navigation then).
+  const [added, setAdded] = useState(false);
   // After an await, a screen that was left must not navigate or write state.
   const mounted = useRef(false);
   useEffect(() => {
@@ -90,6 +92,19 @@ export default function CustomConnectorScreen() {
       mounted.current = false;
     };
   }, []);
+
+  // A late answer may navigate only while this screen is the one he is looking at. Mounted is
+  // not enough: a chat pushed on top (a notification tap) leaves this screen mounted, and
+  // `dismissTo` would then pop that chat.
+  const focused = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      focused.current = true;
+      return () => {
+        focused.current = false;
+      };
+    }, []),
+  );
 
   // The token's presence is the form's own check (it owns the token), hence hasToken: true.
   const issues = validateCustomServer({ name, url, auth, hasToken: true });
@@ -109,7 +124,11 @@ export default function CustomConnectorScreen() {
   /** The connector exists on the gateway because of this screen: note it, then go to it. */
   function finish(addedName: string) {
     markMcpChanged(); // the running gateway does not have it yet: the list offers a reload
-    if (!mounted.current) return;
+    if (!focused.current) {
+      // He is elsewhere: do not pull him back, and do not queue a sign-in page for later.
+      if (mounted.current) setAdded(true);
+      return;
+    }
     if (auth === 'oauth') requestSignInOnOpen(addedName);
     router.dismissTo('/connectors');
     router.push({ pathname: '/connectors/server/[name]', params: { name: addedName } });
@@ -205,7 +224,7 @@ export default function CustomConnectorScreen() {
 
       <View style={{ gap: 6 }}>
         <Label>Authentication</Label>
-        <View accessibilityRole="radiogroup" style={{ flexDirection: 'row', gap: 8 }}>
+        <View accessibilityRole="radiogroup" accessibilityLabel="Authentication" style={{ flexDirection: 'row', gap: 8 }}>
           {AUTH_CHOICES.map((choice) => {
             const selected = auth === choice.value;
             return (
@@ -213,7 +232,7 @@ export default function CustomConnectorScreen() {
                 key={choice.value}
                 accessibilityRole="radio"
                 accessibilityLabel={choice.label}
-                accessibilityState={{ selected, disabled: submitting }}
+                accessibilityState={{ checked: selected, disabled: submitting }}
                 disabled={submitting}
                 onPress={() => setAuth(choice.value)}
                 style={{
@@ -247,6 +266,12 @@ export default function CustomConnectorScreen() {
           )
         ) : null}
       </View>
+
+      {added ? (
+        <Text accessibilityLiveRegion="polite" style={{ color: colors.textDim, fontSize: 14 }}>
+          Added. Open it from the Connectors list.
+        </Text>
+      ) : null}
 
       <ConnectorSecretForm
         key={auth}

@@ -5,7 +5,7 @@
 // servers are not added from the app. An entry that is already configured opens its
 // connector instead.
 import { Stack, router, useFocusEffect } from 'expo-router';
-import { useCallback, useRef, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FlatList, Pressable, RefreshControl, Text, View } from 'react-native';
 import { listMcpCatalog, type McpCatalogEntry } from '@/api/mcp';
 import { Icon } from '@/components/icon';
@@ -110,6 +110,13 @@ export default function AddConnectorScreen() {
   const [error, setError] = useState<string | null>(null);
   const [unsupported, setUnsupported] = useState<string | null>(null);
   const readGen = useRef(0); // only the newest read may write state
+  const mounted = useRef(false);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
 
   const fetchCatalog = useCallback(async () => {
     const gen = ++readGen.current;
@@ -119,7 +126,7 @@ export default function AddConnectorScreen() {
       setEntries(remoteCatalogEntries(catalog.entries ?? []));
       setUnsupported(null);
     } catch (e) {
-      if (gen !== readGen.current) return;
+      if (gen !== readGen.current || !mounted.current) return;
       const mapped = connectorError(e, 'catalog');
       if (mapped.kind === 'auth') router.replace('/');
       else if (mapped.kind === 'unsupported') setUnsupported(mapped.message);

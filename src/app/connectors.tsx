@@ -20,6 +20,7 @@ import { getProfileState, subscribeProfiles } from '@/profile-store';
 import {
   clearMcpChanged,
   getMcpChangePending,
+  mcpChangeMark,
   getSessionMcpTarget,
   markMcpChanged,
   subscribeMcpChange,
@@ -52,6 +53,7 @@ export default function ConnectorsScreen() {
   const readGen = useRef(0);
   const readsInFlight = useRef(0);
   const switching = useRef(new Set<string>());
+  const reloadLatch = useRef(false); // one alert, one reload: from the press until it ends
 
   /** Show a failure; returns its kind so the caller can react. `keepError`: a message is
    * already on screen for the action that led here (a failed switch) — leave it. */
@@ -160,10 +162,15 @@ export default function ConnectorsScreen() {
   /** Reload the gateway's connectors over the chat socket. The alert has already asked. */
   const runReload = useCallback(async () => {
     const t = getSessionMcpTarget();
-    if (!t?.connected || t.streaming) return;
+    if (!t?.connected || t.streaming) {
+      reloadLatch.current = false;
+      return;
+    }
+    const mark = mcpChangeMark(); // a change made while the reload runs must stay pending
     setReloading(true);
     setReloadNote(null);
     const outcome = await t.reload();
+    reloadLatch.current = false;
     setReloading(false);
     if (outcome.kind === 'error') {
       setReloadNote({ tone: 'error', text: outcome.message });
@@ -175,7 +182,7 @@ export default function ConnectorsScreen() {
         text: 'The connection dropped during the reload, so its result is unknown. Check the status lines.',
       });
     } else {
-      clearMcpChanged();
+      clearMcpChanged(mark);
       setReloadNote({ tone: 'info', text: outcome.thisChatOnly ? 'Reloaded for this chat only.' : 'Reloaded.' });
     }
     void fetchList(); // the list and the status lines, as the gateway has them now
@@ -183,13 +190,19 @@ export default function ConnectorsScreen() {
 
   /** A reload reaches every open chat and drops their prompt cache, so ask first. */
   const confirmReload = useCallback(() => {
+    if (reloadLatch.current) return;
+    reloadLatch.current = true;
+    const release = () => {
+      reloadLatch.current = false;
+    };
     Alert.alert(
       'Reload connectors?',
       'This reconnects every connector for every open chat on the gateway, including a chat that is mid-turn on another device. The next message in each chat re-sends the whole conversation, so it costs more.',
       [
-        { text: 'Cancel', style: 'cancel' },
+        { text: 'Cancel', style: 'cancel', onPress: release },
         { text: 'Reload', onPress: () => void runReload() },
       ],
+      { onDismiss: release }, // Android: dismissed by tapping outside
     );
   }, [runReload]);
 

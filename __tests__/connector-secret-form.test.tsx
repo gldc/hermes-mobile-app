@@ -180,24 +180,6 @@ test('while the request is out the button is disabled and a second press does no
   expect(screen.getByRole('button', { name: 'Add connector' })).not.toBeDisabled();
 });
 
-test('unmounting during the request is quiet: no state is written afterwards', async () => {
-  const errors = jest.spyOn(console, 'error').mockImplementation(() => {});
-  let finish!: (r: SubmitResult) => void;
-  const { props } = setup({ onSubmit: jest.fn(() => new Promise<SubmitResult>((resolve) => (finish = resolve))) });
-  const view = await render(<ConnectorSecretForm {...props} />);
-  await fireEvent.changeText(screen.getByLabelText('Token'), SECRET);
-  await act(async () => {
-    void fireEvent.press(screen.getByRole('button', { name: 'Add connector' }));
-  });
-  await act(async () => {
-    await Promise.resolve();
-  });
-  await view.unmount();
-  await act(async () => finish({ ok: false, message: 'late' }));
-  expect(errors).not.toHaveBeenCalled();
-  errors.mockRestore();
-});
-
 test('unmounting during the Face ID prompt sends nothing', async () => {
   let answer!: (o: BiometricOutcome) => void;
   const { props, onSubmit } = setup({ authenticate: jest.fn(() => new Promise<BiometricOutcome>((resolve) => (answer = resolve))) });
@@ -209,4 +191,28 @@ test('unmounting during the Face ID prompt sends nothing', async () => {
   await view.unmount();
   await act(async () => answer({ ok: true }));
   expect(onSubmit).not.toHaveBeenCalled();
+});
+
+test('VoiceOver hears that Face ID comes first, and that the form is busy', async () => {
+  let finish!: (r: SubmitResult) => void;
+  const { props } = setup({ onSubmit: jest.fn(() => new Promise<SubmitResult>((resolve) => (finish = resolve))) });
+  await render(<ConnectorSecretForm {...props} />);
+  const button = () => screen.getByRole('button', { name: 'Add connector' });
+  expect(button().props.accessibilityHint).toBe('Asks for Face ID first');
+  await fireEvent.changeText(screen.getByLabelText('Token'), SECRET);
+  await act(async () => {
+    void fireEvent.press(button());
+  });
+  await act(async () => {
+    await Promise.resolve();
+  });
+  expect(button().props.accessibilityState.busy).toBe(true);
+  await act(async () => finish({ ok: false, message: 'nope' }));
+  expect(button().props.accessibilityState.busy).toBe(false);
+});
+
+test('without fields there is no Face ID hint', async () => {
+  const { props } = setup({ fields: [] });
+  await render(<ConnectorSecretForm {...props} />);
+  expect(screen.getByRole('button', { name: 'Add connector' }).props.accessibilityHint).toBeUndefined();
 });

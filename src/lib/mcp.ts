@@ -67,16 +67,23 @@ export function validateCustomServer(draft: CustomServerDraft): CustomServerIssu
   if (!url) {
     issues.url = 'Enter the server URL.';
   } else {
-    let protocol = '';
+    let parsed: URL | null = null;
     try {
-      protocol = new URL(url).protocol;
+      parsed = new URL(url);
     } catch {
-      protocol = '';
+      parsed = null;
     }
-    if (protocol === 'http:') {
-      issues.caution = 'Traffic between your gateway and this server will not be encrypted.';
-    } else if (protocol !== 'https:') {
+    const protocol = parsed?.protocol ?? '';
+    if (protocol !== 'http:' && protocol !== 'https:') {
       issues.url = 'Enter a URL that starts with https://';
+    } else if (parsed) {
+      const cautions: string[] = [];
+      if (protocol === 'http:') cautions.push('Traffic between your gateway and this server will not be encrypted.');
+      // The URL is not typed into the secret form: it is kept as written and shown on the connector.
+      if (parsed.search || parsed.username || parsed.password) {
+        cautions.push('This URL carries a key or credentials. It is stored on the gateway as written and shown in the app.');
+      }
+      if (cautions.length > 0) issues.caution = cautions.join(' ');
     }
   }
 

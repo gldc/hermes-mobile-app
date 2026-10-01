@@ -142,6 +142,8 @@ export function ConnectorSecretForm({
       <CardButton
         label={busy ? busyLabel : fields.length > 0 ? `${submitLabel} with Face ID` : submitLabel}
         a11y={submitLabel}
+        a11yHint={fields.length > 0 ? 'Asks for Face ID first' : undefined}
+        busy={busy}
         onPress={() => void submit()}
         disabled={busy}
         primary

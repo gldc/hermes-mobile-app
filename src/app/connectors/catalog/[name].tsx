@@ -7,7 +7,7 @@
 // Installing makes the gateway connect to the server, so it can take most of a minute. If
 // the answer is lost, the catalog is read again before another attempt is allowed. Sign-in
 // for an OAuth entry is not started here: the connector's own screen owns it.
-import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Linking, Pressable, RefreshControl, ScrollView, Text, View } from 'react-native';
 import {
@@ -19,10 +19,10 @@ import {
 } from '@/api/mcp';
 import { CardButton } from '@/components/card-button';
 import { ConnectorSecretForm, type SubmitResult } from '@/components/connector-secret-form';
-import { requestSignInOnOpen } from '@/components/connector-sign-in';
+import { gatewayBaseUrl, requestSignInOnOpen } from '@/components/connector-sign-in';
 import { Icon } from '@/components/icon';
 import { withAuthRetry } from '@/connection';
-import { catalogAuthLabel, connectorError, secretFieldsForEntry } from '@/lib/mcp';
+import { catalogAuthLabel, connectorError, gatewaySupportsOauth, secretFieldsForEntry } from '@/lib/mcp';
 import { getProfileState, subscribeProfiles } from '@/profile-store';
 import { markMcpChanged } from '@/session-mcp-store';
 import { useTheme } from '@/theme';
@@ -89,6 +89,19 @@ export default function CatalogEntryScreen() {
     };
   }, []);
 
+  // A late answer may navigate only while this screen is the one he is looking at. Mounted is
+  // not enough: a chat pushed on top (a notification tap) leaves this screen mounted, and
+  // `dismissTo` would then pop that chat.
+  const focused = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      focused.current = true;
+      return () => {
+        focused.current = false;
+      };
+    }, []),
+  );
+
   /** This entry as the gateway has it now; null when it is not in the catalog. Rejects on failure. */
   const readEntry = useCallback(
     () =>
@@ -134,7 +147,11 @@ export default function CatalogEntryScreen() {
   /** The connector exists on the gateway because of this screen: note it, then go to it. */
   function finish(added: McpCatalogEntry) {
     markMcpChanged(); // the running gateway does not have it yet: the list offers a reload
-    if (!mounted.current) return;
+    if (!focused.current) {
+      // He is elsewhere: do not pull him back, and do not queue a sign-in page for later.
+      if (mounted.current) void fetchEntry(); // this screen then reads "Already added / Open"
+      return;
+    }
     if (added.auth_type === 'oauth') requestSignInOnOpen(added.name);
     openConnector(added.name);
   }
@@ -157,7 +174,7 @@ export default function CatalogEntryScreen() {
       // Someone else added it in the meantime: show that, do not adopt it as ours.
       if (e instanceof McpAlreadyAddedError) {
         void fetchEntry();
-        return handled;
+        return { ok: false, message: mapped.message };
       }
       // The answer may have been lost after the gateway installed it: look before he retries.
       const now = await readEntry().catch(() => null);
@@ -175,6 +192,9 @@ export default function CatalogEntryScreen() {
   }
 
   const source = entry?.source && /^https:\/\//i.test(entry.source) ? entry.source : null;
+  const base = gatewayBaseUrl();
+  // The sign-in that follows an OAuth entry cannot work on a plain-HTTP gateway: say so before adding.
+  const oauthBlocked = entry?.auth_type === 'oauth' && !(base && gatewaySupportsOauth(base));
 
   return (
     <ScrollView
@@ -225,12 +245,20 @@ export default function CatalogEntryScreen() {
               <CardButton label="Open" a11y="Open connector" onPress={() => openConnector(entry.name)} primary />
             </View>
           ) : (
-            <ConnectorSecretForm
-              fields={secretFieldsForEntry(entry)}
-              submitLabel="Add connector"
-              busyLabel="Adding… this can take a minute"
-              onSubmit={(env) => install(entry, env)}
-            />
+            <View style={{ gap: 10 }}>
+              {oauthBlocked ? (
+                <Text accessibilityLiveRegion="polite" style={{ color: colors.danger, fontSize: 13.5, marginHorizontal: 4 }}>
+                  OAuth sign-in needs the gateway on an https:// address.
+                </Text>
+              ) : null}
+              <ConnectorSecretForm
+                fields={secretFieldsForEntry(entry)}
+                submitLabel="Add connector"
+                busyLabel="Adding… this can take a minute"
+                beforeSubmit={() => !oauthBlocked}
+                onSubmit={(env) => install(entry, env)}
+              />
+            </View>
           )}
 
           <Text style={{ color: colors.textFaint, fontSize: 12.5, marginHorizontal: 4 }}>

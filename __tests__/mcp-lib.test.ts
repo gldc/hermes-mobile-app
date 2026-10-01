@@ -491,3 +491,21 @@ describe('helpers for the add forms', () => {
     expect(sameServerAddress(server({ url: null }), 'https://x.example/mcp')).toBe(false);
   });
 });
+
+describe('validateCustomServer — a URL that carries a secret', () => {
+  const base = { name: 'mine', auth: 'none' as const, hasToken: false };
+  it('cautions on a query string or on credentials in the URL, without blocking', () => {
+    const q = validateCustomServer({ ...base, url: 'https://x.example/mcp?api_key=abc' });
+    expect(q.url).toBeUndefined();
+    expect(q.caution).toBe('This URL carries a key or credentials. It is stored on the gateway as written and shown in the app.');
+    expect(validateCustomServer({ ...base, url: 'https://user:pw@x.example/mcp' }).caution).toMatch(/carries a key or credentials/);
+  });
+  it('gives both cautions for an http URL with a key', () => {
+    const both = validateCustomServer({ ...base, url: 'http://x.example/mcp?key=1' }).caution ?? '';
+    expect(both).toMatch(/will not be encrypted/);
+    expect(both).toMatch(/carries a key or credentials/);
+  });
+  it('has no caution for a plain https URL', () => {
+    expect(validateCustomServer({ ...base, url: 'https://x.example/mcp' }).caution).toBeUndefined();
+  });
+});

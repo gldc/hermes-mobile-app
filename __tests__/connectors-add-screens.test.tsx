@@ -44,6 +44,7 @@ jest.mock('../src/components/connector-sign-in', () => ({
   ...jest.requireActual('../src/components/connector-sign-in'),
   useConnectorSignIn: () => ({ phase: null, cancelling: false, signIn: jest.fn(), cancel: jest.fn() }),
   consumeSignInRequest: () => false,
+  dropSignInRequest: () => {},
   requestSignInOnOpen: (name: string) => mockRequestSignIn(name),
 }));
 
@@ -115,6 +116,7 @@ async function open(...urls: string[]) {
       'connectors/catalog/[name]': CatalogEntryScreen,
       'connectors/custom': CustomConnectorScreen,
       'connectors/server/[name]': ConnectorDetailScreen,
+      'chat/[id]': () => <Text>a chat</Text>,
     },
     { initialUrl: '/' },
   );
@@ -569,5 +571,148 @@ describe('Connectors list — entry points', () => {
     mockList.mockRejectedValue(new HttpError(404, 'Not Found'));
     await open('/connectors');
     expect(screen.queryByRole('button', { name: 'Add a connector' })).toBeNull();
+  });
+});
+
+// --- branch review: a late answer must not pull him away from where he went -----------------
+
+describe('A request that answers after he went elsewhere', () => {
+  it('catalog install: a chat opened on top stays; the entry reads Already added when he returns', async () => {
+    let finish!: (v: unknown) => void;
+    mockInstall.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    await open('/connectors', '/connectors/add', '/connectors/catalog/linear');
+    await act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Add connector' }));
+    });
+    await flush();
+    await act(async () => router.navigate('/chat/abc' as never)); // e.g. a notification tap
+    await flush();
+    expect(pathname()).toBe('/chat/abc');
+
+    mockCatalog.mockResolvedValue({ entries: [entry({ installed: true })], diagnostics: [] });
+    await act(async () => finish({ ok: true, name: 'linear', background: false }));
+    await flush(20);
+    expect(pathname()).toBe('/chat/abc');
+    expect(mockRequestSignIn).not.toHaveBeenCalled(); // no sign-in page opening by itself later
+    expect(getMcpChangePending()).toBe(true);
+
+    await act(async () => router.back());
+    await flush();
+    expect(pathname()).toBe('/connectors/catalog/linear');
+    expect(screen.getByText('Already added')).toBeTruthy();
+  });
+
+  it('custom add: a chat opened on top stays; the form says it was added', async () => {
+    let finish!: (v: McpServer) => void;
+    mockAdd.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    await open('/connectors', '/connectors/add', '/connectors/custom');
+    await fireEvent.changeText(screen.getByLabelText('Server URL'), 'https://x.example/mcp');
+    await act(async () => {
+      await fireEvent.press(screen.getByRole('radio', { name: 'OAuth' }));
+    });
+    await act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Add connector' }));
+    });
+    await flush();
+    await act(async () => router.navigate('/chat/abc' as never));
+    await flush();
+    await act(async () => finish(server({ name: 'x', url: 'https://x.example/mcp' })));
+    await flush(20);
+    expect(pathname()).toBe('/chat/abc');
+    expect(mockRequestSignIn).not.toHaveBeenCalled();
+    expect(getMcpChangePending()).toBe(true);
+    await act(async () => router.back());
+    await flush();
+    expect(screen.getByText('Added. Open it from the Connectors list.')).toBeTruthy();
+  });
+
+  it('custom add: leaving the form altogether — its late success does not navigate', async () => {
+    let finish!: (v: McpServer) => void;
+    mockAdd.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    await open('/connectors', '/connectors/add', '/connectors/custom');
+    await fireEvent.changeText(screen.getByLabelText('Server URL'), 'https://x.example/mcp');
+    await act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Add connector' }));
+    });
+    await flush();
+    await act(async () => router.dismissTo('/' as never));
+    await flush();
+    await act(async () => finish(server({ name: 'x', auth: null, url: 'https://x.example/mcp' })));
+    await flush(20);
+    expect(pathname()).toBe('/');
+    expect(getMcpChangePending()).toBe(true);
+  });
+});
+
+describe('Branch review: smaller cases', () => {
+  it('"already added" always says so, even when the catalog still reads not installed (a plugin server of that name)', async () => {
+    mockInstall.mockRejectedValue(new McpAlreadyAddedError('linear'));
+    await open('/connectors', '/connectors/add', '/connectors/catalog/linear');
+    await pressAdd();
+    await flush(20);
+    expect(screen.getByText('This connector is already added.')).toBeTruthy();
+  });
+
+  it('a catalog OAuth entry is not added when the gateway is not on https; the entry says why', async () => {
+    mockBaseUrl = 'http://100.89.28.11:9119';
+    await open('/connectors', '/connectors/add', '/connectors/catalog/linear');
+    expect(screen.getByText('OAuth sign-in needs the gateway on an https:// address.')).toBeTruthy();
+    await pressAdd();
+    await flush();
+    expect(mockInstall).not.toHaveBeenCalled();
+  });
+
+  it('a no-auth entry is unaffected by an http gateway', async () => {
+    mockBaseUrl = 'http://100.89.28.11:9119';
+    mockInstall.mockResolvedValue({ ok: true, name: 'docs', background: false });
+    await open('/connectors', '/connectors/add', '/connectors/catalog/docs');
+    await pressAdd();
+    await flush(20);
+    expect(mockInstall).toHaveBeenCalled();
+  });
+
+  it('catalog credentials never end up in the route', async () => {
+    mockInstall.mockResolvedValue({ ok: true, name: 'asana', background: false });
+    await open('/connectors', '/connectors/add', '/connectors/catalog/asana');
+    await fireEvent.changeText(screen.getByLabelText('Asana client ID'), 'client-1');
+    await fireEvent.changeText(screen.getByLabelText('Asana client secret'), SECRET);
+    mockList.mockResolvedValue([server({ name: 'asana' })]);
+    await pressAdd();
+    await flush(20);
+    expect(pathname()).toBe('/connectors/server/asana');
+    expect(fullPath()).not.toContain(SECRET);
+    expect(fullPath()).not.toContain('client-1');
+  });
+
+  it('after a failed add the token is on screen exactly once: in its own field', async () => {
+    mockAdd.mockRejectedValue(new HttpError(409, "Server 'x' already exists"));
+    await open('/connectors', '/connectors/add', '/connectors/custom');
+    await fireEvent.changeText(screen.getByLabelText('Server URL'), 'https://x.example/mcp');
+    await act(async () => {
+      await fireEvent.press(screen.getByRole('radio', { name: 'Bearer token' }));
+    });
+    await fireEvent.changeText(screen.getByLabelText('Token'), SECRET);
+    await pressAdd();
+    await flush(20);
+    expect(screen.getByText("Server 'x' already exists")).toBeTruthy();
+    expect(screen.getAllByDisplayValue(SECRET)).toHaveLength(1);
+    expect(screen.queryAllByText(new RegExp(SECRET))).toHaveLength(0);
+    expect(fullPath()).not.toContain(SECRET);
+  });
+
+  it('the authentication choices are radios that report which one is checked', async () => {
+    await open('/connectors', '/connectors/add', '/connectors/custom');
+    expect(screen.getByRole('radio', { name: 'None' }).props.accessibilityState.checked).toBe(true);
+    await act(async () => {
+      await fireEvent.press(screen.getByRole('radio', { name: 'OAuth' }));
+    });
+    expect(screen.getByRole('radio', { name: 'OAuth' }).props.accessibilityState.checked).toBe(true);
+    expect(screen.getByRole('radio', { name: 'None' }).props.accessibilityState.checked).toBe(false);
+  });
+
+  it('a URL that carries a key or credentials gets a caution', async () => {
+    await open('/connectors', '/connectors/add', '/connectors/custom');
+    await fireEvent.changeText(screen.getByLabelText('Server URL'), 'https://x.example/mcp?api_key=abc');
+    expect(screen.getByText(/This URL carries a key or credentials/)).toBeTruthy();
   });
 });

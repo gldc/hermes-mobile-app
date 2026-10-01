@@ -9,12 +9,12 @@
 // Sign in, the switch and Remove never overlap: the gateway snapshots the connector's
 // config when a sign-in starts and saves that snapshot when it ends, which would silently
 // undo a switch made in between. A sign-in owns the screen until it ends; so does a removal.
-import { Stack, router, useLocalSearchParams } from 'expo-router';
+import { Stack, router, useFocusEffect, useLocalSearchParams } from 'expo-router';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { Alert, Pressable, RefreshControl, ScrollView, Switch, Text, View } from 'react-native';
 import { listMcpServers, removeMcpServer, setMcpServerEnabled, type McpServer } from '@/api/mcp';
 import type { McpRuntimeRow } from '@/api/mcpSession';
-import { consumeSignInRequest, useConnectorSignIn } from '@/components/connector-sign-in';
+import { consumeSignInRequest, dropSignInRequest, useConnectorSignIn } from '@/components/connector-sign-in';
 import { ConnectorSignInCard } from '@/components/connector-sign-in-card';
 import { ConnectorTestCard, type ConnectorTestState } from '@/components/connector-test-card';
 import { Icon } from '@/components/icon';
@@ -104,14 +104,30 @@ export default function ConnectorDetailScreen() {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      // A "sign in on open" request this screen could not use (its read failed, or the
+      // connector is not OAuth) must not start a sign-in on some later visit.
+      if (typeof name === 'string') dropSignInRequest(name);
     };
-  }, []);
+  }, [name]);
+  // A late answer may navigate only while this screen is the one he is looking at. Mounted is
+  // not enough: a chat pushed on top (a notification tap) leaves this screen mounted, and
+  // `dismissTo` would then pop that chat.
+  const focused = useRef(false);
+  useFocusEffect(
+    useCallback(() => {
+      focused.current = true;
+      return () => {
+        focused.current = false;
+      };
+    }, []),
+  );
 
   /** `keepError`: a message is already on screen for the action that led here — leave it. */
   const fail = useCallback((e: unknown, action: ConnectorAction, keepError = false) => {
     const mapped = connectorError(e, action);
-    if (mapped.kind === 'auth') router.replace('/');
-    else if (!keepError) setError(mapped.message);
+    if (mapped.kind === 'auth') {
+      if (mounted.current) router.replace('/');
+    } else if (!keepError) setError(mapped.message);
     return mapped.kind;
   }, []);
 
@@ -280,7 +296,12 @@ export default function ConnectorDetailScreen() {
         return;
       }
     }
-    if (mounted.current) router.dismissTo('/connectors');
+    if (focused.current) router.dismissTo('/connectors');
+    else if (mounted.current) {
+      // He is elsewhere: do not pull him back. When he returns this reads "Connector not found".
+      setRemoving(false);
+      void fetchServer(true);
+    }
   }
 
   function confirmRemove(current: McpServer) {

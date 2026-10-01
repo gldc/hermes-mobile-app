@@ -35,6 +35,7 @@ jest.mock('../src/api/mcp', () => ({
 // sign-in answers is `mockSignIn`; the sequence itself is tested in mcp-oauth and connector-sign-in.
 const mockSignIn = jest.fn();
 const mockConsume = jest.fn();
+const mockDrop = jest.fn();
 jest.mock('../src/components/connector-sign-in', () => {
   const React = jest.requireActual('react');
   return {
@@ -52,6 +53,7 @@ jest.mock('../src/components/connector-sign-in', () => {
       return { phase, cancelling: false, signIn, cancel };
     },
     consumeSignInRequest: (name: string) => mockConsume(name),
+    dropSignInRequest: (name: string) => mockDrop(name),
     requestSignInOnOpen: () => {},
   };
 });
@@ -119,6 +121,7 @@ async function open(url: string) {
       index: () => <Text>sign in</Text>,
       connectors: ConnectorsScreen,
       'connectors/server/[name]': ConnectorDetailScreen,
+      'chat/[id]': () => <Text>a chat</Text>,
     },
     { initialUrl: '/' },
   );
@@ -140,6 +143,7 @@ beforeEach(() => {
   mockRemove.mockReset();
   mockSignIn.mockReset();
   mockConsume.mockReset();
+  mockDrop.mockReset();
   mockConsume.mockReturnValue(false);
   mockList.mockImplementation(async () => [server(), local]);
 });
@@ -910,5 +914,97 @@ describe('Connectors list — the reload note does not outlive the next change',
     await act(async () => router.back());
     await flush();
     expect(screen.queryByText('Reloaded.')).toBeNull();
+  });
+});
+
+// --- branch review of the add flow and the reload ---------------------------------------------
+
+describe('Branch review: reload and remove against other things happening', () => {
+  async function confirmLastAlert(label: string) {
+    const call = alertSpy.mock.calls[alertSpy.mock.calls.length - 1];
+    await act(async () => {
+      void (call[2] ?? []).find((b) => b.text === label)?.onPress?.();
+    });
+  }
+
+  it('a reload does not clear a change made while it was running', async () => {
+    let finish!: (o: McpReloadOutcome) => void;
+    const t = target(true);
+    t.reload = () => new Promise<McpReloadOutcome>((resolve) => (finish = resolve));
+    publishSessionMcpTarget(owner, t);
+    markMcpChanged();
+    await open('/connectors');
+    await act(async () => {
+      await fireEvent.press(screen.getByRole('button', { name: 'Reload now' }));
+    });
+    await confirmLastAlert('Reload');
+    await flush();
+    markMcpChanged(); // e.g. a connector removed on its detail while the reload was out
+    await act(async () => finish({ kind: 'reloaded', thisChatOnly: false }));
+    await flush(20);
+    expect(getMcpChangePending()).toBe(true);
+    expect(screen.getByText('The agent doesn’t have your changes yet.')).toBeTruthy();
+  });
+
+  it('two presses on Reload now ask once and reload once', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    markMcpChanged();
+    await open('/connectors');
+    await act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Reload now' }));
+      void fireEvent.press(screen.getByRole('button', { name: 'Reload now' }));
+    });
+    await flush();
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    await confirmLastAlert('Reload');
+    await flush(20);
+    expect(reloads).toBe(1);
+  });
+
+  it('after Cancel the button asks again', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    markMcpChanged();
+    await open('/connectors');
+    await act(async () => {
+      await fireEvent.press(screen.getByRole('button', { name: 'Reload now' }));
+    });
+    await confirmLastAlert('Cancel');
+    await flush();
+    await act(async () => {
+      await fireEvent.press(screen.getByRole('button', { name: 'Reload now' }));
+    });
+    expect(alertSpy).toHaveBeenCalledTimes(2);
+  });
+
+  it('remove: a chat opened on top while it was out stays; the connector is gone when he returns', async () => {
+    await open('/connectors');
+    await act(async () => router.push('/connectors/server/linear' as never));
+    await flush();
+    let finish!: (v: { ok: boolean }) => void;
+    mockRemove.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    await act(async () => {
+      await fireEvent.press(screen.getByRole('button', { name: 'Remove connector' }));
+    });
+    await confirmLastAlert('Remove');
+    await flush();
+    await act(async () => router.navigate('/chat/abc' as never));
+    await flush();
+    mockList.mockImplementation(async () => [local]);
+    await act(async () => finish({ ok: true }));
+    await flush(20);
+    expect(pathname()).toBe('/chat/abc');
+    expect(getMcpChangePending()).toBe(true);
+    await act(async () => router.back());
+    await flush();
+    expect(screen.getByText('Connector not found')).toBeTruthy();
+  });
+
+  it('a detail that leaves without having used its sign-in request drops it', async () => {
+    await open('/connectors');
+    await act(async () => router.push('/connectors/server/yt' as never));
+    await flush();
+    await act(async () => router.back());
+    await flush();
+    expect(mockDrop).toHaveBeenCalledWith('yt');
   });
 });

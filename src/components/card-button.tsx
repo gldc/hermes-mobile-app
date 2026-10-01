@@ -9,6 +9,8 @@ export function CardButton({
   disabled = false,
   primary = false,
   flex = false,
+  a11yHint,
+  busy = false,
 }: {
   label: string;
   a11y: string;
@@ -16,6 +18,10 @@ export function CardButton({
   disabled?: boolean;
   primary?: boolean;
   flex?: boolean;
+  /** What pressing leads to, when the label does not say (e.g. a Face ID prompt). */
+  a11yHint?: string;
+  /** The action is in progress (the button is usually disabled as well). */
+  busy?: boolean;
 }) {
   const { colors } = useTheme();
   // A disabled primary is not a faded accent — white on 45% accent is illegible in light (sim S1 V7).
@@ -25,7 +31,8 @@ export function CardButton({
     <Pressable
       accessibilityRole="button"
       accessibilityLabel={a11y}
-      accessibilityState={{ disabled }}
+      accessibilityHint={a11yHint}
+      accessibilityState={{ disabled, busy }}
       disabled={disabled}
       onPress={onPress}
       style={({ pressed }) => ({

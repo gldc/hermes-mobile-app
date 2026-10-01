@@ -84,7 +84,10 @@ src/components/   message rows, tool cards, composer, theme'd pieces
                   destinations, New chat pill — lives inside the drawer.
 src/sidebar-store.ts open/close state (useSyncExternalStore, like profile-store)
 src/session-mcp-store.ts the active chat lends its socket to the Connectors screens
-                  (newest mounted chat wins); also the "connectors changed, reload pending" flag
+                  (newest mounted chat wins)
+src/connector-state.ts import-free state tied to the connected gateway: "connectors changed,
+                  reload pending", the one-shot "sign in when the detail opens" request;
+                  connection.ts resets it on disconnect and when the gateway address changes
 src/theme.ts      single source of color truth (warm cream light / charcoal dark,
                   terracotta accent, Georgia serif for wordmark + greetings)
 ```
@@ -141,8 +144,10 @@ src/theme.ts      single source of color truth (warm cream light / charcoal dark
 
 The connector add forms follow the same rules through `ConnectorSecretForm`: a bearer token or
 catalog credential lives only in that component's state and in `onSubmit`'s argument, Face ID runs
-immediately before the request that carries it, and `src/api/mcp.ts` rebuilds any error from such
-a request so the value cannot leave inside one.
+before the request that carries it, and `src/api/mcp.ts` rebuilds any error from such a request so
+the value cannot leave inside one. Two things can come between Face ID and that request: the fast
+request a catalog install sends first, and one replay of the request by `withAuthRetry` after a
+silent re-login.
 
 - The typed value lives ONLY in `SecureEntryForm`'s local state and goes straight to the
   response frame: never into the turn store, `items`, a ref, an error, storage, `console.*`,

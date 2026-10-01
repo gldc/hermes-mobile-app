@@ -7,7 +7,7 @@ import {
   StoredConnectionV2,
   migrateStoredConnection,
 } from './lib/stored-connection';
-import { clearMcpChanged } from './session-mcp-store';
+import { resetConnectorState } from './connector-state';
 
 const STORE_KEY = 'hermes-connection';
 
@@ -58,6 +58,9 @@ function activate(newJar: CookieJar, blob: StoredConnectionV2): void {
     saved = { ...saved, cookies };
     void persistSaved();
   });
+  // Connector state ("reload pending", a sign-in request) belongs to one gateway. A silent
+  // re-login to the same address keeps it; a different address starts clean.
+  if (rest?.baseUrl !== blob.baseUrl) resetConnectorState();
   rest = new RestClient(blob.baseUrl, jar, undefined, flushCookiePersist);
 }
 
@@ -218,7 +221,7 @@ export async function disconnect(): Promise<void> {
   await persistSaved(); // deletes the stored blob
   jar.clear();
   rest = null;
-  clearMcpChanged(); // "connectors changed, reload pending" belongs to the gateway just left
+  resetConnectorState(); // "connectors changed, reload pending" belongs to the gateway just left
 }
 
 /** Mint a fresh single-use ticket and return the ws URL to dial (tickets live
