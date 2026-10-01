@@ -1,5 +1,4 @@
-import { DarkTheme, DefaultTheme } from 'expo-router';
-import type { Theme } from 'expo-router/react-navigation';
+import { DarkTheme, DefaultTheme, type Theme } from 'expo-router';
 import { useColorScheme } from 'react-native';
 
 export interface ThemeColors {

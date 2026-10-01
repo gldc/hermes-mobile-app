@@ -8,7 +8,7 @@
 // back fires ("removed natively but didn't get removed from JS state"), so Keep editing could not
 // keep you there. usePreventRemove marks the route prevented, which sets preventNativeDismiss and
 // turns off the long-press back menu, so the removal reaches JS first. (SDK 58 re-exports it from
-// 'expo-router' itself; on SDK 56 it lives in expo-router's bundled react-navigation.)
+// 'expo-router' itself; on SDK 56/57 it lives in expo-router's bundled react-navigation.)
 import { useNavigation } from 'expo-router';
 import { usePreventRemove } from 'expo-router/react-navigation';
 import { Alert } from 'react-native';

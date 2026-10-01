@@ -8,5 +8,5 @@ test('Face ID usage string comes from the expo-local-authentication config plugi
     | undefined;
   expect(plugin?.[1].faceIDPermission).toMatch(/Face ID/);
   expect(JSON.stringify(appJson.expo.ios.infoPlist)).not.toContain('NSFaceIDUsageDescription');
-  expect((pkg.dependencies as Record<string, string>)['expo-local-authentication']).toMatch(/^~56\./);
+  expect((pkg.dependencies as Record<string, string>)['expo-local-authentication']).toMatch(/^~57\./);
 });

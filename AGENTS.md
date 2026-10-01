@@ -6,7 +6,7 @@ The app is a pure client of a self-hosted hermes dashboard over a **private netw
 
 ## Expo HAS CHANGED
 
-Read the exact versioned docs at https://docs.expo.dev/versions/v56.0.0/ before writing any code.
+Read the exact versioned docs at https://docs.expo.dev/versions/v57.0.0/ before writing any code.
 
 ## Commands
 
@@ -61,7 +61,7 @@ src/components/   message rows, tool cards, composer, theme'd pieces
   approval-card / clarify-card / secure-entry-card  server→client request cards
   sidebar-host.tsx Claude-style slide-over: wraps the Stack in root _layout;
                   custom Reanimated drawer (no @react-navigation/drawer — banned
-                  in SDK 56). Active on /chat/* only; left edge opens it there.
+                  since SDK 56). Active on /chat/* only; left edge opens it there.
   sidebar.tsx     Session list, search, profile switcher, archive view, nav
                   destinations, New chat pill — lives inside the drawer.
 src/sidebar-store.ts open/close state (useSyncExternalStore, like profile-store)
@@ -105,7 +105,7 @@ src/theme.ts      single source of color truth (warm cream light / charcoal dark
 ## Conventions & gotchas
 
 - `process.env.EXPO_OS`, not `Platform.OS` (build-time platform elimination).
-- Never import from `@react-navigation/*` — expo-router SDK 56 hard-errors on it.
+- Never import from `@react-navigation/*` — expo-router (SDK 56+) hard-errors on it.
 - SF Symbols via `expo-image` (`source="sf:name"`), not expo-symbols/vector-icons.
 - All colors from `useTheme()`; never hardcode hex in components. Dark is the primary
   theme; light must stay working.

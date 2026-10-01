@@ -25,7 +25,7 @@ chat with your self-hosted Hermes from your phone, over your own private network
 - A running [hermes-agent](https://github.com/NousResearch/hermes-agent) dashboard, reachable
   from your phone (same LAN or tailnet)
 - iOS 18+; for development: Xcode + an Apple developer account (the app uses a dev/standalone
-  build — Expo Go ships SDK 54 and can't run this SDK 56 project)
+  build — Expo Go ships SDK 54 and can't run this SDK 57 project)
 
 ## Gateway setup
 
