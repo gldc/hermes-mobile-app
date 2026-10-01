@@ -47,6 +47,13 @@ export function appendAfterStream<T extends StreamItem>(items: T[], row: T): T[]
   return [...closeStreaming(items), row];
 }
 
+/** Append the "Stopped" marker of a turn that ended interrupted, unless the transcript already ends
+ *  with one: a history reload draws the marker from the gateway's stored closing row, and that
+ *  turn's message.complete can still arrive live afterwards. */
+export function appendStoppedMarker<T extends { marker?: string }>(items: T[], marker: T): T[] {
+  return items[items.length - 1]?.marker === 'stopped' ? items : [...items, marker];
+}
+
 /**
  * The chat screen's transcript items, current at mutation time. React commits state after the JS
  * turn, so a card anchored off a post-commit mirror landed above the tool row that asked for it

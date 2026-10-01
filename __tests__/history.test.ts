@@ -294,18 +294,29 @@ describe('historyToItems', () => {
       expect(items[2]).toEqual({ key: 'k2', ...stopped });
     });
 
-    // Every text the gateway passes to close_interrupted_tool_sequence on an interrupt.
+    // Every text the gateway passes to close_interrupted_tool_sequence on an interrupt, with the
+    // values it really interpolates (_failure_hint_for, _clean_error_message's 150-char cut).
     it.each([
       ['Operation interrupted.'],
       ['Operation interrupted: waiting for model response (3.2s elapsed).'],
-      ['Operation interrupted during retry (rate limited, attempt 2/3).'],
+      ['Operation interrupted during retry (rate limited by upstream provider (429), attempt 2/3).'],
+      ['Operation interrupted during retry (upstream server error (502, 12s), attempt 1/3).'],
       ['Operation interrupted: handling API error (APIConnectionError: Connection error.).'],
+      [`Operation interrupted: handling API error (APIStatusError: ${'x'.repeat(150)}...).`],
       ['Operation interrupted: retrying API call after error (retry 1/3).'],
       ['Operation interrupted: retrying empty response from model (retry 1/2).'],
       ['Operation interrupted: waiting for the provider to recover (cycle 1/4).'],
       ['  Operation interrupted.\n'],
     ])('%j is the marker, not a reply', (content) => {
       const items = historyToItems([msg({ role: 'assistant', content })], keyer());
+      expect(items).toEqual([{ key: 'k0', ...stopped }]);
+    });
+
+    it('is the marker when the row has an empty tool_calls list and a null finish_reason', () => {
+      const items = historyToItems(
+        [msg({ role: 'assistant', content: 'Operation interrupted.', tool_calls: [], finish_reason: null })],
+        keyer(),
+      );
       expect(items).toEqual([{ key: 'k0', ...stopped }]);
     });
 
@@ -322,6 +333,8 @@ describe('historyToItems', () => {
       ['a reply that continues after it', 'Operation interrupted. I will try again with a longer timeout.'],
       ['a multi-line reply that starts with it', 'Operation interrupted: the disk was full.\nHere is what I found.'],
       ['a different sentence with the same start', 'Operation interrupted by the watchdog.'],
+      ['a one-line reply in the same shape', 'Operation interrupted: the disk was full.'],
+      ['a one-line reply that ends in brackets', 'Operation interrupted: I stopped the script (it hung).'],
     ])('%s stays an assistant message', (_label, content) => {
       const items = historyToItems([msg({ role: 'assistant', content })], keyer());
       expect(items).toEqual([{ key: 'k0', role: 'assistant', text: content, complete: true }]);
@@ -333,6 +346,16 @@ describe('historyToItems', () => {
         keyer(),
       );
       expect(items).toEqual([{ key: 'k0', role: 'assistant', text: 'Operation interrupted.', complete: true, reasoning: 'why' }]);
+    });
+
+    // The gateway's row is stored without a finish_reason; a row the model produced carries one
+    // (build_assistant_message, agent/chat_completion_helpers.py at v2026.9.24).
+    it('a row with a finish_reason is the model\'s own and stays a message', () => {
+      const items = historyToItems(
+        [msg({ role: 'assistant', content: 'Operation interrupted.', finish_reason: 'stop' })],
+        keyer(),
+      );
+      expect(items).toEqual([{ key: 'k0', role: 'assistant', text: 'Operation interrupted.', complete: true }]);
     });
 
     it('a row that calls tools is the model\'s own and stays a message', () => {

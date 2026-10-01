@@ -110,8 +110,9 @@ src/theme.ts      single source of color truth (warm cream light / charcoal dark
 - History: `GET /api/sessions/{id}/messages` returns raw session-DB rows — text lives in
   `content` (string or parts array), never `text`. Use `messageText()`. A turn stopped right
   after a tool result is stored with the gateway's own closing assistant row ("Operation
-  interrupted…"); `historyToItems` turns it into the "Stopped" marker. A stop at any other point
-  leaves no trace in the rows, so that marker does not survive a reload.
+  interrupted…", exact texts in docs/contracts/sessions-extra.md); `historyToItems` turns it into
+  the "Stopped" marker. A stop at any other point cannot be told from the rows, so that marker
+  does not survive a reload.
 - Stop = `session.interrupt` (turn ends via `message.complete status:interrupted`); steer =
   `session.steer` mid-turn, falling back to `prompt.submit {queued:true}` when rejected (or
   4010). Turn state is server-driven (`turn-controller`), not set from the composer.

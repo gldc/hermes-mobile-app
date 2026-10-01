@@ -57,6 +57,7 @@ import { deniedSummary, toolOutcome } from '@/lib/tool-outcome';
 import { shouldReconnect } from '@/lib/reconnect';
 import {
   appendAfterStream,
+  appendStoppedMarker,
   closeStreaming,
   createCardPinner,
   createItemsMirror,
@@ -516,7 +517,8 @@ export default function ChatScreen() {
         finalizeSubagents();
         const fx = completionEffects(status, !live);
         if (fx.stoppedMarker) {
-          updateItems((prev) => [...prev, { key: nextKey(), role: 'status', text: 'Stopped', marker: 'stopped' }]);
+          const marker: ChatItem = { key: nextKey(), role: 'status', text: 'Stopped', marker: 'stopped' };
+          updateItems((prev) => appendStoppedMarker(prev, marker));
         } else if (status === 'error') {
           setError(p?.error || 'The turn failed.');
         }

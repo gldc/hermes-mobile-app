@@ -9,14 +9,17 @@ import { deniedSummary, toolOutcome } from './tool-outcome';
 /** Same cap the live tool.complete path applies to result text. */
 const MAX_TOOL_DETAIL = 4000;
 
-/** The gateway's own closing row for a turn stopped right after a tool result ("Operation
- * interrupted." or one line saying what it was doing: `close_interrupted_tool_sequence`,
- * agent/message_sanitization.py at v2026.9.24). Cancellation metadata, not a reply: the live
- * stream never carries it, and the live transcript shows the "Stopped" marker instead. */
-const INTERRUPT_CLOSING_ROW = /^Operation interrupted(\.|: .+\.| during retry \(.+\)\.)$/;
+/** The gateway's own closing row for a turn stopped right after a tool result: "Operation
+ * interrupted." or one of its six lines saying what it was doing (`close_interrupted_tool_sequence`,
+ * agent/message_sanitization.py at v2026.9.24; the list is in docs/contracts/sessions-extra.md).
+ * Cancellation metadata, not a reply: the live transcript shows the "Stopped" marker instead.
+ * Only these exact texts match, so a reply that merely starts the same way is kept. */
+const INTERRUPT_CLOSING_ROW =
+  /^Operation interrupted(?:\.|(?:: waiting for model response| during retry|: handling API error|: retrying API call after error|: retrying empty response from model|: waiting for the provider to recover) \(.+\)\.)$/;
 
 function isInterruptClosingRow(m: SessionMessage, text: string, reasoning: string): boolean {
   if (m.role !== 'assistant' || reasoning.trim()) return false;
+  if (m.finish_reason) return false; // the model produced this row; the gateway's own has none
   if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) return false;
   return INTERRUPT_CLOSING_ROW.test(text.trim());
 }

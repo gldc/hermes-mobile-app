@@ -165,25 +165,36 @@ Read from the hermes-agent source at `v2026.9.24` (2026-10-01); no stored sample
 - When an interrupt leaves a `role: "tool"` row as the last row, the gateway appends one
   `role: "assistant"` row so that the next user message does not follow a tool result
   (`close_interrupted_tool_sequence`, `agent/message_sanitization.py:285-297`). Its `content` is
-  the interrupt's text, or `"Operation interrupted."` when there is none. It has no `tool_calls`
-  and no reasoning.
+  the interrupt's text, or `"Operation interrupted."` when there is none. It has no `tool_calls`,
+  no reasoning and a null `finish_reason`; a row the model produced carries a `finish_reason`
+  (`build_assistant_message`, `agent/chat_completion_helpers.py:1602-1612`).
+- The same function also closes turns that were **not** stopped, with other texts: a truncated or
+  overflowing response (`agent/turn_truncation.py:352,406`) and an invalid tool call
+  (`agent/turn_tool_validation.py:58`). So "an assistant row after a tool row with no
+  `finish_reason`" does not by itself mean stopped; only the texts below do.
 - The texts an interrupt passes, each a single line:
-  - `Operation interrupted.` (a stop during or just after a tool run:
-    `agent/turn_iteration_prep.py:362-367` breaks with no text)
+  - `Operation interrupted.` (a stop during or just after a tool run breaks with no text:
+    `agent/turn_iteration_prep.py:362-368`, `agent/turn_api_call.py:155`)
   - `Operation interrupted: waiting for model response (<n>s elapsed).` (`agent/turn_api_call.py:206`)
   - `Operation interrupted during retry (<hint>, attempt <n>/<max>).` (`agent/turn_response_check.py:343`)
   - `Operation interrupted: handling API error (<type>: <message>).` (`agent/turn_api_error.py:158`)
   - `Operation interrupted: retrying API call after error (retry <n>/<max>).` (`agent/turn_api_error.py:402`)
   - `Operation interrupted: retrying empty response from model (retry <n>/<budget>).` (`agent/turn_empty_response.py:87`)
   - `Operation interrupted: waiting for the provider to recover (cycle <n>/<total>).` (`agent/turn_recovery_autorecover.py:121`)
-- The row is cancellation metadata, not a reply. The live stream never shows it: the app draws
-  only `message.delta` text, and the gateway blanks the "waiting for model response" text in
-  `message.complete` (`tui_gateway/prompt_turn.py:321-328`). `historyToItems` maps the row to the
-  "Stopped" marker.
-- **Any other stop is not recorded in the rows.** When the last row is not a tool result, nothing
-  is appended: a stop while text was streaming stores the partial reply as an ordinary assistant
-  row (`agent/turn_api_call.py:203-204`), and a stop before any text stores nothing. The app
-  cannot tell those turns were stopped, so their "Stopped" marker is gone after a history reload.
+- The row is cancellation metadata, not a reply. The live transcript never shows it, because the
+  app draws only `message.delta` text. Do not start drawing `message.complete.text`: the gateway
+  blanks only the "waiting for model response" text there (`tui_gateway/prompt_turn.py:321-328`);
+  the other five ride in that payload. `historyToItems` maps the row to the "Stopped" marker, and
+  matches the exact texts above so that a reply which starts the same way stays a reply. A text
+  the gateway adds later will be drawn as a reply until it is added to that list.
+- **Not every interrupt is the user's Stop.** The gateway also interrupts a running turn whose
+  client went away and whose activity went quiet (`tui_gateway/session_lifecycle.py:784-810`). The live transcript shows
+  "Stopped" for those too, and the rows do not say who interrupted.
+- **Any other stop cannot be recovered from the rows.** When the last row is not a tool result,
+  no closing row is appended. A stop while text was streaming stores the partial reply as an
+  assistant row with a null `finish_reason` (`agent/turn_api_call.py:203-204`), which the
+  gateway's recovery rows share; a stop before any text stores nothing. The "Stopped" marker of
+  those turns is gone after a history reload.
 
 ---
 

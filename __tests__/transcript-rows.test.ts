@@ -1,6 +1,7 @@
 import type { ChatItem } from '../src/components/message-row';
 import {
   appendAfterStream,
+  appendStoppedMarker,
   cardsLosingAnchor,
   closeStreaming,
   createCardPinner,
@@ -75,6 +76,27 @@ test('B1: a steered bubble appended mid-stream closes the streaming segment firs
   const next = appendAfterStream([item('i0'), streaming('i1', '67 Florence')], steered);
   expect(next).toEqual([item('i0'), { ...streaming('i1', '67 Florence'), complete: true }, steered]);
   expect(next.filter((it) => it.role === 'assistant' && !it.complete)).toHaveLength(0);
+});
+
+// A history reload can already hold the stopped turn's marker (the gateway stores its closing row
+// before it sends message.complete); the complete that then arrives live must not add a second one.
+describe('appendStoppedMarker', () => {
+  const marker = (key: string): ChatItem => ({ key, role: 'status', text: 'Stopped', marker: 'stopped' });
+
+  test('appends the marker after the last row', () => {
+    expect(appendStoppedMarker([item('i0')], marker('i1'))).toEqual([item('i0'), marker('i1')]);
+    expect(appendStoppedMarker([], marker('i0'))).toEqual([marker('i0')]);
+  });
+
+  test('a transcript that already ends with the marker is returned as is', () => {
+    const list = [item('i0'), marker('i1')];
+    expect(appendStoppedMarker(list, marker('i2'))).toBe(list);
+  });
+
+  test('a later turn that is stopped too gets its own marker', () => {
+    const list = [item('i0'), marker('i1'), { key: 'i2', role: 'user' as const, text: 'again', complete: true }];
+    expect(appendStoppedMarker(list, marker('i3'))).toEqual([...list, marker('i3')]);
+  });
 });
 
 // Task 11 m1: the router samples anchorKey() before onNewCard's finishAssistant() drops a trailing

@@ -49,6 +49,9 @@ export interface SessionMessage {
   reasoning?: string | null;
   reasoning_content?: string | null;
   reasoning_details?: string | null;
+  /** Set on rows the model produced; null on rows the gateway wrote itself
+   * (docs/contracts/sessions-extra.md → the closing row of a stopped turn). */
+  finish_reason?: string | null;
 }
 
 export interface MessagesResponse {
