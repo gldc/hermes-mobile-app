@@ -89,8 +89,9 @@ Types come from the vendored contract.
   prompts?, resources?, oauth_needed, oauth_tokens_present?}`.
 - **`mcp.servers.status`** `{profile?}` returns one row per configured server from cached state
   (it never connects): `status` is `connected`, `disabled`, `connecting`, `failed`, `lazy` or
-  `configured`, plus `tools` (a count). Runtime state is reported only for the gateway's launch
-  profile; for another profile every row reads `configured` or `disabled`.
+  `configured`, plus `tools` (a count). Runtime state is reported for the gateway's launch
+  profile. For another profile it is reported only once the gateway is serving several profiles at
+  once; until then every row reads `configured` or `disabled`.
 - **`reload.mcp`** `{session_id?, confirm?, always?}` tears down and reconnects every MCP server and
   refreshes the tool list of every live session. The next message in each chat re-sends the full
   conversation because the prompt cache is invalidated. **The app does not call it** (§5.7).
@@ -366,10 +367,11 @@ Everything else in this spec is the same under either answer.
 
 ### 5.8 Runtime status
 
-- When a chat socket is connected **and** the list is for the gateway's own profile (no explicit
-  profile selected), the list calls `mcp.servers.status` after each load and merges rows by name.
-  The detail screen shows the same line. For another profile the gateway reports no runtime state,
-  so no status line is shown.
+- When a chat socket is connected, the list calls `mcp.servers.status` after each load and merges
+  rows by name. The detail screen shows the same line.
+- For an explicitly selected profile the gateway may report no runtime state (§2.2). The app
+  decides from the rows: with a profile selected, status lines are shown only if at least one row
+  is `connected`, `lazy`, `connecting` or `failed`.
 - Status line per row:
 
 | `status` | Line |

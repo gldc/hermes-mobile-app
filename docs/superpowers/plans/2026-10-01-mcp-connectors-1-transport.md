@@ -44,6 +44,309 @@ Inputs the spec implies but does not spell out, each pinned by a test in the tas
 4. **The gateway becomes unreachable in the middle of a sign-in**; the sequence must end with an error, not poll forever. (Task 5)
 5. **A payload with missing optional fields** (`description` absent, `tools` count missing, `required_env` absent) must not throw in the pure helpers. (Task 4)
 
+## Amendments from the plan review (these supersede the task text below)
+
+An independent reviewer extracted every code block into a scratch copy of the repo: `tsc`, the six
+new suites (142 tests), the full jest run and `expo lint` all passed as written. It found no
+blocker, two major issues and nine minor ones. Each change below replaces the matching text in its
+task.
+
+**A1 (major, Task 5). Cancel must be honoured before the browser opens.** `startFlow` returns
+`null` when Cancel arrives during the 409 wait, and `runOauthSignIn` checks `isCancelled()` right
+after the start returns:
+
+```ts
+async function startFlow(deps: OauthDeps): Promise<McpOauthFlow | null> {
+  try {
+    return await deps.start();
+  } catch (e) {
+    if (!deps.retryConflict || !(e instanceof HttpError) || e.status !== 409) throw e;
+    await deps.sleep(OAUTH_CONFLICT_RETRY_MS);
+    if (deps.isCancelled?.()) return null; // he gave up while we waited: do not start another flow
+    return deps.start();
+  }
+}
+```
+
+```ts
+  let flow: McpOauthFlow | null;
+  try {
+    flow = await startFlow(deps);
+  } catch (e) {
+    if (e instanceof AuthError) throw e;
+    return startFailure(e);
+  }
+  if (!flow) return { kind: 'cancelled' };
+  const id = flow.flow_id;
+
+  if (flow.status === 'approved') return approvedOutcome(deps, id);
+  // Cancel tapped (or the screen left) while the start request was in flight:
+  // never present the browser after that.
+  if (deps.isCancelled?.()) return stop(deps, id, { kind: 'cancelled' });
+```
+
+Harness: add `cancelledFromStart?: boolean` to `Script` and initialise
+`let cancelled = script.cancelledFromStart ?? false;`. New tests:
+
+```ts
+  it('Cancel while the start request is in flight: no browser, flow cancelled', async () => {
+    const h = harness({ cancelledFromStart: true });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'cancelled' });
+    expect(h.log.opened).toEqual([]);
+    expect(h.log.polls).toBe(0);
+    expect(h.log.cancels).toEqual(['f1']);
+  });
+
+  it('Cancel during the 409 retry wait does not start a second flow', async () => {
+    const h = harness({ cancelledFromStart: true, retryConflict: true, start: [new HttpError(409, 'in progress'), flow()] });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'cancelled' });
+    expect(h.log.starts).toBe(1);
+    expect(h.log.opened).toEqual([]);
+  });
+
+  it('retries a 409 only once', async () => {
+    const h = harness({ retryConflict: true, start: [new HttpError(409, 'in progress'), new HttpError(409, 'in progress')] });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'in progress' });
+    expect(h.log.starts).toBe(2);
+  });
+```
+
+**A2 (major, Task 2). `cleanError` always returns a new object**, so nothing a rejection carried
+(a `cause`, or a non-Error throwable) can leave the function:
+
+```ts
+function cleanError(e: unknown, values: readonly string[]): Error {
+  if (e instanceof AuthError) return e; // fixed client-side text, never the gateway's
+  if (e instanceof HttpError) {
+    const message = containsSecret(e.message, values)
+      ? (CLEAN_MESSAGES[e.status] ?? `The gateway returned an error (HTTP ${e.status}).`)
+      : e.message;
+    return new HttpError(e.status, message); // always a new object: nothing else it carried survives
+  }
+  // Network failure, non-JSON body, or a throwable that is not an Error: never forward the object.
+  return new Error('The request failed.');
+}
+```
+
+`CLEAN_MESSAGES` loses its 422 entry (A6). New tests in "secret-safe errors":
+
+```ts
+  it('never forwards a rejection that is not an Error', async () => {
+    const rest = {
+      get: async () => ({}),
+      post: async () => {
+        throw { detail: 'echo tok-12345' };
+      },
+      put: async () => ({}),
+      del: async () => ({}),
+    };
+    const err = await addMcpServer(rest as any, { name: 'm', url: 'https://x', auth: 'header', bearer_token: 'tok-12345' }).catch((e) => e);
+    expect(err).toBeInstanceOf(Error);
+    expect(err.message).toBe('The request failed.');
+    expect(JSON.stringify(err)).not.toContain('tok-12345');
+  });
+
+  it('drops anything else an HttpError carried', async () => {
+    const rest = {
+      get: async () => ({}),
+      post: async () => {
+        throw Object.assign(new HttpError(500, 'boom'), { cause: 'sent tok-12345' });
+      },
+      put: async () => ({}),
+      del: async () => ({}),
+    };
+    const err = await addMcpServer(rest as any, { name: 'm', url: 'https://x', auth: 'header', bearer_token: 'tok-12345' }).catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.message).toBe('boom');
+    expect((err as { cause?: unknown }).cause).toBeUndefined();
+  });
+
+  it('containsSecret matches the trimmed and Bearer-stripped forms directly', () => {
+    expect(containsSecret('got tok-12345', ['  tok-12345  '])).toBe(true);
+    expect(containsSecret('got tok-12345', ['Bearer tok-12345'])).toBe(true);
+    expect(containsSecret('got Bearer tok-12345', ['bearer   tok-12345'])).toBe(true);
+  });
+```
+
+The existing "cleans a non-HTTP error too" test keeps its expectation. A value echoed in a
+transformed form (URL-encoded, JSON-escaped, case-changed) is not caught; the contract note says
+so.
+
+**A3 (minor, Task 5). The start failure goes through `connectorError`**, so a 404 is "gone" and
+the unreachable text lives in one place. The error outcome gains `gone?: true`:
+
+```ts
+export type OauthOutcome =
+  | { kind: 'approved'; tools: McpTool[] }
+  | { kind: 'cancelled' }
+  | { kind: 'error'; message: string; gone?: true };
+```
+
+```ts
+function startFailure(e: unknown): OauthOutcome {
+  // No flow id came back, so the flow cannot be cancelled from here.
+  if (e instanceof HttpError && e.status === 0) {
+    return { kind: 'error', message: 'The gateway did not answer in time. Trying again may be refused for up to 5 minutes.' };
+  }
+  const mapped = connectorError(e, 'signin');
+  if (mapped.kind === 'gone') return { kind: 'error', message: mapped.message, gone: true };
+  return { kind: 'error', message: mapped.kind === 'auth' ? 'Session expired.' : mapped.message };
+}
+```
+
+(`AuthError` is rethrown before `startFailure` is reached; the `auth` arm only satisfies the
+type.) `src/lib/mcp-oauth.ts` imports `connectorError` from `./mcp`. New test:
+
+```ts
+  it('a 404 at start means the connector is gone', async () => {
+    const h = harness({ start: new HttpError(404, "Server 'linear' not found") });
+    expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'error', message: 'This connector no longer exists.', gone: true });
+  });
+```
+
+**A4 (minor, Task 5). `finishing` is announced as soon as he closes the page**, even if the next
+poll fails. Add `let finishing = false;` next to `closedAt`, and directly after
+`await deps.sleep(OAUTH_POLL_MS);`:
+
+```ts
+    if (closed && !openFailed && !finishing) {
+      finishing = true;
+      deps.onPhase?.('finishing');
+    }
+```
+
+Remove the `deps.onPhase?.('finishing')` call from the `closedAt === null` branch. The grace clock
+still starts at the first successful poll. New test:
+
+```ts
+  it('announces `finishing` even when the polls after the close fail', async () => {
+    const h = harness({ closeBrowserBeforePoll: 0, polls: [new TypeError('Network request failed'), approved()] });
+    expect((await runOauthSignIn(h.deps)).kind).toBe('approved');
+    expect(h.log.phases).toEqual(['starting', 'browser', 'finishing']);
+  });
+```
+
+**A5 (minor, Task 4). Rule B checks every `redirect_uri` and does not echo the raw gateway URL.**
+Replace `checkAuthorizationUrl` from `const redirect = …` to the end:
+
+```ts
+  const redirects = auth.searchParams.getAll('redirect_uri');
+  if (redirects.length === 0) return null; // pushed authorization request: nothing to check
+
+  let want: URL;
+  try {
+    want = new URL(baseUrl.trim());
+  } catch {
+    return 'The gateway address in this app is not a valid URL.';
+  }
+  const basePath = want.pathname.replace(/\/+$/, '');
+  const prefix = `${basePath}/api/mcp/oauth/callback/`;
+  const reachable = redirects.every((redirect) => {
+    try {
+      const got = new URL(redirect);
+      return got.origin === want.origin && got.pathname.startsWith(prefix);
+    } catch {
+      return false;
+    }
+  });
+  return reachable
+    ? null
+    : `The gateway would send the sign-in back to an address this phone cannot reach. Set HERMES_DASHBOARD_PUBLIC_URL on the gateway to ${want.origin}${basePath}.`;
+```
+
+New tests:
+
+```ts
+  it('refuses when any of several redirect_uri values points elsewhere', () => {
+    const evil = encodeURIComponent('https://evil.example/api/mcp/oauth/callback/linear');
+    expect(checkAuthorizationUrl(`https://a.example/authorize?redirect_uri=${cb}&redirect_uri=${evil}`, base)).not.toBeNull();
+  });
+  it('does not echo credentials from the gateway URL, and keeps a path prefix', () => {
+    const msg = checkAuthorizationUrl('https://a.example/authorize?redirect_uri=nonsense', 'https://user:pw@h.example/Hermes/');
+    expect(msg).toContain('to https://h.example/Hermes.');
+    expect(msg).not.toContain('pw');
+  });
+  it('reports a gateway URL that does not parse', () => {
+    expect(checkAuthorizationUrl('https://a.example/authorize?redirect_uri=x', 'nope')).toBe('The gateway address in this app is not a valid URL.');
+  });
+```
+
+**A6 (minor, Task 4). A status-only message never reaches the screen as a raw path.** `RestClient`
+surfaces only a string `detail`; a FastAPI 422 carries a list, so the message is
+`HTTP 422 on /api/…`. In `connectorError`, before the final
+`return { kind: 'message', message: error.message }`:
+
+```ts
+    if (/^HTTP \d+ on /.test(error.message)) {
+      return {
+        kind: 'message',
+        message:
+          error.status === 422
+            ? 'The gateway could not read this request.'
+            : `The gateway returned an error (HTTP ${error.status}).`,
+      };
+    }
+```
+
+New test:
+
+```ts
+  it('replaces a status-only message with plain words', () => {
+    expect(connectorError(new HttpError(422, 'HTTP 422 on /api/mcp/servers?profile=p'), 'add')).toEqual({
+      kind: 'message',
+      message: 'The gateway could not read this request.',
+    });
+    expect(connectorError(new HttpError(500, 'HTTP 500 on /api/mcp/servers'), 'switch')).toEqual({
+      kind: 'message',
+      message: 'The gateway returned an error (HTTP 500).',
+    });
+  });
+```
+
+**A7 (minor, Task 2). `McpServer.tools` is `unknown`.** The gateway passes the configured filter
+through untouched (a list or an object). Nothing reads it.
+
+**A8 (minor, Task 4). Add the missing capability row test:**
+
+```ts
+  it('plugin stdio server: on-demand test only', () => {
+    expect(serverCapabilities(server({ source: 'plugin', plugin: 'p', transport: 'stdio', url: null, command: 'uvx', auth: null }))).toEqual({
+      manageable: true, canSwitch: false, canTest: true, autoTest: false, canSignIn: false, canRemove: false,
+    });
+  });
+```
+
+**A9 (minor, Task 1 Step 2). The expected failure is at run time, not a type error** (jest-expo
+compiles with Babel and does not type-check): four new tests fail (`resolveTimeoutMs is not a
+function`, a matcher error on `undefined`, `aborted` already true at 20 s, "20s" instead of "45s").
+"keeps the default limit…" passes before the change; it is a regression guard.
+
+**A10 (minor, Task 7). Four corrections to `docs/contracts/mcp.md`:**
+
+- Redirect URI precedence: the server's own `oauth.redirect_uri` when its config has one; otherwise
+  `HERMES_DASHBOARD_PUBLIC_URL` / `dashboard.public_url` plus the callback path; otherwise rebuilt
+  from the request (`base_url` + `X-Forwarded-Prefix`).
+- Runtime status: reported for the launch profile; under a multiplexed gateway (one that has
+  served a profile-scoped RPC) it is the scoped profile's own view. Otherwise a non-launch
+  profile's rows read `configured` or `disabled`.
+- Start OAuth also answers 409 when the server is provided by a plugin.
+- Discovery restarts for a new session only when no server is connected **or lazily registered**.
+
+It also notes the limit of A2 (a transformed echo is not caught) and that `tools` on a server row
+is the filter as configured (a list or an object), not a count.
+
+**A11 (Global Constraints). The branch is cut from `origin/main`,** which does not yet contain the
+spec or this plan (they are on PR #39). The Task 8 reviewer reads the spec with
+`git show origin/docs/mcp-connectors-spec:docs/superpowers/specs/2026-10-01-mcp-connectors-design.md`.
+
+**For plans 2 and 3 (not this plan):**
+
+- The store's last publisher wins: an older chat that republishes during an overlap takes
+  ownership. The chat screen must publish only while it is the focused route.
+- On Android `openBrowserAsync` resolves at once, so the `openBrowser` dependency must be wrapped
+  to resolve only when the tab has really closed (or the app returns to the foreground).
+- Decide the status line from the rows, not from "a profile is selected" (A10).
+
 ## File Structure
 
 | File | Responsibility |
