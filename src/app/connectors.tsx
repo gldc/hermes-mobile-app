@@ -113,6 +113,7 @@ export default function ConnectorsScreen() {
   useFocusEffect(
     useCallback(() => {
       setError(null);
+      setReloadNote(null); // a change may have been made on another screen since
       void fetchList();
     }, [fetchList]),
   );
@@ -136,6 +137,7 @@ export default function ConnectorsScreen() {
       readGen.current += 1; // a read already in flight predates this write: drop its result
       const enabling = !server.enabled;
       setError(null);
+      setReloadNote(null); // "Reloaded." is about the state before this change
       replaceServer(server.name, { ...server, enabled: enabling });
       let failed: ReturnType<typeof fail> | null = null;
       try {

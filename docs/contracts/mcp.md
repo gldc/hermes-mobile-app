@@ -48,6 +48,9 @@ Body for a remote server: `{name, url, auth, bearer_token?}`.
 
 `{ok: true}`. 404 unknown, 409 plugin-provided.
 
+Removing deletes only the `config.yaml` entry (`mcp_config._remove_mcp_server`). The server's
+OAuth tokens and any token in `.env` stay on the gateway; the app's confirmation says so.
+
 ### Enable or disable — `PUT /api/mcp/servers/{name}/enabled`
 
 Body `{enabled}`. Returns `{ok, name, enabled}`. The server stays in the config when off.
@@ -111,7 +114,17 @@ Body `{name, env, enable}`. Returns `{ok, name, background}`.
 
 - `env` may contain only variables the entry declares (400 otherwise). 404 for an unknown entry.
 - Secret values are written to `.env` **before** the entry is installed, so a failed install can
-  leave them there.
+  leave them there. A value the entry does not mark as secret (for example a server URL) is written
+  into `config.yaml` instead.
+- The server is saved as `mcp_servers.<entry name>`: an install is named after its entry.
+- **It does not reject an entry that is already configured — it overwrites it** and switches it
+  back on. `installMcpCatalogEntry` therefore reads the server list first and refuses
+  (`McpAlreadyAddedError`) when the name exists.
+- **It is slow.** After saving the entry the gateway connects to the server to list its tools
+  (`mcp_catalog._apply_tool_selection`), which can take about 40 s; a failed probe does not fail
+  the install. The app sends a fast request first and allows 45 s, like the OAuth start. Because
+  the entry is saved before the probe, a lost answer is settled by reading the catalog again.
+- A required variable that is missing fails the install with a 400 that names it.
 
 ---
 
@@ -170,3 +183,12 @@ gateway restart. After an
 OAuth sign-in the gateway reconnects the server only if it is already loaded
 (`tools/mcp_tool_loop.py`, `reconnect_mcp_server`) and the flow belongs to the gateway's launch
 profile (`reconnect_live` in `web_routers/mcp.py`).
+
+Observed on the live gateway on 2026-10-01 (it had one connected server): a catalog entry added
+from the app read `configured` ("Not loaded yet") until `reload.mcp`, then `connected`. After it
+was removed, a second reload returned the gateway to its starting state.
+
+The `tools` count in a status row is what the gateway registered for the agent, which is more
+than the server's own tool list: a server whose test listed 3 tools read 7, and one with 4 read 8.
+Four more in both cases is consistent with the gateway registering its own helper tools for a
+server's prompts and resources; that was not confirmed in its source.

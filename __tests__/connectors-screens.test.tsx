@@ -869,3 +869,46 @@ describe('Connector detail — remove', () => {
     expect(screen.queryByRole('button', { name: 'Remove connector' })).toBeNull();
   });
 });
+
+describe('Connectors list — the reload note does not outlive the next change', () => {
+  it('"Reloaded." is gone once another change is made', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    markMcpChanged();
+    await open('/connectors');
+    await act(async () => {
+      await fireEvent.press(screen.getByRole('button', { name: 'Reload now' }));
+    });
+    const call = alertSpy.mock.calls[alertSpy.mock.calls.length - 1];
+    await act(async () => {
+      void (call[2] ?? []).find((b) => b.text === 'Reload')?.onPress?.();
+    });
+    await flush(20);
+    expect(screen.getByText('Reloaded.')).toBeTruthy();
+
+    mockSet.mockResolvedValue({ ok: true, name: 'linear', enabled: false });
+    await act(async () => fireEvent(screen.getAllByRole('switch')[0], 'valueChange', false));
+    await flush();
+    expect(screen.getByText('The agent doesn’t have your changes yet.')).toBeTruthy();
+    expect(screen.queryByText('Reloaded.')).toBeNull();
+  });
+
+  it('and it is gone when the list regains focus', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    markMcpChanged();
+    await open('/connectors');
+    await act(async () => {
+      await fireEvent.press(screen.getByRole('button', { name: 'Reload now' }));
+    });
+    const call = alertSpy.mock.calls[alertSpy.mock.calls.length - 1];
+    await act(async () => {
+      void (call[2] ?? []).find((b) => b.text === 'Reload')?.onPress?.();
+    });
+    await flush(20);
+    expect(screen.getByText('Reloaded.')).toBeTruthy();
+    await act(async () => router.push('/connectors/server/yt' as never));
+    await flush();
+    await act(async () => router.back());
+    await flush();
+    expect(screen.queryByText('Reloaded.')).toBeNull();
+  });
+});

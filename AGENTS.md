@@ -45,7 +45,11 @@ src/app/          expo-router routes — THIS is the router root, not a top-leve
   dev-cards.tsx   __DEV__-only gallery of every turn-control/card state for sim screenshots
                   (`xcrun simctl openurl booted hermesmobileapp://dev-cards`); release redirects
   connectors.tsx  MCP connectors on the gateway: list, on/off, status from the chat socket
-  connectors/server/[name].tsx  one connector: details, on/off, Test (over the chat socket)
+  connectors/server/[name].tsx  one connector: details, on/off, Test (over the chat socket),
+                  Sign in (it owns the OAuth sign-in) and Remove — one busy state for all
+  connectors/add.tsx  the gateway's catalog + "Custom server"
+  connectors/catalog/[name].tsx  one catalog entry and its Add form
+  connectors/custom.tsx  add a remote server by URL: none / bearer token / OAuth
 src/api/          transport, all unit-tested with injected fetch/socket
   cookieJar.ts    manual cookie store (RN fetch doesn't manage cookies)
   restClient.ts   login / ws-ticket / sessions / history
@@ -70,6 +74,9 @@ src/components/   message rows, tool cards, composer, theme'd pieces
   approval-card / clarify-card / secure-entry-card  server→client request cards
   connector-row / connector-test-card  the Connectors list row; the Test button + result
   connector-reload-banner  "the agent doesn't have your changes yet" + Reload now
+  connector-secret-form  the add forms' submit step and ONLY owner of a typed credential
+  connector-sign-in.ts / connector-sign-in-card  useConnectorSignIn (lib/mcp-oauth bound to
+                  the in-app browser and REST) and its button / running state
   sidebar-host.tsx Claude-style slide-over: wraps the Stack in root _layout;
                   custom Reanimated drawer (no @react-navigation/drawer — banned
                   since SDK 56). Active on /chat/* only; left edge opens it there.
@@ -131,6 +138,11 @@ src/theme.ts      single source of color truth (warm cream light / charcoal dark
   WireGuard; replace with Tailscale HTTPS certs before App Store submission.
 
 ## Secure entry (sudo/secret) — security rules
+
+The connector add forms follow the same rules through `ConnectorSecretForm`: a bearer token or
+catalog credential lives only in that component's state and in `onSubmit`'s argument, Face ID runs
+immediately before the request that carries it, and `src/api/mcp.ts` rebuilds any error from such
+a request so the value cannot leave inside one.
 
 - The typed value lives ONLY in `SecureEntryForm`'s local state and goes straight to the
   response frame: never into the turn store, `items`, a ref, an error, storage, `console.*`,
