@@ -14,12 +14,12 @@ export type ConnectorTestState =
   | { phase: 'running' }
   | { phase: 'done'; outcome: McpTestOutcome };
 
-function Result({ outcome }: { outcome: McpTestOutcome }) {
+function Result({ outcome, explainedAbove }: { outcome: McpTestOutcome; explainedAbove: boolean }) {
   const { colors } = useTheme();
   if (outcome.kind !== 'ok') {
     return (
       <Text selectable={false} style={{ color: colors.danger, fontSize: 14 }}>
-        {testFailureLine(outcome.message)}
+        {testFailureLine(outcome.message, !explainedAbove)}
       </Text>
     );
   }
@@ -44,6 +44,7 @@ export function ConnectorTestCard({
   state,
   connected,
   disabled = false,
+  explainedAbove = false,
   onTest,
 }: {
   state: ConnectorTestState;
@@ -51,6 +52,8 @@ export function ConnectorTestCard({
   connected: boolean;
   /** The screen is busy with something a test must not overlap (a sign-in, a removal). */
   disabled?: boolean;
+  /** The sign-in card above already explains a refused registration: keep this one to a line. */
+  explainedAbove?: boolean;
   onTest: () => void;
 }) {
   const { colors } = useTheme();
@@ -79,7 +82,7 @@ export function ConnectorTestCard({
           <Text style={{ color: colors.textDim, fontSize: 14 }}>Testing…</Text>
         </View>
       ) : null}
-      {state.phase === 'done' ? <Result outcome={state.outcome} /> : null}
+      {state.phase === 'done' ? <Result outcome={state.outcome} explainedAbove={explainedAbove} /> : null}
     </View>
   );
 }

@@ -796,7 +796,17 @@ describe('Connector detail — a provider that refuses the gateway’s redirect 
   const RAW =
     'Registration failed: 400 {"error":"invalid_client_metadata","error_description":"redirect_uri is not allowed by the account configuration"}';
   const EXPLAINED =
-    'The server’s sign-in does not allow this gateway’s redirect address. Add it to the server’s allowed redirect addresses, then sign in again.';
+    'The server’s sign-in does not allow this gateway’s redirect address. Add it to the server’s allowed redirect addresses, then sign in again. It said: “redirect_uri is not allowed by the account configuration”';
+  const OTHER_RAW = 'Registration failed: 403 {"message":"Dynamic registration is disabled"}';
+  const NO_TOKEN = { kind: 'failed' as const, message: 'OAuth authentication required — no token found.', oauthNeeded: true, tokensPresent: false };
+  const pressTest = () =>
+    act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Test connection' }));
+    });
+  const pressSignIn = () =>
+    act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
+    });
   const SUMMARY = 'Sign-in is not set up: the server does not allow this gateway’s redirect address.';
   const ADDRESS = 'https://hermes.kite-opah.ts.net/api/mcp/oauth/callback/linear';
 
@@ -856,16 +866,90 @@ describe('Connector detail — a provider that refuses the gateway’s redirect 
     expect(screen.queryByText(ADDRESS)).toBeNull();
   });
 
-  it('not connected to a gateway: the explanation without an address', async () => {
-    mockGatewayBase = null;
+  it('a plain-HTTP gateway: says sign-in needs https, and gives no address to allow', async () => {
+    mockGatewayBase = 'http://100.64.0.1:9119';
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    await act(async () => testCalls[0].resolve({ kind: 'failed', message: RAW, oauthNeeded: true, tokensPresent: false }));
+    await flush();
+    expect(screen.getByText('Sign-in needs the gateway on an https:// address; providers do not accept a plain-HTTP redirect.')).toBeTruthy();
+    expect(screen.queryByText('Redirect address')).toBeNull();
+    expect(screen.queryByText(/Add it to the server/)).toBeNull();
+  });
+
+  it('a refusal for another reason: explained once with the provider’s words, in the sign-in card', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    await act(async () => testCalls[0].resolve({ kind: 'failed', message: OTHER_RAW, oauthNeeded: true, tokensPresent: false }));
+    await flush();
+    expect(
+      screen.getByText('The server refused to register this gateway for sign-in (HTTP 403). It said: “Dynamic registration is disabled”'),
+    ).toBeTruthy();
+    expect(screen.getByText('Sign-in is not set up: the server refused to register this gateway (HTTP 403).')).toBeTruthy();
+    expect(screen.getAllByText(/Dynamic registration is disabled/)).toHaveLength(1);
+    expect(screen.queryByText('Redirect address')).toBeNull();
+  });
+
+  it('with no sign-in card (from a plugin), the test card carries the provider’s words itself', async () => {
+    mockList.mockImplementation(async () => [server({ source: 'plugin', plugin: 'acme' })]);
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    await act(async () => testCalls[0].resolve({ kind: 'failed', message: OTHER_RAW, oauthNeeded: true, tokensPresent: false }));
+    await flush();
+    expect(
+      screen.getByText('Sign-in is not set up: the server refused to register this gateway (HTTP 403). It said: “Dynamic registration is disabled”'),
+    ).toBeTruthy();
+  });
+
+  it('a newer test replaces an older sign-in note: a cancelled sign-in does not hide the refusal', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    await act(async () => testCalls[0].resolve(NO_TOKEN));
+    await flush();
+    mockSignIn.mockResolvedValue({ kind: 'cancelled' });
+    await pressSignIn();
+    await flush(20);
+    expect(screen.getByText('Sign-in cancelled.')).toBeTruthy();
+    // The cancelled branch runs a test itself; it comes back refused.
+    await act(async () => testCalls[testCalls.length - 1].resolve({ kind: 'failed', message: RAW, oauthNeeded: true, tokensPresent: false }));
+    await flush();
+    expect(screen.getByText(EXPLAINED)).toBeTruthy();
+    expect(screen.getByText(ADDRESS)).toBeTruthy();
+    expect(screen.queryByText('Sign-in cancelled.')).toBeNull();
+  });
+
+  it('a refused sign-in, then the allow list is fixed and Test says something else: the old explanation goes', async () => {
+    publishSessionMcpTarget(owner, target(true));
     await open('/connectors/server/linear');
     mockSignIn.mockResolvedValue({ kind: 'error', message: RAW });
-    await act(async () => {
-      void fireEvent.press(screen.getByRole('button', { name: 'Sign in' }));
-    });
+    await pressSignIn();
     await flush(20);
     expect(screen.getByText(EXPLAINED)).toBeTruthy();
-    expect(screen.queryByText('Redirect address')).toBeNull();
+    await pressTest();
+    await flush();
+    // Still there while the test runs: nothing newer is known yet.
+    expect(screen.getByText(EXPLAINED)).toBeTruthy();
+    await act(async () => testCalls[testCalls.length - 1].resolve(NO_TOKEN));
+    await flush();
+    expect(screen.queryByText(EXPLAINED)).toBeNull();
+    expect(screen.queryByText(ADDRESS)).toBeNull();
+    expect(screen.getByText('OAuth authentication required — no token found.')).toBeTruthy();
+  });
+
+  it('an info note survives a later test that has nothing to say about sign-in', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    mockSignIn.mockResolvedValue({ kind: 'approved', tools: [] });
+    await pressSignIn();
+    await flush(20);
+    expect(screen.getByText('Signed in.')).toBeTruthy();
+    await act(async () => {
+      void fireEvent.press(screen.getByRole('button', { name: 'Test connection' }));
+    });
+    await flush();
+    await act(async () => testCalls[testCalls.length - 1].resolve({ kind: 'ok', tools: [], prompts: 0, resources: 0, tokensPresent: true }));
+    await flush();
+    expect(screen.getByText('Signed in.')).toBeTruthy();
   });
 });
 

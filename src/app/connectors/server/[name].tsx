@@ -196,7 +196,11 @@ export default function ConnectorDetailScreen() {
         return t.test(name, profile);
       })
       .then((outcome) => {
-        if (seq === testSeq.current) setTest({ phase: 'done', outcome });
+        if (seq !== testSeq.current) return;
+        setTest({ phase: 'done', outcome });
+        // This test is newer than any sign-in that failed before it: that failure's note may
+        // no longer be true (the provider's settings were changed in between).
+        setSignInNote((note) => (note?.tone === 'error' ? null : note));
       });
   }, [name, profile]);
 
@@ -317,12 +321,13 @@ export default function ConnectorDetailScreen() {
   const status = server && connected ? statusLine(server, row) : null;
   const lastOutcome = test.phase === 'done' ? test.outcome : null;
   // A test already shows that the provider refuses to register the gateway: the sign-in card
-  // says what to do (and gives the address to allow) without a sign-in attempt first.
+  // says what to do (and gives the address to allow) without a sign-in attempt first. A
+  // finished test is never older than the stored note (a sign-in resets the test), so it wins.
   const refusedTest =
-    lastOutcome && lastOutcome.kind !== 'ok' && typeof name === 'string' && explainOauthRefusal(lastOutcome.message)
+    canSignIn && lastOutcome && lastOutcome.kind !== 'ok' && typeof name === 'string' && explainOauthRefusal(lastOutcome.message)
       ? signInProblem(lastOutcome.message, gatewayBaseUrl(), name)
       : null;
-  const shownSignInNote: ConnectorSignInNote | null = signInNote ?? (refusedTest ? { tone: 'error', ...refusedTest } : null);
+  const shownSignInNote: ConnectorSignInNote | null = refusedTest ? { tone: 'error', ...refusedTest } : signInNote;
 
   return (
     <ScrollView
@@ -401,6 +406,7 @@ export default function ConnectorDetailScreen() {
               state={test}
               connected={connected}
               disabled={signingIn || removing}
+              explainedAbove={refusedTest !== null}
               onTest={() => void runTest()}
             />
           ) : null}

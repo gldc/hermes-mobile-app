@@ -76,6 +76,24 @@ test('a provider that refused the gateway’s redirect address: one readable lin
   expect(screen.queryByText(/invalid_client_metadata/)).toBeNull();
 });
 
+test('another registration refusal keeps the provider’s reason, unless the sign-in card above already has it', async () => {
+  const state = {
+    phase: 'done' as const,
+    outcome: {
+      kind: 'failed' as const,
+      message: 'Registration failed: 403 {"message":"Dynamic registration is disabled"}',
+      oauthNeeded: true,
+      tokensPresent: false,
+    },
+  };
+  const { rerender } = await render(<ConnectorTestCard connected onTest={noop} state={state} />);
+  expect(
+    screen.getByText('Sign-in is not set up: the server refused to register this gateway (HTTP 403). It said: “Dynamic registration is disabled”'),
+  ).toBeTruthy();
+  await rerender(<ConnectorTestCard connected onTest={noop} state={state} explainedAbove />);
+  expect(screen.getByText('Sign-in is not set up: the server refused to register this gateway (HTTP 403).')).toBeTruthy();
+});
+
 test('a call error is shown the same way', async () => {
   await render(
     <ConnectorTestCard connected onTest={noop} state={{ phase: 'done', outcome: { kind: 'error', message: 'socket closed' } }} />,

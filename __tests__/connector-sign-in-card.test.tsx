@@ -60,6 +60,9 @@ test('a note with an address shows it under a label, selectable so it can be cop
   const value = screen.getByText(address);
   expect(value.props.selectable).toBe(true);
   expect(value).toHaveStyle({ color: colors.text });
+  expect(screen.getByLabelText(`Redirect address: ${address}`)).toBeTruthy();
+  // The app derives it; a gateway configured with another address uses that one.
+  expect(screen.getByText('The gateway’s default. If its config sets another redirect address, allow that one.')).toBeTruthy();
 });
 
 test('a note without an address shows no address label', async () => {

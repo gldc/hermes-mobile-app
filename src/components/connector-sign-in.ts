@@ -9,14 +9,11 @@ import { AppState } from 'react-native';
 import { cancelMcpOauthFlow, getMcpOauthFlow, startMcpOauth } from '@/api/mcp';
 import { getRest, withAuthRetry } from '@/connection';
 import { lastSignInCancel, noteSignInCancelled, resetConnectorState } from '@/connector-state';
-import { checkAuthorizationUrl, gatewaySupportsOauth } from '@/lib/mcp';
+import { OAUTH_NEEDS_HTTPS, checkAuthorizationUrl, gatewaySupportsOauth } from '@/lib/mcp';
 import { runOauthSignIn, type OauthDeps, type OauthOutcome, type OauthPhase } from '@/lib/mcp-oauth';
 
 /** After cancelling a flow, a new start may get a 409 while the gateway winds the old one down. */
 const RETRY_CONFLICT_WINDOW_MS = 10_000;
-
-const HTTPS_NEEDED =
-  'Sign-in needs the gateway on an https:// address; providers do not accept a plain-HTTP redirect.';
 
 // The "sign in when the detail opens" request and the per-connector "last cancelled" time
 // live in connector-state, which connection.ts resets when the gateway changes.
@@ -116,7 +113,7 @@ export function useConnectorSignIn(
     async (name: string): Promise<OauthOutcome> => {
       if (running.current) return { kind: 'error', message: 'A sign-in is already running.' };
       const base = gatewayBaseUrl();
-      if (!base || !gatewaySupportsOauth(base)) return { kind: 'error', message: HTTPS_NEEDED };
+      if (!base || !gatewaySupportsOauth(base)) return { kind: 'error', message: OAUTH_NEEDS_HTTPS };
       running.current = true;
       cancelled.current = false;
       if (mounted.current) setCancelling(false);

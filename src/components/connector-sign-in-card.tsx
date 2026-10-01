@@ -71,10 +71,15 @@ export function ConnectorSignInCard({
         </Text>
       ) : null}
       {note?.address ? (
-        <View accessible accessibilityLabel={`Redirect address: ${note.address}`} style={{ gap: 4 }}>
-          <Text style={{ color: colors.textFaint, fontSize: 12.5, fontWeight: '600' }}>Redirect address</Text>
-          <Text selectable style={{ color: colors.text, fontSize: 14 }}>
-            {note.address}
+        <View style={{ gap: 4 }}>
+          <View accessible accessibilityLabel={`Redirect address: ${note.address}`} style={{ gap: 4 }}>
+            <Text style={{ color: colors.textFaint, fontSize: 12.5, fontWeight: '600' }}>Redirect address</Text>
+            <Text selectable style={{ color: colors.text, fontSize: 14 }}>
+              {note.address}
+            </Text>
+          </View>
+          <Text style={{ color: colors.textFaint, fontSize: 12.5 }}>
+            The gateway’s default. If its config sets another redirect address, allow that one.
           </Text>
         </View>
       ) : null}
