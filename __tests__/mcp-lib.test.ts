@@ -4,7 +4,9 @@ import type { McpRuntimeRow } from '../src/api/mcpSession';
 import { AuthError, HttpError } from '../src/api/restClient';
 import {
   authLabel,
+  catalogAuthLabel,
   checkAuthorizationUrl,
+  collectSecretValues,
   connectorBadges,
   connectorError,
   filterCatalog,
@@ -13,9 +15,13 @@ import {
   isPlainEnvField,
   needsReload,
   remoteCatalogEntries,
+  removeConfirmation,
   runtimeRowsByName,
+  sameServerAddress,
+  secretFieldsForEntry,
   serverCapabilities,
   serverSubtitle,
+  signInLabel,
   statusLine,
   suggestServerName,
   testSummary,
@@ -419,5 +425,69 @@ describe('connectorError — a slow request that was never sent', () => {
       kind: 'message',
       message: 'This connector is already added.',
     });
+  });
+});
+
+describe('helpers for the add forms', () => {
+  const env = (name: string, prompt = '', required = true) => ({ name, prompt, required });
+
+  it('secretFieldsForEntry: one field per declared variable, masked unless the name is plain', () => {
+    const fields = secretFieldsForEntry(
+      entry({
+        required_env: [env('ASANA_CLIENT_SECRET', 'Asana client secret'), env('N8N_MCP_SERVER_URL', '  ', false), env('GITHUB_PAT')],
+      }),
+    );
+    expect(fields).toEqual([
+      { key: 'ASANA_CLIENT_SECRET', label: 'Asana client secret', masked: true, required: true },
+      { key: 'N8N_MCP_SERVER_URL', label: 'N8N_MCP_SERVER_URL', masked: false, required: false },
+      { key: 'GITHUB_PAT', label: 'GITHUB_PAT', masked: true, required: true },
+    ]);
+  });
+
+  it('secretFieldsForEntry tolerates a missing list', () => {
+    expect(secretFieldsForEntry({ name: 'x' } as unknown as McpCatalogEntry)).toEqual([]);
+    expect(secretFieldsForEntry(entry())).toEqual([]);
+  });
+
+  it('collectSecretValues trims, leaves blanks out, and names the first required field left blank', () => {
+    const fields = [
+      { key: 'A', label: 'First', masked: true, required: true },
+      { key: 'B', label: 'Second', masked: true, required: true },
+      { key: 'C', label: 'Third', masked: false, required: false },
+    ];
+    expect(collectSecretValues(fields, { A: '  one ', B: 'two', C: '   ' })).toEqual({ env: { A: 'one', B: 'two' }, missing: null });
+    expect(collectSecretValues(fields, { A: 'one' }).missing).toEqual(fields[1]);
+    expect(collectSecretValues(fields, {}).missing).toEqual(fields[0]);
+    expect(collectSecretValues([], { stray: 'x' })).toEqual({ env: {}, missing: null });
+  });
+
+  it('catalogAuthLabel', () => {
+    expect(catalogAuthLabel(entry({ auth_type: 'oauth' }))).toBe('OAuth sign-in');
+    expect(catalogAuthLabel(entry({ auth_type: 'none' }))).toBe('No sign-in needed');
+    expect(catalogAuthLabel(entry({ auth_type: '' }))).toBe('No sign-in needed');
+    expect(catalogAuthLabel(entry({ auth_type: 'api_key' }))).toBe('api_key');
+  });
+
+  it('signInLabel says "again" only when the last test saw a token', () => {
+    expect(signInLabel(null)).toBe('Sign in');
+    expect(signInLabel({ kind: 'error', message: 'x' })).toBe('Sign in');
+    expect(signInLabel({ kind: 'ok', tools: [], prompts: 0, resources: 0, tokensPresent: null })).toBe('Sign in');
+    expect(signInLabel({ kind: 'ok', tools: [], prompts: 0, resources: 0, tokensPresent: true })).toBe('Sign in again');
+    expect(signInLabel({ kind: 'failed', message: 'x', oauthNeeded: true, tokensPresent: true })).toBe('Sign in again');
+    expect(signInLabel({ kind: 'failed', message: 'x', oauthNeeded: true, tokensPresent: false })).toBe('Sign in');
+  });
+
+  it('removeConfirmation says what stays on the gateway', () => {
+    const c = removeConfirmation('linear');
+    expect(c.title).toBe('Remove linear?');
+    expect(c.message).toBe(
+      'The agent stops using it after a reload or a gateway restart. Its sign-in and any stored token stay on the gateway until they are removed there.',
+    );
+  });
+
+  it('sameServerAddress compares the submitted URL with the one the gateway has', () => {
+    expect(sameServerAddress(server({ url: 'https://x.example/mcp' }), ' https://x.example/mcp ')).toBe(true);
+    expect(sameServerAddress(server({ url: 'https://x.example/mcp' }), 'https://y.example/mcp')).toBe(false);
+    expect(sameServerAddress(server({ url: null }), 'https://x.example/mcp')).toBe(false);
   });
 });

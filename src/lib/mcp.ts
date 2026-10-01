@@ -1,6 +1,6 @@
 // src/lib/mcp.ts — pure logic for the Connectors screens (spec §5, §8). No I/O.
 import { McpAlreadyAddedError, McpPreflightError, type McpCatalogEntry, type McpServer } from '@/api/mcp';
-import type { McpRuntimeRow } from '@/api/mcpSession';
+import type { McpRuntimeRow, McpTestOutcome } from '@/api/mcpSession';
 import { AuthError, HttpError } from '@/api/restClient';
 
 // --- catalog ---------------------------------------------------------------
@@ -310,4 +310,67 @@ export function checkAuthorizationUrl(url: string, baseUrl: string): string | nu
   return reachable
     ? null
     : `The gateway would send the sign-in back to an address this phone cannot reach. Set HERMES_DASHBOARD_PUBLIC_URL on the gateway to ${want.origin}${basePath}.`;
+}
+
+// --- the add forms (spec §5.4, §5.5, §5.9) ----------------------------------
+
+/** One value the add forms collect and hand to ConnectorSecretForm. */
+export interface SecretField {
+  key: string;
+  label: string;
+  /** A secure input. Plain only for names that say the value is not a secret. */
+  masked: boolean;
+  required: boolean;
+}
+
+/** One field per variable a catalog entry declares: labelled by the gateway's prompt (or
+ * the variable's name), masked unless `isPlainEnvField`. */
+export function secretFieldsForEntry(entry: McpCatalogEntry): SecretField[] {
+  return (entry.required_env ?? []).map((e) => ({
+    key: e.name,
+    label: e.prompt?.trim() || e.name,
+    masked: !isPlainEnvField(e.name),
+    required: Boolean(e.required),
+  }));
+}
+
+/** The trimmed, non-blank values to send, and the first required field left blank (or null). */
+export function collectSecretValues(
+  fields: SecretField[],
+  values: Record<string, string>,
+): { env: Record<string, string>; missing: SecretField | null } {
+  const env: Record<string, string> = {};
+  let missing: SecretField | null = null;
+  for (const field of fields) {
+    const value = (values[field.key] ?? '').trim();
+    if (value) env[field.key] = value;
+    else if (field.required && !missing) missing = field;
+  }
+  return { env, missing };
+}
+
+/** How a catalog entry authenticates, in words. */
+export function catalogAuthLabel(entry: McpCatalogEntry): string {
+  if (entry.auth_type === 'oauth') return 'OAuth sign-in';
+  if (!entry.auth_type || entry.auth_type === 'none') return 'No sign-in needed';
+  return entry.auth_type;
+}
+
+/** "Sign in again" only when the last test saw a token on the gateway; otherwise "Sign in". */
+export function signInLabel(outcome: McpTestOutcome | null): 'Sign in' | 'Sign in again' {
+  return outcome && outcome.kind !== 'error' && outcome.tokensPresent === true ? 'Sign in again' : 'Sign in';
+}
+
+/** The Remove alert. Removing deletes only the config entry: tokens stay on the gateway. */
+export function removeConfirmation(name: string): { title: string; message: string } {
+  return {
+    title: `Remove ${name}?`,
+    message:
+      'The agent stops using it after a reload or a gateway restart. Its sign-in and any stored token stay on the gateway until they are removed there.',
+  };
+}
+
+/** After an add whose answer never arrived: is the server the gateway has the one just submitted? */
+export function sameServerAddress(server: McpServer, submittedUrl: string): boolean {
+  return server.url !== null && server.url === submittedUrl.trim();
 }

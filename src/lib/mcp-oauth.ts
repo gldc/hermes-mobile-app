@@ -259,3 +259,15 @@ export async function runOauthSignIn(deps: OauthDeps): Promise<OauthOutcome> {
     return stop(deps, flow.flow_id, { kind: 'error', message: 'Sign-in failed unexpectedly.' });
   }
 }
+
+/** What the sign-in card shows while a sign-in runs. */
+export function oauthPhaseLine(phase: OauthPhase): string {
+  switch (phase) {
+    case 'starting':
+      return 'Starting sign-in…';
+    case 'browser':
+      return 'Waiting for you to finish in the browser…';
+    case 'finishing':
+      return 'Finishing sign-in…';
+  }
+}

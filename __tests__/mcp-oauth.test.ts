@@ -9,6 +9,7 @@ import {
   OAUTH_MAX_FAILED_POLLS,
   OAUTH_POLL_MS,
   OAUTH_TOTAL_LIMIT_MS,
+  oauthPhaseLine,
   runOauthSignIn,
   type OauthDeps,
   type OauthPhase,
@@ -434,5 +435,13 @@ describe('runOauthSignIn — Cancel and leaving the screen', () => {
     const h = harness({ cancelBeforePoll: 0, polls: [new TypeError('Network request failed')] });
     expect(await runOauthSignIn(h.deps)).toEqual({ kind: 'cancelled' });
     expect(h.log.cancels).toEqual(['f1']);
+  });
+});
+
+describe('oauthPhaseLine', () => {
+  it('says what is happening in each phase', () => {
+    expect(oauthPhaseLine('starting')).toBe('Starting sign-in…');
+    expect(oauthPhaseLine('browser')).toBe('Waiting for you to finish in the browser…');
+    expect(oauthPhaseLine('finishing')).toBe('Finishing sign-in…');
   });
 });
