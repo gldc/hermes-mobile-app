@@ -37,7 +37,7 @@ export function ConnectorRow({
   const caps = serverCapabilities(server);
   const subtitle = serverSubtitle(server);
   const badges = connectorBadges(server);
-  // The label replaces the children for VoiceOver, so the badges and the note go into it.
+  // The label replaces the pressable's children for VoiceOver, so the badges and the note go into it.
   const a11y = [
     `${server.name} connector`,
     subtitle,
@@ -48,26 +48,29 @@ export function ConnectorRow({
   ]
     .filter(Boolean)
     .join(', ');
+  // The card is a plain View with two siblings — the pressable text and the switch — so
+  // VoiceOver can reach the switch. (An accessible Pressable would swallow a Switch inside it.)
   return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={a11y}
-      accessibilityHint="Shows connector details"
-      onPress={() => onPress(server)}
-      style={({ pressed }) => ({
+    <View
+      style={{
         flexDirection: 'row',
         alignItems: 'center',
         gap: 12,
-        backgroundColor: pressed ? colors.raised : colors.surface,
+        backgroundColor: colors.surface,
         borderRadius: 16,
         borderCurve: 'continuous',
         borderWidth: 1,
         borderColor: colors.border,
         padding: 14,
-        minHeight: 44,
-      })}
+      }}
     >
-      <View style={{ flex: 1, gap: 4 }}>
+      <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={a11y}
+        accessibilityHint="Shows connector details"
+        onPress={() => onPress(server)}
+        style={({ pressed }) => ({ flex: 1, gap: 4, minHeight: 44, justifyContent: 'center', opacity: pressed ? 0.55 : 1 })}
+      >
         <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
           <Text
             numberOfLines={1}
@@ -99,16 +102,16 @@ export function ConnectorRow({
             Can’t be changed from the app: its name contains “/”.
           </Text>
         ) : null}
-      </View>
+      </Pressable>
       {caps.canSwitch ? (
         <Switch
           value={server.enabled}
           onValueChange={() => onToggle(server)}
-          accessibilityLabel={`${server.name} ${server.enabled ? 'on, double tap to switch off' : 'off, double tap to switch on'}`}
+          accessibilityLabel={`${server.name} enabled`}
           trackColor={{ true: colors.accent }}
           hitSlop={8}
         />
       ) : null}
-    </Pressable>
+    </View>
   );
 }

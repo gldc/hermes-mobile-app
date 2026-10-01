@@ -5,7 +5,7 @@
 // active chat's socket (session-mcp-store) and is simply absent without one.
 // The agent picks a change up after the gateway restarts (spec §5.7).
 import { Stack, router, useFocusEffect } from 'expo-router';
-import { useCallback, useEffect, useState, useSyncExternalStore } from 'react';
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react';
 import { FlatList, RefreshControl, Text, View } from 'react-native';
 import { listMcpServers, setMcpServerEnabled, type McpServer } from '@/api/mcp';
 import type { McpRuntimeRow } from '@/api/mcpSession';
@@ -34,16 +34,22 @@ export default function ConnectorsScreen() {
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unsupported, setUnsupported] = useState<string | null>(null);
+  // Reads and writes overlap here: a silent re-read on focus, a pull, a switch. Only the
+  // newest read may write state, and a switch drops every read that started before it.
+  const readGen = useRef(0);
+  const readsInFlight = useRef(0);
+  const switching = useRef(new Set<string>());
 
-  /** Show a failure; returns its kind so the caller can react (e.g. reload after `gone`). */
-  const fail = useCallback((e: unknown, action: ConnectorAction) => {
+  /** Show a failure; returns its kind so the caller can react. `keepError`: a message is
+   * already on screen for the action that led here (a failed switch) — leave it. */
+  const fail = useCallback((e: unknown, action: ConnectorAction, keepError = false) => {
     const mapped = connectorError(e, action);
     if (mapped.kind === 'auth') {
       // Silent re-login already failed inside withAuthRetry — credentials are dead.
       router.replace('/');
     } else if (mapped.kind === 'unsupported') {
       setUnsupported(mapped.message);
-    } else {
+    } else if (!keepError) {
       setError(mapped.message);
     }
     return mapped.kind;
@@ -56,19 +62,31 @@ export default function ConnectorsScreen() {
     return t.status(profile).then((r) => setRows(runtimeRowsByName(r, profile !== null)));
   }, [profile]);
 
-  /** The REST list, then the status lines. Leaves `error` alone, so a caller's message survives. */
-  const fetchList = useCallback(async () => {
-    try {
-      setServers(await withAuthRetry((r) => listMcpServers(r, profile)));
-      setUnsupported(null);
-      void loadStatus(); // not awaited: the spinner must not wait on the chat socket
-    } catch (e) {
-      fail(e, 'list');
-    } finally {
-      setRefreshing(false);
-      setLoaded(true);
-    }
-  }, [profile, loadStatus, fail]);
+  /** The REST list, then the status lines. Never clears `error` itself, so a caller's message
+   * survives a successful re-read; with `keepError` it survives a failed one too. */
+  const fetchList = useCallback(
+    async (keepError = false) => {
+      const gen = ++readGen.current;
+      readsInFlight.current += 1;
+      try {
+        const list = await withAuthRetry((r) => listMcpServers(r, profile));
+        if (gen !== readGen.current) return; // superseded by a newer read or by a switch
+        setServers(list);
+        setUnsupported(null);
+        void loadStatus(); // not awaited: the spinner must not wait on the chat socket
+      } catch (e) {
+        if (gen === readGen.current) fail(e, 'list', keepError);
+      } finally {
+        readsInFlight.current -= 1;
+        // Only the newest read settles the spinner; it always does, so the spinner cannot stick.
+        if (gen === readGen.current) {
+          setRefreshing(false);
+          setLoaded(true);
+        }
+      }
+    },
+    [profile, loadStatus, fail],
+  );
 
   /** Pull to refresh. */
   const load = useCallback(() => {
@@ -99,16 +117,26 @@ export default function ConnectorsScreen() {
   /** Optimistic on/off — flip immediately, revert if the gateway says no. */
   const toggle = useCallback(
     async (server: McpServer) => {
+      if (switching.current.has(server.name)) return; // one write per connector at a time
+      switching.current.add(server.name);
+      const hadRead = readsInFlight.current > 0;
+      readGen.current += 1; // a read already in flight predates this write: drop its result
       const enabling = !server.enabled;
       setError(null);
       replaceServer(server.name, { ...server, enabled: enabling });
+      let failed: ReturnType<typeof fail> | null = null;
       try {
         const res = await withAuthRetry((r) => setMcpServerEnabled(r, server.name, enabling, profile));
         replaceServer(server.name, { ...server, enabled: res.enabled });
       } catch (e) {
         replaceServer(server.name, server); // revert
-        if (fail(e, 'switch') !== 'auth') void fetchList(); // the write may have landed: show the truth
+        failed = fail(e, 'switch');
+      } finally {
+        switching.current.delete(server.name);
       }
+      if (failed === 'auth') return;
+      // A failed write may still have landed, and a dropped read never reported: show the truth.
+      if (failed || hadRead) void fetchList(failed !== null);
     },
     [replaceServer, fail, fetchList, profile],
   );
@@ -130,6 +158,7 @@ export default function ConnectorsScreen() {
       ) : null}
 
       <FlatList
+        testID="connectors-list"
         data={unsupported ? [] : servers}
         keyExtractor={(s) => s.name}
         contentInsetAdjustmentBehavior="automatic"

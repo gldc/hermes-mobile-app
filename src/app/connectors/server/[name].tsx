@@ -54,7 +54,7 @@ function Separator() {
 function Field({ label, value, selectable = false }: { label: string; value: string; selectable?: boolean }) {
   const { colors } = useTheme();
   return (
-    <View accessibilityLabel={`${label}: ${value}`} style={{ padding: 16, gap: 4, minHeight: 44 }}>
+    <View accessible accessibilityLabel={`${label}: ${value}`} style={{ padding: 16, gap: 4, minHeight: 44 }}>
       <Text style={{ color: colors.textFaint, fontSize: 12.5, fontWeight: '600' }}>{label}</Text>
       <Text selectable={selectable} style={{ color: colors.text, fontSize: 15 }}>
         {value}
@@ -80,11 +80,16 @@ export default function ConnectorDetailScreen() {
   const [test, setTest] = useState<ConnectorTestState>({ phase: 'idle' });
   const testSeq = useRef(0);
   const autoTested = useRef(false);
+  // A pull and a switch can overlap. Only the newest read may write state, and a switch
+  // drops every read that started before it.
+  const readGen = useRef(0);
+  const readsInFlight = useRef(0);
 
-  const fail = useCallback((e: unknown, action: ConnectorAction) => {
+  /** `keepError`: a message is already on screen for the action that led here — leave it. */
+  const fail = useCallback((e: unknown, action: ConnectorAction, keepError = false) => {
     const mapped = connectorError(e, action);
     if (mapped.kind === 'auth') router.replace('/');
-    else setError(mapped.message);
+    else if (!keepError) setError(mapped.message);
     return mapped.kind;
   }, []);
 
@@ -98,21 +103,29 @@ export default function ConnectorDetailScreen() {
   // Every setter runs in a promise callback, never synchronously on the mount effect's path.
   // `keepError`: a re-read after a failed switch must not wipe that failure's message.
   const fetchServer = useCallback(
-    (keepError = false) =>
+    (keepError = false) => {
+      const gen = ++readGen.current;
+      readsInFlight.current += 1;
       // No GET for one server exists — fetch the list and pick our row.
-      withAuthRetry((r) => listMcpServers(r, profile))
+      return withAuthRetry((r) => listMcpServers(r, profile))
         .then((list) => {
+          if (gen !== readGen.current) return; // superseded by a newer read or by a switch
           setServer(list.find((s) => s.name === name) ?? null);
           if (!keepError) setError(null);
           void loadStatus(); // not awaited: the screen must not wait on the chat socket
         })
         .catch((e: unknown) => {
-          fail(e, 'list');
+          if (gen === readGen.current) fail(e, 'list', keepError);
         })
         .finally(() => {
-          setRefreshing(false);
-          setLoaded(true);
-        }),
+          readsInFlight.current -= 1;
+          // Only the newest read settles the spinner; it always does, so the spinner cannot stick.
+          if (gen === readGen.current) {
+            setRefreshing(false);
+            setLoaded(true);
+          }
+        });
+    },
     [name, profile, fail, loadStatus],
   );
 
@@ -160,25 +173,32 @@ export default function ConnectorDetailScreen() {
   /** Optimistic on/off — flip immediately, revert if the gateway says no. */
   async function toggle(current: McpServer) {
     if (busy) return;
+    const hadRead = readsInFlight.current > 0;
+    readGen.current += 1; // a read already in flight predates this write: drop its result
     const enabling = !current.enabled;
     setBusy(true);
     setError(null);
     setServer({ ...current, enabled: enabling });
+    let failed: ReturnType<typeof fail> | null = null;
     try {
       const res = await withAuthRetry((r) => setMcpServerEnabled(r, current.name, enabling, profile));
       setServer({ ...current, enabled: res.enabled });
     } catch (e) {
       setServer(current); // revert
-      if (fail(e, 'switch') !== 'auth') void fetchServer(true); // the write may have landed: show the truth
+      failed = fail(e, 'switch');
     } finally {
       setBusy(false);
     }
+    if (failed === 'auth') return;
+    // A failed write may still have landed, and a dropped read never reported: show the truth.
+    if (failed || hadRead) void fetchServer(failed !== null);
   }
 
   const status = server && connected ? statusLine(server, row) : null;
 
   return (
     <ScrollView
+      testID="connector-detail"
       contentInsetAdjustmentBehavior="automatic"
       style={{ backgroundColor: colors.bg }}
       contentContainerStyle={{ padding: 20, gap: 12, paddingBottom: 40 }}
@@ -207,7 +227,7 @@ export default function ConnectorDetailScreen() {
                     value={server.enabled}
                     disabled={busy}
                     onValueChange={() => toggle(server)}
-                    accessibilityLabel={`${server.name} ${server.enabled ? 'on, double tap to switch off' : 'off, double tap to switch on'}`}
+                    accessibilityLabel="Enabled"
                     trackColor={{ true: colors.accent }}
                     hitSlop={8}
                   />

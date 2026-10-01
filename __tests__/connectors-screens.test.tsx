@@ -227,28 +227,24 @@ describe('Connector detail', () => {
     expect(testCalls).toHaveLength(1);
   });
 
-  it('a local connector is not tested until asked, and of two overlapping tests only the newer result shows', async () => {
+  it('a local connector is not tested until asked; the button is disabled while a test runs', async () => {
     publishSessionMcpTarget(owner, target(true));
     await open('/connectors/server/yt');
     await flush(20);
     expect(testCalls).toHaveLength(0);
     expect(screen.getByText('uvx')).toBeTruthy();
 
-    const button = screen.getByRole('button', { name: 'Test connection' });
     await act(async () => {
-      fireEvent.press(button);
-      fireEvent.press(button);
+      await fireEvent.press(screen.getByRole('button', { name: 'Test connection' }));
     });
     await flush();
-    expect(testCalls).toHaveLength(2);
+    expect(testCalls).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
 
-    await act(async () => testCalls[1].resolve({ kind: 'ok', tools: [], prompts: 0, resources: 0, tokensPresent: null }));
+    await act(async () => testCalls[0].resolve({ kind: 'ok', tools: [], prompts: 0, resources: 0, tokensPresent: null }));
     await flush();
     expect(screen.getByText('Working · 0 tools')).toBeTruthy();
-    await act(async () => testCalls[0].resolve({ kind: 'error', message: 'OLD RESULT' }));
-    await flush();
-    expect(screen.queryByText('OLD RESULT')).toBeNull();
-    expect(screen.getByText('Working · 0 tools')).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Test connection' })).not.toBeDisabled();
   });
 
   it('a switch that fails with 404 says so and re-reads; the connector is then gone', async () => {
@@ -282,5 +278,167 @@ describe('Connector detail', () => {
     expect(screen.queryByRole('switch')).toBeNull();
     expect(screen.getByText('Plugin: acme')).toBeTruthy();
     expect(screen.getByText(/comes from a plugin/)).toBeTruthy();
+  });
+});
+
+// --- reads and writes that overlap (branch review, finding 1) --------------------------------
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  let reject!: (e: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+}
+
+const refreshControl = (testID: string) => screen.getByTestId(testID).props.refreshControl.props;
+const firstSwitch = () => screen.getAllByRole('switch')[0];
+/** Run something whose promise may stay pending (a deferred request) without act() waiting on it. */
+const kick = (fn: () => unknown) =>
+  act(async () => {
+    void fn();
+  });
+
+describe('Connectors list — spinner and focus', () => {
+  it('spins until the first read settles', async () => {
+    const d = deferred<McpServer[]>();
+    mockList.mockImplementation(() => d.promise);
+    await open('/connectors');
+    expect(refreshControl('connectors-list').refreshing).toBe(true);
+    await act(async () => d.resolve([server()]));
+    await flush();
+    expect(refreshControl('connectors-list').refreshing).toBe(false);
+    expect(screen.getByText('linear')).toBeTruthy();
+  });
+
+  it('re-reads when it regains focus, without the spinner, and clears an old error', async () => {
+    await open('/connectors');
+    mockSet.mockRejectedValue(new TypeError('Network request failed'));
+    await kick(() => fireEvent(firstSwitch(), 'valueChange', false));
+    await flush(30);
+    expect(screen.getByText('Gateway unreachable — check your VPN or Wi-Fi.')).toBeTruthy();
+    const before = mockList.mock.calls.length;
+
+    await act(async () => router.push('/connectors/server/yt' as never));
+    await flush();
+    const d = deferred<McpServer[]>();
+    mockList.mockImplementation(() => d.promise);
+    await act(async () => router.back());
+    await flush();
+    expect(mockList.mock.calls.length).toBeGreaterThan(before);
+    expect(refreshControl('connectors-list').refreshing).toBe(false); // silent
+    expect(screen.queryByText('Gateway unreachable — check your VPN or Wi-Fi.')).toBeNull();
+    await act(async () => d.resolve([server({ enabled: false }), local]));
+    await flush();
+    expect(firstSwitch().props.value).toBe(false); // a change made elsewhere shows on return
+  });
+
+  it('pull to refresh spins until ITS read settles; an older read landing first is dropped', async () => {
+    await open('/connectors');
+    await act(async () => router.push('/connectors/server/yt' as never));
+    await flush();
+    const older = deferred<McpServer[]>();
+    mockList.mockImplementation(() => older.promise);
+    await act(async () => router.back()); // silent focus read, still in flight
+    await flush();
+
+    const pulled = deferred<McpServer[]>();
+    mockList.mockImplementation(() => pulled.promise);
+    await kick(() => refreshControl('connectors-list').onRefresh());
+    await flush();
+    expect(refreshControl('connectors-list').refreshing).toBe(true);
+
+    await act(async () => older.reject(new HttpError(0, 'request timed out after 20s')));
+    await flush();
+    expect(refreshControl('connectors-list').refreshing).toBe(true); // not stopped by the older read
+    expect(screen.queryByText('The gateway did not answer in time.')).toBeNull(); // nor its error shown
+
+    await act(async () => pulled.resolve([server(), local]));
+    await flush();
+    expect(refreshControl('connectors-list').refreshing).toBe(false);
+  });
+});
+
+describe('Connectors list — a switch against other requests', () => {
+  it('a read that was in flight when the switch was flipped cannot put the old value back', async () => {
+    await open('/connectors');
+    const read = deferred<McpServer[]>();
+    mockList.mockImplementation(() => read.promise);
+    await kick(() => refreshControl('connectors-list').onRefresh());
+    await flush();
+
+    const write = deferred<{ ok: boolean; name: string; enabled: boolean }>();
+    mockSet.mockImplementation(() => write.promise);
+    await kick(() => fireEvent(firstSwitch(), 'valueChange', false));
+    await flush();
+    expect(firstSwitch().props.value).toBe(false);
+
+    await act(async () => read.resolve([server({ enabled: true }), local])); // pre-write data
+    await flush();
+    expect(firstSwitch().props.value).toBe(false);
+
+    mockList.mockImplementation(async () => [server({ enabled: false }), local]);
+    await act(async () => write.resolve({ ok: true, name: 'linear', enabled: false }));
+    await flush(30);
+    expect(firstSwitch().props.value).toBe(false);
+    expect(refreshControl('connectors-list').refreshing).toBe(false); // the dropped pull does not leave it spinning
+  });
+
+  it('a second tap on the same switch while the first is pending is ignored', async () => {
+    await open('/connectors');
+    const write = deferred<{ ok: boolean; name: string; enabled: boolean }>();
+    mockSet.mockImplementation(() => write.promise);
+    await kick(() => fireEvent(firstSwitch(), 'valueChange', false));
+    await flush();
+    await kick(() => fireEvent(firstSwitch(), 'valueChange', true));
+    await flush();
+    expect(mockSet).toHaveBeenCalledTimes(1);
+    await act(async () => write.resolve({ ok: true, name: 'linear', enabled: false }));
+    await flush();
+    expect(firstSwitch().props.value).toBe(false);
+  });
+
+  it('a failed switch reverts even when the re-read fails too, and keeps the first message', async () => {
+    await open('/connectors');
+    mockSet.mockRejectedValue(new HttpError(404, "Server 'linear' not found"));
+    mockList.mockRejectedValue(new TypeError('Network request failed'));
+    await kick(() => fireEvent(firstSwitch(), 'valueChange', false));
+    await flush(30);
+    expect(firstSwitch().props.value).toBe(true); // reverted by the screen, not by a re-read
+    expect(screen.getByText('This connector no longer exists.')).toBeTruthy();
+    expect(screen.queryByText('Gateway unreachable — check your VPN or Wi-Fi.')).toBeNull();
+  });
+});
+
+describe('Connector detail — a switch against other requests', () => {
+  it('a failed switch reverts even when the re-read fails too', async () => {
+    await open('/connectors/server/linear');
+    mockSet.mockRejectedValue(new HttpError(409, 'Config is locked'));
+    mockList.mockRejectedValue(new TypeError('Network request failed'));
+    await kick(() => fireEvent(screen.getByRole('switch'), 'valueChange', false));
+    await flush(30);
+    expect(screen.getByRole('switch').props.value).toBe(true);
+    expect(screen.getByText('Config is locked')).toBeTruthy();
+  });
+
+  it('a refresh that was in flight cannot wipe a failed switch’s message', async () => {
+    await open('/connectors/server/linear');
+    const pulled = deferred<McpServer[]>();
+    mockList.mockImplementation(() => pulled.promise);
+    await kick(() => refreshControl('connector-detail').onRefresh());
+    await flush();
+
+    mockSet.mockRejectedValue(new HttpError(409, 'Config is locked'));
+    mockList.mockImplementation(async () => [server(), local]);
+    await kick(() => fireEvent(screen.getByRole('switch'), 'valueChange', false));
+    await flush(30);
+    expect(screen.getByText('Config is locked')).toBeTruthy();
+
+    await act(async () => pulled.resolve([server(), local])); // the older read lands last
+    await flush();
+    expect(screen.getByText('Config is locked')).toBeTruthy();
+    expect(refreshControl('connector-detail').refreshing).toBe(false);
   });
 });
