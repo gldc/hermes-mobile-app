@@ -306,9 +306,11 @@ treats it as approved (`review 4`).
 way of the gateway.
 
 - It must be `https://`.
-- Its `redirect_uri` parameter must start with `<gateway URL>/api/mcp/oauth/callback/`. If it does
-  not, the redirect would not reach the gateway from the phone; the app cancels and reports that
-  the gateway's public URL is misconfigured, naming `HERMES_DASHBOARD_PUBLIC_URL` (§10 R1).
+- Its `redirect_uri` parameter, when present, must start with
+  `<gateway URL>/api/mcp/oauth/callback/`. If it does not, the redirect would not reach the gateway
+  from the phone; the app cancels and reports that the gateway's public URL is misconfigured,
+  naming `HERMES_DASHBOARD_PUBLIC_URL` (§10 R1). A URL with no `redirect_uri` (a provider using
+  pushed authorization requests) is accepted: there is nothing to check.
 
 **When he closes the browser himself:** the gateway keeps reporting `authorization_required`
 while it exchanges the code and connects, and its page tells him to close the tab. So closing the
@@ -427,7 +429,7 @@ The bearer token and every catalog `required_env` value follow the secure-entry 
 | --- | --- |
 | `src/api/mcp.ts` | REST calls and their types: `listMcpServers`, `addMcpServer`, `removeMcpServer`, `setMcpServerEnabled`, `startMcpOauth` (the fast request, then the 45 s POST), `getMcpOauthFlow`, `cancelMcpOauthFlow`, `listMcpCatalog`, `installMcpCatalogEntry`. Takes a `Pick<RestClient, …>` like `skills.ts`. Declares its own REST types: the REST server shape differs from the contract's RPC `McpServerSummary`. Owns the secret-error cleaning of §5.9. |
 | `src/api/mcpSession.ts` | The two RPCs over an injected `call`, shaped like `sessionModel.ts`: `testMcpServer` and `mcpServerStatus`. |
-| `src/lib/mcp.ts` | Pure logic: catalog filter and sort, `suggestServerName(url)`, `validateCustomServer`, `serverCapabilities(server)` (the table in §5.3), `authLabel`, `statusLine(server, row)`, `isPlainEnvField(name)`, `containsSecret(message, values)`, `connectorErrorMessage(error, action)` (the table in §8), `checkAuthorizationUrl(url, baseUrl)` (rule B). |
+| `src/lib/mcp.ts` | Pure logic: catalog filter and sort, `suggestServerName(url)`, `validateCustomServer`, `serverCapabilities(server)` (the table in §5.3), `authLabel`, `statusLine(server, row)`, `isPlainEnvField(name)`, `connectorError(error, action)` (the table in §8), `checkAuthorizationUrl(url, baseUrl)` (rule B). (`containsSecret` lives in `src/api/mcp.ts`, next to its only caller.) |
 | `src/lib/mcp-oauth.ts` | `runOauthSignIn(deps)`: the §5.6 sequence with injected `start`, `poll`, `cancel`, `openBrowser`, `dismissBrowser`, `sleep`, `now`, plus `onPhase` (`starting`, `browser`, `finishing`) and `isCancelled()`. Returns `approved` (with tools), `cancelled`, or `error` (with a message); an `AuthError` passes through after the browser is closed. |
 | `src/session-mcp-store.ts` | Module store like `session-model-store.ts`. The active chat publishes `{connected, test, status}`. A chat clears the target only if the target is still its own, so two chat screens that overlap during a transition cannot clear each other's. |
 | `src/app/chat/[id].tsx` | Publishes the target above, next to the existing model target. `connected` follows the chat's `ready` state. |
@@ -477,7 +479,7 @@ Three PRs, each with CI green before merge:
 
 ## 8. Errors
 
-`connectorErrorMessage` maps these in one place.
+`connectorError` maps these in one place.
 
 | Situation | What he sees |
 | --- | --- |
