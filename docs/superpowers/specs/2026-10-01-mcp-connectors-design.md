@@ -1,10 +1,11 @@
 # MCP connectors (remote servers) — design
 
 - **Date:** 2026-10-01
-- **Status:** Revision 2, for Gianluca's review. The design conversation is approved (decisions 1a,
-  2a, 3b below); this written spec is not yet approved. Revision 2 incorporates an adversarial
-  review (no blocker, 7 major, 15 minor; recorded in
-  `docs/research/2026-10-01-mcp-connectors-spec-review.md`, cited as `review n`).
+- **Status:** Revision 3. **Gianluca approved revision 2 on 2026-10-01 with one change: drop
+  "Reload now".** Revision 3 makes that change and records what it means (§5.7), which leaves one
+  open decision, **D1**. Revision 2 incorporated an adversarial review (no blocker, 7 major, 15
+  minor; recorded in `docs/research/2026-10-01-mcp-connectors-spec-review.md`, cited as
+  `review n`).
 - **Author:** gldc (with Claude)
 - **Repo:** `gldc/hermes-mobile-app` only. No gateway or plugin change is needed.
 - **Evidence:** read from the gateway tree at `v2026.9.24` (0.21.5, the live version) and checked
@@ -16,6 +17,8 @@
     rotated cookies are written, how the callback URL is built);
   - `tui_gateway/methods_tools.py` (`reload.mcp`, `mcp.servers.*`), `tools/mcp_tool_discovery.py`
     (runtime status);
+  - `hermes_cli/mcp_startup.py`, `tui_gateway/server.py` and `tools/mcp_tool_loop.py` (when the
+    gateway loads a newly configured server);
   - `src/vendor/hermes-gateway/gateway-contract.generated.ts` (the RPC types).
 
   No upstream client was found that drives the REST OAuth routes: the desktop app uses the RPC
@@ -32,16 +35,18 @@ first; local stdio servers are deferred.
 - **1a.** Adding covers both the gateway's catalog and a custom URL.
 - **2a.** Face ID is required only when the app sends a secret (a bearer token or a catalog
   credential). Removing a connector needs a plain confirmation.
-- **3b.** Changes apply to new chats, and the screen also offers to reload connectors for the chats
-  that are open now.
+- **3.** First 3b (offer to reload connectors for open chats), then **dropped** when he approved
+  the spec: no reload in the app. §5.7 states what that means and the open decision D1.
+- **QA.** The proposed simulator pass against his live gateway is approved (§9).
 
 **Success:** from his phone, on the tailnet, he can:
 
 - see the connectors configured on the gateway and whether each one is working;
 - add a catalog connector (for example Linear) and sign in through OAuth without leaving the app;
 - add one of his own servers by URL, with no auth, a bearer token, or OAuth;
-- turn a connector off and on, test it, see its tools, sign in again, and remove it;
-- make the change take effect in the chat he is in, without restarting the gateway.
+- turn a connector off and on, test it, see its tools, sign in again, and remove it.
+
+The agent starts using a change after the gateway restarts (§5.7).
 
 His on-device QA is the gate.
 
@@ -88,10 +93,21 @@ Types come from the vendored contract.
   profile; for another profile every row reads `configured` or `disabled`.
 - **`reload.mcp`** `{session_id?, confirm?, always?}` tears down and reconnects every MCP server and
   refreshes the tool list of every live session. The next message in each chat re-sends the full
-  conversation because the prompt cache is invalidated. Without `confirm`, and while the gateway's
-  `approvals.mcp_reload_confirm` is on, it answers `confirm_required`. `always` writes an opt-out to
-  the gateway's `config.yaml`. For a session on a compute host it reloads only that host and
-  answers `{status: 'reloaded', turn_isolation: true}`.
+  conversation because the prompt cache is invalidated. **The app does not call it** (§5.7).
+
+### 2.3 When the gateway loads a newly configured server
+
+Read from the source, not yet observed live:
+
+- The gateway discovers MCP servers once per profile, in the background, when the first chat
+  session is built. A later session starts discovery again only if no server is connected
+  (`mcp_startup.start_background_mcp_discovery`).
+- The live gateway already has one connected server. So a connector added from the app is **not**
+  loaded for new chats.
+- After an OAuth sign-in the gateway asks the server to reconnect, but only if it is already
+  loaded (`mcp_tool_loop.reconnect_mcp_server`). That helps "sign in again", not a new connector.
+- A newly configured server is loaded by `reload.mcp` or by a gateway restart. Upstream's desktop
+  app calls `reload.mcp` itself whenever the configuration changes.
 
 **What the live gateway has today:** one server, `youtube-transcript`, which is stdio.
 
@@ -103,7 +119,6 @@ Types come from the vendored contract.
 - A detail screen: test, tool list, sign in (OAuth), remove.
 - Add from the catalog, including OAuth sign-in and the two entries that need credentials.
 - Add a custom remote server by URL with no auth, a bearer token, or OAuth.
-- "Reload now" for the open chats.
 - Existing stdio servers are shown, and can be switched and tested. They cannot be added, edited
   or removed from the app (a removed stdio server could not be re-added from the phone).
 - Plugin-provided servers are shown read-only with Test; the gateway rejects changes to them.
@@ -118,8 +133,8 @@ Types come from the vendored contract.
 
 ## 4. Approach
 
-**Chosen: REST for configuration and OAuth; RPC over the active chat's socket for Test, runtime
-status and reload.**
+**Chosen: REST for configuration and OAuth; RPC over the active chat's socket for Test and runtime
+status.**
 
 - **Configuration over REST** (list, add, install, switch, remove, catalog) matches the other
   management screens (`src/api/skills.ts`, `cron.ts`) and works without a chat.
@@ -133,7 +148,7 @@ status and reload.**
     token; that is the known cause of a revoked pairing. The socket carries no cookies.
   - REST requests queue behind each other whenever the access token's expiry is unknown (after
     every cold start), so a slow test would hold up the list, the switches and chat reconnect.
-- **Reload and status** exist only as RPCs.
+- **Runtime status** exists only as an RPC.
 - The RPCs go through the chat that is open underneath the screen, the way the Models screen
   switches a chat's model (`src/session-model-store.ts`). The Connectors screen is reached from
   the sidebar, which exists only over a chat, so a chat is normally there.
@@ -142,7 +157,7 @@ status and reload.**
 working while the chat socket reconnects.
 
 **Rejected: a second WebSocket for management.** It adds a second ticket and reconnect lifecycle for
-three calls.
+two calls.
 
 ## 5. Design
 
@@ -180,7 +195,7 @@ three calls.
 - The header has a `+` button to `/connectors/add`.
 - Empty state: "No connectors yet" with an Add button.
 - With more than one profile, the header shows which profile the list belongs to (§5.10).
-- After any change, a banner appears (§5.7).
+- A footnote under the list says when changes take effect (§5.7).
 - A server whose name contains `/` (possible only by editing the gateway config by hand) is listed
   but cannot be managed: the gateway's routes cannot address it. Its row says so.
 
@@ -279,7 +294,7 @@ explanation; providers do not accept a plain-HTTP redirect.
    - 404: close the browser and report that sign-in expired.
    - `AuthError`: close the browser, then handle it as everywhere else (§8).
    - Any other failed poll (network, 5xx) is retried on the next tick.
-4. On approval, show the tools the flow returned and mark that a reload is pending (§5.7).
+4. On approval, show the tools the flow returned.
 
 **Rule A: every exit except approval cancels the flow.** Whenever the app holds a flow id and stops
 without an `approved` status, it sends `DELETE /api/mcp/oauth/flows/{id}`. Without this, a flow
@@ -322,33 +337,30 @@ app returns to the foreground, with the same 60 s rule.
 **Browser session:** the in-app browser does not share Safari's cookies, so he signs in to the
 provider inside it.
 
-### 5.7 Applying changes (decision 3b)
+### 5.7 When changes take effect
 
-- A successful add, install, switch, remove or sign-in sets an in-memory "reload pending" flag.
-  The flag survives leaving the chat; it is cleared by a successful reload, by disconnecting from
-  the gateway, and by an app restart.
-- While the flag is set, the list shows a banner: "Changes apply to new chats. Reload to use them
-  in the chats that are open now." with a **Reload now** button.
-- **Reload now** shows an alert first. It says that reloading:
-  - reconnects every connector for every open chat on the gateway, including a chat that is in
-    the middle of a turn on another device;
-  - makes the next message in each chat re-send the whole conversation, so that message costs
-    more.
-- On confirm the app calls `reload.mcp` with `{confirm: true}` plus `session_id` when the chat has
-  a live session (a new chat has none; the gateway accepts that).
-- The app never sends `always`, because it would write a permanent opt-out to the gateway's
-  `config.yaml` (the same rule as "Always allow" on approvals).
-- The button is disabled, with the reason shown, when:
-  - no chat socket is connected (the chat is reconnecting, or the screen was opened by deep link);
-  - a turn is running in the active chat.
-- Outcomes:
-  - `reloaded`: the flag clears, the list and status refresh, and the banner is replaced by a
-    short "Reloaded" note.
-  - `reloaded` with `turn_isolation: true`: the note says only this chat was reloaded.
-  - An RPC error: the gateway's message is shown and the flag stays.
-  - The socket drops during the call: the result is unknown. The app says so, keeps the flag, and
-    refreshes status once the socket is back.
-- The chat socket's request timeout is 120 s; a reload that takes longer is reported as unknown.
+- **The app has no reload** (his decision when approving the spec).
+- Per §2.3, the running gateway does not load a newly added, switched or removed connector by
+  itself while another connector is connected. The agent uses the change after the gateway
+  restarts.
+- The list therefore carries a footnote: "The agent uses changes after the gateway restarts."
+  It is always shown; there is no "pending" state to track.
+- Test on the detail screen works straight away, because it makes its own connection. A connector
+  can pass its test and still read "Not loaded yet" in the list until the restart.
+- Signing in again to a connector that is already loaded takes effect without a restart: the
+  gateway reconnects it.
+
+**Open decision D1.** When he chose to drop the reload, the spec said changes apply to new chats.
+The source says otherwise (§2.3), so the choice is now between:
+
+1. **No reload (as built):** a change needs a gateway restart, which he does over SSH or from
+   Unraid.
+2. **Restore "Reload now":** one button on the list that calls `reload.mcp` after an alert. It
+   reconnects every connector for every open chat, and the next message in each chat re-sends the
+   whole conversation. Revision 2 of this spec has the full design; it is one small task on top of
+   the bridge that Test and status already use.
+
+Everything else in this spec is the same under either answer.
 
 ### 5.8 Runtime status
 
@@ -368,7 +380,7 @@ provider inside it.
 | `configured` | Not loaded yet |
 
 - When the switch and the running gateway disagree (switched off but still `connected` or `lazy`;
-  switched on but `disabled`), the line ends with "· changes after reload".
+  switched on but `disabled` or `configured`), the line ends with "· changes after restart".
 - When status is unavailable, rows have no status line. Test on the detail screen still gives a
   definite answer.
 
@@ -414,10 +426,10 @@ The bearer token and every catalog `required_env` value follow the secure-entry 
 | File | Responsibility |
 | --- | --- |
 | `src/api/mcp.ts` | REST calls and their types: `listMcpServers`, `addMcpServer`, `removeMcpServer`, `setMcpServerEnabled`, `startMcpOauth` (the fast request, then the 45 s POST), `getMcpOauthFlow`, `cancelMcpOauthFlow`, `listMcpCatalog`, `installMcpCatalogEntry`. Takes a `Pick<RestClient, …>` like `skills.ts`. Declares its own REST types: the REST server shape differs from the contract's RPC `McpServerSummary`. Owns the secret-error cleaning of §5.9. |
-| `src/api/mcpSession.ts` | The three RPCs over an injected `call`, shaped like `sessionModel.ts`: `testMcpServer`, `mcpServerStatus`, and `reloadMcp` returning `reloaded` (with `thisChatOnly`), `unknown`, or `error` (with a message). |
+| `src/api/mcpSession.ts` | The two RPCs over an injected `call`, shaped like `sessionModel.ts`: `testMcpServer` and `mcpServerStatus`. |
 | `src/lib/mcp.ts` | Pure logic: catalog filter and sort, `suggestServerName(url)`, `validateCustomServer`, `serverCapabilities(server)` (the table in §5.3), `authLabel`, `statusLine(server, row)`, `isPlainEnvField(name)`, `containsSecret(message, values)`, `connectorErrorMessage(error, action)` (the table in §8), `checkAuthorizationUrl(url, baseUrl)` (rule B). |
 | `src/lib/mcp-oauth.ts` | `runOauthSignIn(deps)`: the §5.6 sequence with injected `start`, `poll`, `cancel`, `openBrowser`, `dismissBrowser`, `sleep`, `now`, plus `onPhase` (`starting`, `browser`, `finishing`) and `isCancelled()`. Returns `approved` (with tools), `cancelled`, or `error` (with a message); an `AuthError` passes through after the browser is closed. |
-| `src/session-mcp-store.ts` | Module store like `session-model-store.ts`. The active chat publishes `{connected, streaming, sessionId, test, status, reload}`. A chat clears the target only if the target is still its own, so two chat screens that overlap during a transition cannot clear each other's. Also holds the "reload pending" flag. |
+| `src/session-mcp-store.ts` | Module store like `session-model-store.ts`. The active chat publishes `{connected, test, status}`. A chat clears the target only if the target is still its own, so two chat screens that overlap during a transition cannot clear each other's. |
 | `src/app/chat/[id].tsx` | Publishes the target above, next to the existing model target. `connected` follows the chat's `ready` state. |
 | `src/components/connector-secret-form.tsx` | `ConnectorSecretForm` (§5.9), used by the custom form and the catalog entry screen. |
 | `src/components/connector-sign-in.tsx` | `useConnectorSignIn(name)`: runs `runOauthSignIn` with the real browser and REST client, exposes the phase and a cancel function, and cancels on unmount. Used by the detail, catalog entry and custom screens. |
@@ -459,8 +471,8 @@ Three PRs, each with CI green before merge:
 1. **Transport and logic, no UI:** the `RestClient` timeout option, `src/api/mcp.ts`,
    `src/api/mcpSession.ts`, `src/lib/mcp.ts`, `src/lib/mcp-oauth.ts`, `src/session-mcp-store.ts`,
    with their unit tests, and `docs/contracts/mcp.md`.
-2. **Manage what exists:** the sidebar item, list, detail, Test, runtime status, the switch, and
-   Reload now. Simulator QA, then his device.
+2. **Manage what exists:** the sidebar item, list, detail, Test, runtime status and the switch.
+   Simulator QA, then his device.
 3. **Add:** catalog, custom form, secrets, OAuth sign-in, Remove. His device QA is the gate.
 
 ## 8. Errors
@@ -479,7 +491,6 @@ Three PRs, each with CI green before merge:
 | OAuth provider refuses registration | The gateway's explanation, verbatim (§10 R2). |
 | Authorization URL fails rule B | The misconfiguration message in §5.6. |
 | Test fails | The gateway's error text, shown on screen and not logged. |
-| Reload fails or is unknown | Per §5.7. |
 
 ## 9. Testing
 
@@ -490,7 +501,7 @@ Three PRs, each with CI green before merge:
   errors are cleaned for each variant (as typed, trimmed, `Bearer ` prefix) and short values are
   ignored.
 - `__tests__/mcp-lib.test.ts`: filter and sort, name suggestion, validation, the capability table,
-  status lines including the "changes after reload" cases, plain-field rule, error mapping
+  status lines including the "changes after restart" cases, plain-field rule, error mapping
   (including both 404 cases and non-JSON), rule B.
 - `__tests__/mcp-oauth.test.ts`:
   - approved; gateway error on a poll; already approved at start;
@@ -502,24 +513,22 @@ Three PRs, each with CI green before merge:
   - 404; the 6-minute limit; a poll always precedes a limit check after a long gap;
   - a failed poll is retried; `AuthError` closes the browser and passes through;
   - one retry after a 409 that follows the app's own cancel.
-- `__tests__/mcpSession.test.ts`: reload sends `confirm: true` and never `always`; `session_id`
-  omitted for a new chat; `turn_isolation`; socket drop reported as unknown; test and status
-  results.
-- `__tests__/session-mcp-store.test.ts`: publish, owner-checked clear, pending flag.
+- `__tests__/mcpSession.test.ts`: test and status results, including an RPC error.
+- `__tests__/session-mcp-store.test.ts`: publish, owner-checked clear.
 - `__tests__/restClient.test.ts`: timeout override, clamp, invariant, message.
 
 **Component:** `connector-secret-form.test.tsx`: Face ID runs before submit; cancelled or failed
 sends nothing; the value never reaches an error, a log or a store; required fields; blank optional
 fields omitted; values cleared on success and kept on failure.
 
-**Simulator (screenshots, dark and light):** list, detail, catalog, catalog entry, custom form, the
-banner, error states. Read-only REST calls run against the live gateway.
+**Simulator (screenshots, dark and light):** list, detail, catalog, catalog entry, custom form,
+error states. Read-only REST calls run against the live gateway.
 
-**Anything that changes or exercises his real gateway needs his go-ahead at plan time:**
+**What touches his real gateway (approved 2026-10-01):**
 
 - Test on `youtube-transcript` starts that stdio process on the gateway.
-- Proposed write pass on the simulator: add one no-auth catalog entry, switch it, test it, reload,
-  remove it.
+- One write pass on the simulator: add one no-auth catalog entry, switch it, test it, remove it.
+  Nothing else is written, and the entry is gone afterwards.
 - OAuth sign-in and the bearer-token form are verified on his phone, because they need his
   accounts and Face ID.
 
@@ -535,15 +544,15 @@ banner, error states. Read-only REST calls run against the live gateway.
 - **R2. Providers that restrict client registration.** Some catalog entries only accept
   pre-approved OAuth clients. The gateway reports this in plain words and the app shows it. Those
   entries will not work from any client; this is not an app defect.
-- **R3. "Changes apply to new chats."** This follows the gateway's own description of the enable
-  switch. Verify with a new chat after adding a server. If a new chat does not pick the server up,
-  the banner text changes to say a reload is needed.
+- **R3. When changes take effect** (§2.3) is read from the source and not yet observed. Verify in
+  the write pass: after adding the entry, its status should read "Not loaded yet" and a new chat
+  should not have its tools. If a new chat does have them, the footnote in §5.7 is wrong and
+  changes to "The agent uses changes in new chats."
 - **R4. What removal leaves behind.** Verify whether removing a server also deletes its OAuth
   tokens and its token in `.env`, and make the confirmation text say what remains.
-- **R5. Whether `reload.mcp` runs off the gateway's dispatch thread.** `mcp.servers.test` does. If
-  reload does not, a long reload could starve the socket's heartbeat (45 s) and drop the chat
-  connection; §5.7 already reports that as unknown. Verify in `tui_gateway/server.py`
-  (`_LONG_HANDLERS`), which could not be fetched for this spec.
+- **R5. (Resolved.)** `mcp.servers.test` runs off the gateway's dispatch thread
+  (`tui_gateway/server.py`, `_LONG_HANDLERS`), so a slow test does not starve the socket's
+  heartbeat. `reload.mcp` is in the same set, should D1 restore it.
 - **R6. A gateway restart loses running OAuth flows** (they are in memory). The app reports
   "expired" and he starts again.
 - **R7. Catalog install details not read:** that the installed server's name equals the entry's
