@@ -42,11 +42,14 @@ function Result({ outcome }: { outcome: McpTestOutcome }) {
 export function ConnectorTestCard({
   state,
   connected,
+  disabled = false,
   onTest,
 }: {
   state: ConnectorTestState;
   /** False while no chat socket is available: Test cannot run. */
   connected: boolean;
+  /** The screen is busy with something a test must not overlap (a sign-in, a removal). */
+  disabled?: boolean;
   onTest: () => void;
 }) {
   const { colors } = useTheme();
@@ -63,7 +66,7 @@ export function ConnectorTestCard({
         gap: 12,
       }}
     >
-      <CardButton label="Test connection" a11y="Test connection" onPress={onTest} disabled={running || !connected} />
+      <CardButton label="Test connection" a11y="Test connection" onPress={onTest} disabled={running || !connected || disabled} />
       {!connected ? (
         <Text style={{ color: colors.textFaint, fontSize: 13 }}>
           Testing needs a connected chat. Go back to the chat, wait for it to connect, then return.

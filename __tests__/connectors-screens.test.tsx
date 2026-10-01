@@ -23,11 +23,38 @@ jest.mock('../src/connection', () => ({
 }));
 const mockList = jest.fn();
 const mockSet = jest.fn();
+const mockRemove = jest.fn();
 jest.mock('../src/api/mcp', () => ({
   ...jest.requireActual('../src/api/mcp'),
   listMcpServers: (...a: unknown[]) => mockList(...a),
   setMcpServerEnabled: (...a: unknown[]) => mockSet(...a),
+  removeMcpServer: (...a: unknown[]) => mockRemove(...a),
 }));
+
+// The sign-in hook, with real `phase` state so the screen's busy rules can be seen. What a
+// sign-in answers is `mockSignIn`; the sequence itself is tested in mcp-oauth and connector-sign-in.
+const mockSignIn = jest.fn();
+const mockConsume = jest.fn();
+jest.mock('../src/components/connector-sign-in', () => {
+  const React = jest.requireActual('react');
+  return {
+    useConnectorSignIn: () => {
+      const [phase, setPhase] = React.useState(null);
+      const signIn = React.useCallback(async (name: string) => {
+        setPhase('browser');
+        try {
+          return await mockSignIn(name);
+        } finally {
+          setPhase(null);
+        }
+      }, []);
+      const cancel = React.useCallback(() => {}, []);
+      return { phase, cancelling: false, signIn, cancel };
+    },
+    consumeSignInRequest: (name: string) => mockConsume(name),
+    requestSignInOnOpen: () => {},
+  };
+});
 
 function server(over: Partial<McpServer> = {}): McpServer {
   return {
@@ -110,6 +137,10 @@ beforeEach(() => {
   alertSpy.mockClear();
   mockList.mockReset();
   mockSet.mockReset();
+  mockRemove.mockReset();
+  mockSignIn.mockReset();
+  mockConsume.mockReset();
+  mockConsume.mockReturnValue(false);
   mockList.mockImplementation(async () => [server(), local]);
 });
 
@@ -611,5 +642,230 @@ describe('Connector detail — reload', () => {
     await act(async () => fireEvent(screen.getByRole('switch'), 'valueChange', false));
     await flush(30);
     expect(getMcpChangePending()).toBe(false);
+  });
+});
+
+// --- Sign in and Remove on the detail (plan 3, task 5) -----------------------------------------
+
+describe('Connector detail — sign in', () => {
+  const signInButton = (label = 'Sign in') => screen.getByRole('button', { name: label });
+  const pressSignIn = (label = 'Sign in') =>
+    act(async () => {
+      void fireEvent.press(signInButton(label));
+    });
+
+  it('has no sign-in card for a connector that does not use OAuth, or comes from a plugin', async () => {
+    await open('/connectors/server/yt');
+    expect(screen.queryByRole('button', { name: /^Sign in/ })).toBeNull();
+    mockList.mockImplementation(async () => [server({ source: 'plugin', plugin: 'acme' })]);
+    await act(async () => router.replace('/connectors/server/linear' as never));
+    await flush();
+    expect(screen.queryByRole('button', { name: /^Sign in/ })).toBeNull();
+  });
+
+  it('says "Sign in again" only once a test has seen a token', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    expect(signInButton('Sign in')).toBeTruthy();
+    await act(async () => testCalls[0].resolve({ kind: 'ok', tools: [], prompts: 0, resources: 0, tokensPresent: true }));
+    await flush();
+    expect(signInButton('Sign in again')).toBeTruthy();
+  });
+
+  it('approved: shows the tools as a passed test, says Signed in, re-reads the connector and marks a reload as pending', async () => {
+    await open('/connectors/server/linear');
+    const reads = mockList.mock.calls.length;
+    mockSignIn.mockResolvedValue({ kind: 'approved', tools: [{ name: 'search', description: 'Search issues' }] });
+    await pressSignIn();
+    await flush(20);
+    expect(mockSignIn).toHaveBeenCalledWith('linear');
+    expect(screen.getByText('Working · 1 tool')).toBeTruthy();
+    expect(screen.getByText('search')).toBeTruthy();
+    expect(screen.getByText('Signed in.')).toBeTruthy();
+    expect(getMcpChangePending()).toBe(true);
+    expect(mockList.mock.calls.length).toBe(reads + 1);
+  });
+
+  it('a test that was in flight when sign-in started cannot overwrite the sign-in result', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    expect(testCalls).toHaveLength(1); // the automatic test, still pending
+    mockSignIn.mockResolvedValue({ kind: 'approved', tools: [] });
+    await pressSignIn();
+    await flush(20);
+    expect(screen.getByText('Working · 0 tools')).toBeTruthy();
+    await act(async () => testCalls[0].resolve({ kind: 'failed', message: 'OLD TEST RESULT', oauthNeeded: true, tokensPresent: false }));
+    await flush();
+    expect(screen.queryByText('OLD TEST RESULT')).toBeNull();
+    expect(screen.getByText('Working · 0 tools')).toBeTruthy();
+  });
+
+  it('a sign-in that fails while a test was in flight leaves Test usable, and shows why', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    expect(screen.getByText('Testing…')).toBeTruthy();
+    mockSignIn.mockResolvedValue({ kind: 'error', message: 'This provider only accepts pre-registered clients.' });
+    await pressSignIn();
+    await flush(20);
+    expect(screen.getByText('This provider only accepts pre-registered clients.')).toBeTruthy();
+    expect(screen.queryByText('Testing…')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Test connection' })).not.toBeDisabled();
+  });
+
+  it('cancelled: says so and runs a test, so a sign-in that did complete still shows', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    await act(async () => testCalls[0].resolve({ kind: 'failed', message: 'no token', oauthNeeded: true, tokensPresent: false }));
+    await flush();
+    mockSignIn.mockResolvedValue({ kind: 'cancelled' });
+    await pressSignIn();
+    await flush(20);
+    expect(screen.getByText('Sign-in cancelled.')).toBeTruthy();
+    expect(testCalls).toHaveLength(2);
+    expect(getMcpChangePending()).toBe(false);
+  });
+
+  it('a connector that is gone: the note, then "Connector not found" after the re-read', async () => {
+    await open('/connectors/server/linear');
+    mockSignIn.mockImplementation(async () => {
+      mockList.mockImplementation(async () => [local]);
+      return { kind: 'error', message: 'This connector no longer exists.', gone: true };
+    });
+    await pressSignIn();
+    await flush(30);
+    expect(screen.getByText('Connector not found')).toBeTruthy();
+  });
+
+  it('a dead session during sign-in goes to the sign-in screen', async () => {
+    await open('/connectors/server/linear');
+    mockSignIn.mockRejectedValue(new AuthError('session expired'));
+    await pressSignIn();
+    await flush(20);
+    expect(pathname()).toBe('/');
+  });
+
+  it('while a sign-in runs, the switch, Test and Remove are disabled', async () => {
+    publishSessionMcpTarget(owner, target(true));
+    await open('/connectors/server/linear');
+    await act(async () => testCalls[0].resolve({ kind: 'ok', tools: [], prompts: 0, resources: 0, tokensPresent: false }));
+    await flush();
+    let finish!: (o: { kind: 'cancelled' }) => void;
+    mockSignIn.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    await pressSignIn();
+    await flush();
+    expect(screen.getByText('Waiting for you to finish in the browser…')).toBeTruthy();
+    expect(screen.getByRole('switch').props.disabled).toBe(true);
+    expect(screen.getByRole('button', { name: 'Test connection' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Remove connector' })).toBeDisabled();
+    await act(async () => finish({ kind: 'cancelled' }));
+    await flush(20);
+    expect(screen.getByRole('switch').props.disabled).toBe(false);
+  });
+
+  it('opened by an add screen with a sign-in request: starts exactly one sign-in and no automatic test', async () => {
+    mockConsume.mockImplementation((name: string) => name === 'linear');
+    publishSessionMcpTarget(owner, target(true));
+    let finish!: (o: { kind: 'approved'; tools: [] }) => void;
+    mockSignIn.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    await open('/connectors/server/linear');
+    await flush(20);
+    expect(mockSignIn).toHaveBeenCalledTimes(1);
+    expect(testCalls).toHaveLength(0);
+    await act(async () => finish({ kind: 'approved', tools: [] }));
+    await flush(20);
+    expect(mockSignIn).toHaveBeenCalledTimes(1);
+    expect(mockConsume).toHaveBeenCalledTimes(1);
+  });
+
+  it('without a request it does not start a sign-in by itself', async () => {
+    await open('/connectors/server/linear');
+    await flush(20);
+    expect(mockSignIn).not.toHaveBeenCalled();
+  });
+});
+
+describe('Connector detail — remove', () => {
+  const removeButton = () => screen.getByRole('button', { name: 'Remove connector' });
+
+  async function pressRemove() {
+    await act(async () => {
+      await fireEvent.press(removeButton());
+    });
+  }
+  /** Press the alert's button with this label; the alert itself is mocked. */
+  async function answerAlert(label: string) {
+    const call = alertSpy.mock.calls[alertSpy.mock.calls.length - 1];
+    const button = (call[2] ?? []).find((b) => b.text === label);
+    await act(async () => {
+      void button?.onPress?.();
+    });
+    await flush(20);
+  }
+
+  /** The detail on top of the list, as in the app. */
+  async function openFromList() {
+    await open('/connectors');
+    await act(async () => router.push('/connectors/server/linear' as never));
+    await flush();
+  }
+
+  it('asks first, saying what stays on the gateway; Cancel does nothing', async () => {
+    await openFromList();
+    await pressRemove();
+    expect(alertSpy).toHaveBeenCalledTimes(1);
+    expect(alertSpy.mock.calls[0][0]).toBe('Remove linear?');
+    expect(alertSpy.mock.calls[0][1]).toMatch(/stay on the gateway/);
+    await answerAlert('Cancel');
+    expect(mockRemove).not.toHaveBeenCalled();
+    expect(pathname()).toBe('/connectors/server/linear');
+  });
+
+  it('on confirm it removes, marks a reload as pending and goes back to the list', async () => {
+    await openFromList();
+    mockRemove.mockResolvedValue({ ok: true });
+    mockList.mockImplementation(async () => [local]);
+    await pressRemove();
+    await answerAlert('Remove');
+    expect(mockRemove).toHaveBeenCalledWith({}, 'linear', null);
+    expect(pathname()).toBe('/connectors');
+    expect(getMcpChangePending()).toBe(true);
+  });
+
+  it('already removed elsewhere (404): goes back to the list as well', async () => {
+    await openFromList();
+    mockRemove.mockRejectedValue(new HttpError(404, "Server 'linear' not found"));
+    await pressRemove();
+    await answerAlert('Remove');
+    expect(pathname()).toBe('/connectors');
+  });
+
+  it('a failure shows the gateway reason and stays', async () => {
+    await openFromList();
+    mockRemove.mockRejectedValue(new HttpError(409, "Server 'linear' is provided by plugin 'acme' and cannot be modified"));
+    await pressRemove();
+    await answerAlert('Remove');
+    expect(screen.getByText("Server 'linear' is provided by plugin 'acme' and cannot be modified")).toBeTruthy();
+    expect(pathname()).toBe('/connectors/server/linear');
+    expect(removeButton()).not.toBeDisabled();
+    expect(getMcpChangePending()).toBe(false);
+  });
+
+  it('leaving while the removal is out: its late answer does not navigate', async () => {
+    await openFromList();
+    let finish!: (v: { ok: boolean }) => void;
+    mockRemove.mockImplementation(() => new Promise((resolve) => (finish = resolve)));
+    await pressRemove();
+    await answerAlert('Remove');
+    await act(async () => router.dismissTo('/' as never));
+    await flush();
+    expect(pathname()).toBe('/');
+    await act(async () => finish({ ok: true }));
+    await flush(20);
+    expect(pathname()).toBe('/');
+  });
+
+  it('a local or plugin connector has no Remove', async () => {
+    await open('/connectors/server/yt');
+    expect(screen.queryByRole('button', { name: 'Remove connector' })).toBeNull();
   });
 });
