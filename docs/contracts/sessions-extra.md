@@ -158,6 +158,33 @@ Verified against a live `~/.hermes/state.db`:
 Join invocation→result on `assistant.tool_calls[i].id == tool.tool_call_id`.
 `function.arguments` is a JSON **string** (OpenAI style), parse client-side.
 
+### The closing row of a stopped turn
+
+Read from the hermes-agent source at `v2026.9.24` (2026-10-01); no stored sample was captured.
+
+- When an interrupt leaves a `role: "tool"` row as the last row, the gateway appends one
+  `role: "assistant"` row so that the next user message does not follow a tool result
+  (`close_interrupted_tool_sequence`, `agent/message_sanitization.py:285-297`). Its `content` is
+  the interrupt's text, or `"Operation interrupted."` when there is none. It has no `tool_calls`
+  and no reasoning.
+- The texts an interrupt passes, each a single line:
+  - `Operation interrupted.` (a stop during or just after a tool run:
+    `agent/turn_iteration_prep.py:362-367` breaks with no text)
+  - `Operation interrupted: waiting for model response (<n>s elapsed).` (`agent/turn_api_call.py:206`)
+  - `Operation interrupted during retry (<hint>, attempt <n>/<max>).` (`agent/turn_response_check.py:343`)
+  - `Operation interrupted: handling API error (<type>: <message>).` (`agent/turn_api_error.py:158`)
+  - `Operation interrupted: retrying API call after error (retry <n>/<max>).` (`agent/turn_api_error.py:402`)
+  - `Operation interrupted: retrying empty response from model (retry <n>/<budget>).` (`agent/turn_empty_response.py:87`)
+  - `Operation interrupted: waiting for the provider to recover (cycle <n>/<total>).` (`agent/turn_recovery_autorecover.py:121`)
+- The row is cancellation metadata, not a reply. The live stream never shows it: the app draws
+  only `message.delta` text, and the gateway blanks the "waiting for model response" text in
+  `message.complete` (`tui_gateway/prompt_turn.py:321-328`). `historyToItems` maps the row to the
+  "Stopped" marker.
+- **Any other stop is not recorded in the rows.** When the last row is not a tool result, nothing
+  is appended: a stop while text was streaming stores the partial reply as an ordinary assistant
+  row (`agent/turn_api_call.py:203-204`), and a stop before any text stores nothing. The app
+  cannot tell those turns were stopped, so their "Stopped" marker is gone after a history reload.
+
 ---
 
 ## Adjacent (for completeness)

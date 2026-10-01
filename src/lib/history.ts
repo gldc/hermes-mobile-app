@@ -9,6 +9,18 @@ import { deniedSummary, toolOutcome } from './tool-outcome';
 /** Same cap the live tool.complete path applies to result text. */
 const MAX_TOOL_DETAIL = 4000;
 
+/** The gateway's own closing row for a turn stopped right after a tool result ("Operation
+ * interrupted." or one line saying what it was doing: `close_interrupted_tool_sequence`,
+ * agent/message_sanitization.py at v2026.9.24). Cancellation metadata, not a reply: the live
+ * stream never carries it, and the live transcript shows the "Stopped" marker instead. */
+const INTERRUPT_CLOSING_ROW = /^Operation interrupted(\.|: .+\.| during retry \(.+\)\.)$/;
+
+function isInterruptClosingRow(m: SessionMessage, text: string, reasoning: string): boolean {
+  if (m.role !== 'assistant' || reasoning.trim()) return false;
+  if (Array.isArray(m.tool_calls) && m.tool_calls.length > 0) return false;
+  return INTERRUPT_CLOSING_ROW.test(text.trim());
+}
+
 export function historyToItems(messages: SessionMessage[], nextKey: () => string): ChatItem[] {
   // Pass 1: index tool-call invocations from assistant rows by id ?? call_id.
   // The invocation lives on the assistant row; its result is a later tool row.
@@ -34,6 +46,10 @@ export function historyToItems(messages: SessionMessage[], nextKey: () => string
       const text = messageText(m);
       const reasoning = m.role === 'assistant' ? reasoningText(m).slice(0, MAX_TOOL_DETAIL) : '';
       if (!text.trim() && !reasoning.trim()) continue; // drop only if nothing to show
+      if (isInterruptClosingRow(m, text, reasoning)) {
+        items.push({ key: nextKey(), role: 'status', text: 'Stopped', marker: 'stopped' });
+        continue;
+      }
       items.push({
         key: nextKey(),
         role: m.role,

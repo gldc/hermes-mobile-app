@@ -271,4 +271,81 @@ describe('historyToItems', () => {
     const items = historyToItems([msg({ role: 'assistant', content: '' })], keyer());
     expect(items).toHaveLength(0);
   });
+
+  // A turn stopped right after a tool result: the gateway closes the stored transcript with its
+  // own assistant row (agent/message_sanitization.py close_interrupted_tool_sequence, v2026.9.24).
+  // The live stream never carries that text; the live transcript shows the "Stopped" marker.
+  describe('the gateway\'s closing row of a stopped turn', () => {
+    const stopped = { role: 'status', text: 'Stopped', marker: 'stopped' };
+
+    it('becomes the Stopped marker, at its own position', () => {
+      const items = historyToItems(
+        [
+          msg({ role: 'user', content: 'run it' }),
+          msg({ role: 'assistant', content: '', tool_calls: [{ id: 'c1', function: { name: 'terminal', arguments: '{"command":"sleep 60"}' } }] }),
+          msg({ role: 'tool', tool_name: 'terminal', tool_call_id: 'c1', content: '[Tool execution cancelled — terminal was skipped due to user interrupt]' }),
+          msg({ role: 'assistant', content: 'Operation interrupted.' }),
+          msg({ role: 'user', content: 'next' }),
+          msg({ role: 'assistant', content: 'ok' }),
+        ],
+        keyer(),
+      );
+      expect(items.map((i) => i.role)).toEqual(['user', 'tool', 'status', 'user', 'assistant']);
+      expect(items[2]).toEqual({ key: 'k2', ...stopped });
+    });
+
+    // Every text the gateway passes to close_interrupted_tool_sequence on an interrupt.
+    it.each([
+      ['Operation interrupted.'],
+      ['Operation interrupted: waiting for model response (3.2s elapsed).'],
+      ['Operation interrupted during retry (rate limited, attempt 2/3).'],
+      ['Operation interrupted: handling API error (APIConnectionError: Connection error.).'],
+      ['Operation interrupted: retrying API call after error (retry 1/3).'],
+      ['Operation interrupted: retrying empty response from model (retry 1/2).'],
+      ['Operation interrupted: waiting for the provider to recover (cycle 1/4).'],
+      ['  Operation interrupted.\n'],
+    ])('%j is the marker, not a reply', (content) => {
+      const items = historyToItems([msg({ role: 'assistant', content })], keyer());
+      expect(items).toEqual([{ key: 'k0', ...stopped }]);
+    });
+
+    it('is recognized in parts-array content too', () => {
+      const items = historyToItems(
+        [msg({ role: 'assistant', content: [{ type: 'text', text: 'Operation interrupted.' }] })],
+        keyer(),
+      );
+      expect(items).toEqual([{ key: 'k0', ...stopped }]);
+    });
+
+    it.each([
+      ['a reply that only mentions it', 'The log says: Operation interrupted.'],
+      ['a reply that continues after it', 'Operation interrupted. I will try again with a longer timeout.'],
+      ['a multi-line reply that starts with it', 'Operation interrupted: the disk was full.\nHere is what I found.'],
+      ['a different sentence with the same start', 'Operation interrupted by the watchdog.'],
+    ])('%s stays an assistant message', (_label, content) => {
+      const items = historyToItems([msg({ role: 'assistant', content })], keyer());
+      expect(items).toEqual([{ key: 'k0', role: 'assistant', text: content, complete: true }]);
+    });
+
+    it('a row that carries reasoning is the model\'s own and stays a message', () => {
+      const items = historyToItems(
+        [msg({ role: 'assistant', content: 'Operation interrupted.', reasoning_content: 'why' })],
+        keyer(),
+      );
+      expect(items).toEqual([{ key: 'k0', role: 'assistant', text: 'Operation interrupted.', complete: true, reasoning: 'why' }]);
+    });
+
+    it('a row that calls tools is the model\'s own and stays a message', () => {
+      const items = historyToItems(
+        [msg({ role: 'assistant', content: 'Operation interrupted.', tool_calls: [{ id: 'c1', function: { name: 'terminal', arguments: '{}' } }] })],
+        keyer(),
+      );
+      expect(items).toEqual([{ key: 'k0', role: 'assistant', text: 'Operation interrupted.', complete: true }]);
+    });
+
+    it('a user who types it keeps their message', () => {
+      const items = historyToItems([msg({ role: 'user', content: 'Operation interrupted.' })], keyer());
+      expect(items).toEqual([{ key: 'k0', role: 'user', text: 'Operation interrupted.', complete: true }]);
+    });
+  });
 });
