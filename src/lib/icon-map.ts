@@ -41,6 +41,7 @@ export const SF_TO_MATERIAL: Record<string, string> = {
   'pin.slash.fill': 'pin-off',
   'play.circle.fill': 'play-circle',
   'plus': 'plus',
+  'powerplug': 'power-plug-outline',
   'qrcode.viewfinder': 'qrcode-scan',
   'questionmark.bubble': 'message-question-outline',
   'questionmark.circle': 'help-circle-outline',

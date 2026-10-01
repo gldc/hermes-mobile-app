@@ -482,6 +482,7 @@ export function Sidebar({ open, width }: { open: boolean; width: number }) {
           <NavItem icon="clock.arrow.circlepath" label="Cron jobs" onPress={() => pushRoute('/cron')} />
           <NavItem icon="books.vertical" label="Memory" onPress={() => pushRoute('/memory')} />
           <NavItem icon="sparkles" label="Skills" onPress={() => pushRoute('/skills')} />
+          <NavItem icon="powerplug" label="Connectors" onPress={() => pushRoute('/connectors')} />
           <NavItem icon="cpu" label="Models" onPress={() => pushRoute('/models')} />
         </View>
       ) : null}
