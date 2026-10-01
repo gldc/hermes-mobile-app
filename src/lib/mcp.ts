@@ -1,5 +1,5 @@
 // src/lib/mcp.ts — pure logic for the Connectors screens (spec §5, §8). No I/O.
-import type { McpCatalogEntry, McpServer } from '@/api/mcp';
+import { McpAlreadyAddedError, McpPreflightError, type McpCatalogEntry, type McpServer } from '@/api/mcp';
 import type { McpRuntimeRow } from '@/api/mcpSession';
 import { AuthError, HttpError } from '@/api/restClient';
 
@@ -234,6 +234,10 @@ const isServerAction = (a: ConnectorAction): boolean => a === 'switch' || a === 
 /** Map a failed connector request to what the screen does and says. */
 export function connectorError(error: unknown, action: ConnectorAction): ConnectorError {
   if (error instanceof AuthError) return { kind: 'auth' };
+  // The fast request before a slow one failed: nothing was sent, so this is about reaching
+  // the gateway, not about the action.
+  if (error instanceof McpPreflightError) return connectorError(error.reason, 'list');
+  if (error instanceof McpAlreadyAddedError) return { kind: 'message', message: error.message };
   if (error instanceof HttpError) {
     if (error.status === 404) {
       const bare = /^not found$/i.test(error.message) || error.message.startsWith('HTTP 404 on ');

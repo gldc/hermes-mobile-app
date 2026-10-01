@@ -1,5 +1,5 @@
 // __tests__/mcp-lib.test.ts
-import type { McpCatalogEntry, McpServer } from '../src/api/mcp';
+import { McpAlreadyAddedError, McpPreflightError, type McpCatalogEntry, type McpServer } from '../src/api/mcp';
 import type { McpRuntimeRow } from '../src/api/mcpSession';
 import { AuthError, HttpError } from '../src/api/restClient';
 import {
@@ -397,5 +397,27 @@ describe('needsReload', () => {
     expect(needsReload(server({ enabled: true }), row({ status: 'connecting' }))).toBe(false);
     expect(needsReload(server({ enabled: true }), row({ status: 'failed' }))).toBe(false);
     expect(needsReload(server())).toBe(false);
+  });
+});
+
+describe('connectorError — a slow request that was never sent', () => {
+  it('a failed fast request is about reaching the gateway: no "check the list", nothing was sent', () => {
+    expect(connectorError(new McpPreflightError(new HttpError(0, 'request timed out after 20s')), 'install')).toEqual({
+      kind: 'message',
+      message: 'The gateway did not answer in time.',
+    });
+    expect(connectorError(new McpPreflightError(new TypeError('Network request failed')), 'add')).toEqual({
+      kind: 'message',
+      message: 'Gateway unreachable — check your VPN or Wi-Fi.',
+    });
+  });
+  it('a bare 404 on the fast request means an unsupported gateway', () => {
+    expect(connectorError(new McpPreflightError(new HttpError(404, 'Not Found')), 'install').kind).toBe('unsupported');
+  });
+  it('an entry that is already configured says so', () => {
+    expect(connectorError(new McpAlreadyAddedError('asana'), 'install')).toEqual({
+      kind: 'message',
+      message: 'This connector is already added.',
+    });
   });
 });

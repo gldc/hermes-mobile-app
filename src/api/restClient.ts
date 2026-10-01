@@ -25,7 +25,8 @@ export const REQUEST_TIMEOUT_MS = 20_000;
 
 /** Ceiling for a per-request override. Only a call the gateway itself holds
  * open may ask for more than the default: starting MCP OAuth waits up to 30 s
- * for the authorization URL. A caller that raises the limit must send a fast
+ * for the authorization URL, and installing a catalog connector connects to the
+ * server (up to ~40 s). A caller that raises the limit must send a fast
  * request first, because the gateway writes rotated cookies back only when the
  * handler returns — an aborted slow request would lose a rotation it carried
  * (docs/superpowers/specs/2026-10-01-mcp-connectors-design.md §6.1). */

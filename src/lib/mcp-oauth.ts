@@ -7,7 +7,7 @@
 // cancels the flow — a flow left behind can be reopened by the gateway and
 // block the server for 5 minutes. A cancel that answers `approved` means the
 // sign-in had already succeeded.
-import { OauthPreflightError, type McpOauthFlow, type McpTool } from '@/api/mcp';
+import type { McpOauthFlow, McpTool } from '@/api/mcp';
 import { AuthError, HttpError } from '@/api/restClient';
 import { connectorError } from './mcp';
 
@@ -78,12 +78,8 @@ async function startFlow(deps: OauthDeps): Promise<McpOauthFlow | null> {
 
 /** The start failed and no flow id came back, so nothing can be cancelled from here. */
 function startFailure(e: unknown): OauthOutcome {
-  // The fast request before the start failed: no flow exists, and its error is
-  // about reading the list, not about this connector.
-  if (e instanceof OauthPreflightError) {
-    const mapped = connectorError(e.reason, 'list');
-    return { kind: 'error', message: mapped.kind === 'auth' ? 'Session expired.' : mapped.message };
-  }
+  // (A failed fast request — McpPreflightError — is mapped by connectorError as a failure
+  // to reach the gateway: no flow was started, so neither text below applies to it.)
   if (e instanceof HttpError && e.status === 0) {
     return {
       kind: 'error',

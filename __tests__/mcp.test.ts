@@ -1,7 +1,9 @@
 // __tests__/mcp.test.ts
 import {
+  INSTALL_TIMEOUT_MS,
+  McpAlreadyAddedError,
+  McpPreflightError,
   OAUTH_START_TIMEOUT_MS,
-  OauthPreflightError,
   addMcpServer,
   cancelMcpOauthFlow,
   containsSecret,
@@ -145,7 +147,7 @@ describe('mcp api — OAuth', () => {
   it('a failure of the fast request is marked as such: no flow was started', async () => {
     const f = fakeFetch(404, { detail: "Profile 'x' not found" });
     const err = await startMcpOauth(client(f), 'linear', 'x').catch((e) => e);
-    expect(err).toBeInstanceOf(OauthPreflightError);
+    expect(err).toBeInstanceOf(McpPreflightError);
     expect(err.reason).toBeInstanceOf(HttpError);
     expect(err.reason.message).toBe("Profile 'x' not found");
     expect(f.calls).toHaveLength(1);
@@ -184,12 +186,65 @@ describe('mcp api — catalog', () => {
     expect(out).toEqual({ entries: [], diagnostics: [] });
   });
 
-  it('installMcpCatalogEntry posts name, env and enable:true', async () => {
-    const f = fakeFetch(200, { ok: true, name: 'asana', background: false });
-    const out = await installMcpCatalogEntry(client(f), 'asana', { ASANA_CLIENT_ID: 'id-1' }, 'p');
-    expect(f.calls[0].url).toBe('http://h/api/mcp/catalog/install?profile=p');
-    expect(bodyOf(f)).toEqual({ name: 'asana', env: { ASANA_CLIENT_ID: 'id-1' }, enable: true });
+  /** A REST stub that records calls; `get`/`post` override what each answers (or throws). */
+  function installRest(over: { get?: () => unknown; post?: () => unknown } = {}) {
+    const calls: { verb: string; path: string; body?: unknown; opts?: { timeoutMs?: number } }[] = [];
+    const rest = {
+      get: async (path: string, opts?: { timeoutMs?: number }) => {
+        calls.push({ verb: 'get', path, opts });
+        return over.get ? over.get() : { servers: [] };
+      },
+      post: async (path: string, body?: unknown, opts?: { timeoutMs?: number }) => {
+        calls.push({ verb: 'post', path, body, opts });
+        return over.post ? over.post() : { ok: true, name: 'asana', background: false };
+      },
+      put: async () => ({}),
+      del: async () => ({}),
+    };
+    return { rest: rest as any, calls };
+  }
+
+  it('install reads the server list first, then posts name, env and enable:true with the long limit', async () => {
+    const { rest, calls } = installRest();
+    const out = await installMcpCatalogEntry(rest, 'asana', { ASANA_CLIENT_ID: 'id-1' }, 'p');
+    expect(calls).toEqual([
+      { verb: 'get', path: '/api/mcp/servers?profile=p', opts: undefined },
+      {
+        verb: 'post',
+        path: '/api/mcp/catalog/install?profile=p',
+        body: { name: 'asana', env: { ASANA_CLIENT_ID: 'id-1' }, enable: true },
+        opts: { timeoutMs: INSTALL_TIMEOUT_MS },
+      },
+    ]);
+    expect(INSTALL_TIMEOUT_MS).toBe(45_000);
     expect(out.background).toBe(false);
+  });
+
+  it('install does not post when a connector of that name is already configured: the gateway would overwrite it', async () => {
+    const { rest, calls } = installRest({ get: () => ({ servers: [{ name: 'asana' }] }) });
+    await expect(installMcpCatalogEntry(rest, 'asana', {})).rejects.toBeInstanceOf(McpAlreadyAddedError);
+    expect(calls.map((c) => c.verb)).toEqual(['get']);
+  });
+
+  it('install does not post when the fast request fails, and marks the failure as "nothing was sent"', async () => {
+    const { rest, calls } = installRest({
+      get: () => {
+        throw new HttpError(0, 'request timed out after 20s');
+      },
+    });
+    const err = await installMcpCatalogEntry(rest, 'asana', { A: 'secret-value-9' }).catch((e) => e);
+    expect(err).toBeInstanceOf(McpPreflightError);
+    expect(err.reason).toBeInstanceOf(HttpError);
+    expect(calls.map((c) => c.verb)).toEqual(['get']);
+  });
+
+  it('a dead session on the fast request is an AuthError, not a preflight failure', async () => {
+    const { rest } = installRest({
+      get: () => {
+        throw new AuthError('session expired');
+      },
+    });
+    await expect(installMcpCatalogEntry(rest, 'asana', {})).rejects.toBeInstanceOf(AuthError);
   });
 });
 
@@ -230,9 +285,17 @@ describe('mcp api — secret-safe errors', () => {
   });
 
   it('cleans install errors that echo any env value', async () => {
-    const f = fakeFetch(400, { detail: 'cannot write secret-value-9' });
-    const err = await installMcpCatalogEntry(client(f), 'asana', { A: 'id-1', B: 'secret-value-9' }).catch((e) => e);
-    expect(err.message).not.toContain('secret-value-9');
+    const rest = {
+      get: async () => ({ servers: [] }),
+      post: async () => {
+        throw new HttpError(400, 'cannot write secret-value-9');
+      },
+      put: async () => ({}),
+      del: async () => ({}),
+    };
+    const err = await installMcpCatalogEntry(rest as any, 'asana', { A: 'id-1', B: 'secret-value-9' }).catch((e) => e);
+    expect(err).toBeInstanceOf(HttpError);
+    expect(err.message).toBe('The gateway rejected this connector.');
   });
 
   it('cleans a non-HTTP error too', async () => {

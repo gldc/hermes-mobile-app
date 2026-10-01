@@ -16,6 +16,9 @@ const flowPath = (flowId: string): string => `/api/mcp/oauth/flows/${enc(flowId)
 /** The gateway waits up to 30 s for the authorization URL before answering. */
 export const OAUTH_START_TIMEOUT_MS = 45_000;
 
+/** Installing a catalog entry connects to the server to list its tools (up to ~40 s). */
+export const INSTALL_TIMEOUT_MS = 45_000;
+
 /** Values shorter than this are not searched for in error text (they would match by accident). */
 export const MIN_SECRET_LENGTH = 4;
 
@@ -162,29 +165,43 @@ export function setMcpServerEnabled(
   );
 }
 
-// --- OAuth -----------------------------------------------------------------
+// --- slow requests (spec §6.1) ---------------------------------------------
 
-/** The fast request sent before the OAuth start failed, so NO flow was started.
- * `reason` is that request's own error (a list failure, not a sign-in failure). */
-export class OauthPreflightError extends Error {
+/** The fast request sent before a slow one failed, so the slow request was NOT sent.
+ * `reason` is that request's own error (a failure to read the list, not of the action). */
+export class McpPreflightError extends Error {
   constructor(readonly reason: unknown) {
-    super('The gateway could not be reached before starting sign-in.');
-    this.name = 'OauthPreflightError';
+    super('The gateway could not be reached.');
+    this.name = 'McpPreflightError';
   }
 }
 
-/** Start a dashboard-mediated OAuth flow.
- *
- * The fast GET comes first on purpose (spec §6.1): the gateway writes rotated
- * cookies back only when a handler returns, so a refresh-token rotation must
- * ride a request that finishes quickly, never the slow POST that follows. */
-export async function startMcpOauth(rest: Rest, name: string, profile?: string | null): Promise<McpOauthFlow> {
+/** A catalog entry whose name is already configured: installing it again would overwrite it. */
+export class McpAlreadyAddedError extends Error {
+  constructor(readonly serverName: string) {
+    super('This connector is already added.');
+    this.name = 'McpAlreadyAddedError';
+  }
+}
+
+/** The fast request that must precede a slow one: the gateway writes rotated cookies back
+ * only when a handler returns, so a refresh-token rotation must ride a request that
+ * finishes quickly, never the slow one that follows. It carries no secret, so it runs
+ * outside `withSecrets`. Returns the server list it read. */
+async function preflight(rest: Rest, profile?: string | null): Promise<McpServer[]> {
   try {
-    await listMcpServers(rest, profile);
+    return await listMcpServers(rest, profile);
   } catch (e) {
     if (e instanceof AuthError) throw e;
-    throw new OauthPreflightError(e);
+    throw new McpPreflightError(e);
   }
+}
+
+// --- OAuth -----------------------------------------------------------------
+
+/** Start a dashboard-mediated OAuth flow: the fast request, then the slow POST. */
+export async function startMcpOauth(rest: Rest, name: string, profile?: string | null): Promise<McpOauthFlow> {
+  await preflight(rest, profile);
   return rest.post<McpOauthFlow>(
     `${serverPath(name, '/auth')}${profileQuery(profile, '?')}`,
     {},
@@ -207,14 +224,25 @@ export function listMcpCatalog(rest: Rest, profile?: string | null): Promise<Mcp
   return rest.get<McpCatalog>(`/api/mcp/catalog${profileQuery(profile, '?')}`);
 }
 
-/** Install a catalog entry. `env` values are treated as secrets: the gateway stores them, the app does not. */
-export function installMcpCatalogEntry(
+/** Install a catalog entry: the fast request, then the slow POST (the gateway connects to
+ * the server while installing). `env` values are treated as secrets: the gateway stores
+ * them, the app does not.
+ *
+ * The gateway does not reject an entry that is already configured — it overwrites it and
+ * switches it back on — so the list read first also guards that: `McpAlreadyAddedError`. */
+export async function installMcpCatalogEntry(
   rest: Rest,
   name: string,
   env: Record<string, string>,
   profile?: string | null,
 ): Promise<McpInstallResult> {
+  const servers = await preflight(rest, profile);
+  if (servers.some((s) => s.name === name)) throw new McpAlreadyAddedError(name);
   return withSecrets(Object.values(env), () =>
-    rest.post<McpInstallResult>(`/api/mcp/catalog/install${profileQuery(profile, '?')}`, { name, env, enable: true }),
+    rest.post<McpInstallResult>(
+      `/api/mcp/catalog/install${profileQuery(profile, '?')}`,
+      { name, env, enable: true },
+      { timeoutMs: INSTALL_TIMEOUT_MS },
+    ),
   );
 }
