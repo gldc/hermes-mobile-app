@@ -1,5 +1,12 @@
 // __tests__/restClient.test.ts
-import { RestClient, AuthError, AT_FRESH_MARGIN_MS, REQUEST_TIMEOUT_MS } from '../src/api/restClient';
+import {
+  RestClient,
+  AuthError,
+  AT_FRESH_MARGIN_MS,
+  MAX_REQUEST_TIMEOUT_MS,
+  REQUEST_TIMEOUT_MS,
+  resolveTimeoutMs,
+} from '../src/api/restClient';
 import { CookieJar } from '../src/api/cookieJar';
 
 function fakeFetch(status: number, body: unknown, setCookie?: string) {
@@ -334,5 +341,88 @@ describe('RestClient durable rotation persistence', () => {
     const c = new RestClient('http://h', jar, f as any, flush);
     await expect(c.get('/a')).resolves.toEqual({ ok: true });
     expect(jar.header()).toBe('hermes_session_rt=r2');
+  });
+});
+
+describe('RestClient per-request timeout', () => {
+  const abortError = () => {
+    const e = new Error('Aborted');
+    e.name = 'AbortError';
+    return e;
+  };
+
+  /** A client whose fetch never answers; `signal()` is the request's abort signal. */
+  function hangingClient() {
+    const jar = new CookieJar(() => 1_000_000);
+    jar.ingest(['hermes_session_at=at; Max-Age=900; Path=/']); // fresh → direct send
+    let captured: AbortSignal | undefined;
+    const hang = (_url: string, init: RequestInit = {}) =>
+      new Promise<Response>((_resolve, reject) => {
+        captured = init.signal as AbortSignal | undefined;
+        captured?.addEventListener('abort', () => reject(abortError()));
+      });
+    return { c: new RestClient('http://h', jar, hang as any), signal: () => captured };
+  }
+
+  it('a longer limit outlives the default and fires at its own limit', async () => {
+    jest.useFakeTimers();
+    try {
+      const { c, signal } = hangingClient();
+      const p = c.post('/slow', {}, { timeoutMs: 45_000 });
+      p.catch(() => {});
+      await Promise.resolve();
+      jest.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+      expect(signal()?.aborted).toBe(false);
+      jest.advanceTimersByTime(45_000 - REQUEST_TIMEOUT_MS);
+      expect(signal()?.aborted).toBe(true);
+      await expect(p).rejects.toThrow('request timed out after 45s');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('clamps a limit above the ceiling', async () => {
+    jest.useFakeTimers();
+    try {
+      const { c, signal } = hangingClient();
+      const p = c.get('/slow', { timeoutMs: 600_000 });
+      p.catch(() => {});
+      await Promise.resolve();
+      jest.advanceTimersByTime(MAX_REQUEST_TIMEOUT_MS);
+      expect(signal()?.aborted).toBe(true);
+      await expect(p).rejects.toThrow('request timed out after 45s');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('keeps the default limit and message when no option is passed', async () => {
+    jest.useFakeTimers();
+    try {
+      const { c } = hangingClient();
+      const p = c.del('/slow');
+      p.catch(() => {});
+      await Promise.resolve();
+      jest.advanceTimersByTime(REQUEST_TIMEOUT_MS);
+      await expect(p).rejects.toThrow('request timed out after 20s');
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  it('resolveTimeoutMs ignores values that are not a positive finite number', () => {
+    expect(resolveTimeoutMs()).toBe(REQUEST_TIMEOUT_MS);
+    expect(resolveTimeoutMs({})).toBe(REQUEST_TIMEOUT_MS);
+    expect(resolveTimeoutMs({ timeoutMs: 0 })).toBe(REQUEST_TIMEOUT_MS);
+    expect(resolveTimeoutMs({ timeoutMs: -5 })).toBe(REQUEST_TIMEOUT_MS);
+    expect(resolveTimeoutMs({ timeoutMs: Number.NaN })).toBe(REQUEST_TIMEOUT_MS);
+    expect(resolveTimeoutMs({ timeoutMs: Number.POSITIVE_INFINITY })).toBe(REQUEST_TIMEOUT_MS);
+    expect(resolveTimeoutMs({ timeoutMs: 30_000 })).toBe(30_000);
+    expect(resolveTimeoutMs({ timeoutMs: 90_000 })).toBe(MAX_REQUEST_TIMEOUT_MS);
+  });
+
+  it('keeps the AT freshness margin above the ceiling', () => {
+    expect(AT_FRESH_MARGIN_MS).toBeGreaterThan(MAX_REQUEST_TIMEOUT_MS);
+    expect(MAX_REQUEST_TIMEOUT_MS).toBeGreaterThanOrEqual(REQUEST_TIMEOUT_MS);
   });
 });

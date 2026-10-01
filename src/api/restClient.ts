@@ -17,21 +17,40 @@ type FetchFn = typeof fetch;
  * and in-flight time; the server-side reuse grace window backstops any residue. */
 export const AT_FRESH_MARGIN_MS = 60_000;
 
-/** Hard upper bound per request. The audited REST surface is all small JSON on
- * a private network — nothing legitimately approaches this — so it only ever
+/** Default upper bound per request. The audited REST surface is all small JSON
+ * on a private network — nothing legitimately approaches this — so it only ever
  * fires on a genuine hang, turning a silent freeze into an explicit failure and
  * freeing the serialization chain. */
 export const REQUEST_TIMEOUT_MS = 20_000;
 
+/** Ceiling for a per-request override. Only a call the gateway itself holds
+ * open may ask for more than the default: starting MCP OAuth waits up to 30 s
+ * for the authorization URL. A caller that raises the limit must send a fast
+ * request first, because the gateway writes rotated cookies back only when the
+ * handler returns — an aborted slow request would lose a rotation it carried
+ * (docs/superpowers/specs/2026-10-01-mcp-connectors-design.md §6.1). */
+export const MAX_REQUEST_TIMEOUT_MS = 45_000;
+
+export interface RequestOptions {
+  /** Per-request limit; clamped to MAX_REQUEST_TIMEOUT_MS. Default REQUEST_TIMEOUT_MS. */
+  timeoutMs?: number;
+}
+
+export function resolveTimeoutMs(opts?: RequestOptions): number {
+  const t = opts?.timeoutMs;
+  if (typeof t !== 'number' || !Number.isFinite(t) || t <= 0) return REQUEST_TIMEOUT_MS;
+  return Math.min(t, MAX_REQUEST_TIMEOUT_MS);
+}
+
 // Load-bearing invariant. The off-chain "fresh" path lets a request skip the
 // serialization chain; that is safe only because a fresh request finishes
-// (bounded by REQUEST_TIMEOUT_MS) before the access token can fall below
+// (bounded by MAX_REQUEST_TIMEOUT_MS) before the access token can fall below
 // AT_FRESH_MARGIN_MS — so a fresh request and a later chained (post-rotation)
 // request can never overlap on the same refresh token. That holds only while
-// the margin dominates the timeout; fail loudly if a future edit breaks it.
-if (AT_FRESH_MARGIN_MS <= REQUEST_TIMEOUT_MS) {
+// the margin dominates the largest timeout; fail loudly if a future edit breaks it.
+if (AT_FRESH_MARGIN_MS <= MAX_REQUEST_TIMEOUT_MS || MAX_REQUEST_TIMEOUT_MS < REQUEST_TIMEOUT_MS) {
   throw new Error(
-    'RestClient: AT_FRESH_MARGIN_MS must exceed REQUEST_TIMEOUT_MS (fresh-path race invariant)',
+    'RestClient: AT_FRESH_MARGIN_MS must exceed MAX_REQUEST_TIMEOUT_MS, which must be at least REQUEST_TIMEOUT_MS (fresh-path race invariant)',
   );
 }
 
@@ -57,7 +76,8 @@ export class RestClient {
   // screen; streaming rides the WebSocket, not this path.
   private chain: Promise<unknown> = Promise.resolve();
 
-  private request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private request<T>(path: string, init: RequestInit = {}, opts?: RequestOptions): Promise<T> {
+    const timeoutMs = resolveTimeoutMs(opts);
     // Access token fresh → the server validates it without rotating the refresh
     // token, so requests are safe to run concurrently and a hung request cannot
     // wedge the rest of the REST layer. (This relies on the gateway contract
@@ -66,9 +86,9 @@ export class RestClient {
     // back to the chain so only one request at a time can trigger (and thus
     // race) a refresh-token rotation.
     if (this.jar.accessTokenFresh(AT_FRESH_MARGIN_MS)) {
-      return this.send<T>(path, init);
+      return this.send<T>(path, init, timeoutMs);
     }
-    const run = this.chain.then(() => this.send<T>(path, init));
+    const run = this.chain.then(() => this.send<T>(path, init, timeoutMs));
     // Keep the chain alive across failures — a rejected request must not wedge
     // later ones — while still propagating the real result to the caller.
     this.chain = run.then(
@@ -78,7 +98,7 @@ export class RestClient {
     return run;
   }
 
-  private async send<T>(path: string, init: RequestInit = {}): Promise<T> {
+  private async send<T>(path: string, init: RequestInit = {}, timeoutMs: number = REQUEST_TIMEOUT_MS): Promise<T> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       ...(init.headers as Record<string, string> | undefined),
@@ -90,7 +110,7 @@ export class RestClient {
     // res.json() forever (and, on the chain, re-wedge the REST layer). `init`
     // never carries a caller signal today; we own it.
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
       const res = await this.fetchFn(`${this.baseUrl}${path}`, {
         ...init,
@@ -133,7 +153,7 @@ export class RestClient {
       // Detect via the controller's own state (robust to RN/polyfill error
       // shapes). Intentional AuthError/HttpError thrown above pass through.
       if (controller.signal.aborted && !(e instanceof AuthError) && !(e instanceof HttpError)) {
-        throw new HttpError(0, `request timed out after ${REQUEST_TIMEOUT_MS / 1000}s`);
+        throw new HttpError(0, `request timed out after ${timeoutMs / 1000}s`);
       }
       throw e;
     } finally {
@@ -143,24 +163,24 @@ export class RestClient {
 
   /** Generic authed verbs — feature modules (cron, memory, …) build on these
    * instead of growing this class. */
-  get<T>(path: string): Promise<T> {
-    return this.request<T>(path);
+  get<T>(path: string, opts?: RequestOptions): Promise<T> {
+    return this.request<T>(path, {}, opts);
   }
 
-  post<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) });
+  post<T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> {
+    return this.request<T>(path, { method: 'POST', body: JSON.stringify(body ?? {}) }, opts);
   }
 
-  patch<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) });
+  patch<T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> {
+    return this.request<T>(path, { method: 'PATCH', body: JSON.stringify(body ?? {}) }, opts);
   }
 
-  put<T>(path: string, body?: unknown): Promise<T> {
-    return this.request<T>(path, { method: 'PUT', body: JSON.stringify(body ?? {}) });
+  put<T>(path: string, body?: unknown, opts?: RequestOptions): Promise<T> {
+    return this.request<T>(path, { method: 'PUT', body: JSON.stringify(body ?? {}) }, opts);
   }
 
-  del<T>(path: string): Promise<T> {
-    return this.request<T>(path, { method: 'DELETE' });
+  del<T>(path: string, opts?: RequestOptions): Promise<T> {
+    return this.request<T>(path, { method: 'DELETE' }, opts);
   }
 
   async login(username: string, password: string): Promise<void> {
