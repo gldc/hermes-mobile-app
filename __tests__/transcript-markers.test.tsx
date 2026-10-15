@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react-native';
+import { fireEvent, render, screen } from '@testing-library/react-native';
 import { MessageRow } from '../src/components/message-row';
 import { useTheme, type ThemeColors } from '../src/theme';
 
@@ -40,9 +40,11 @@ describe('tool row outcome', () => {
     return colors!;
   }
 
+  // A Trace line keeps the tool glyph when the tool ended fine and swaps in a mark only for what went
+  // wrong; a failure turns the whole line red.
   test.each([
-    [undefined, 'Tool terminal, finished', 'checkmark.circle.fill', 'success'],
-    ['ok', 'Tool terminal, finished', 'checkmark.circle.fill', 'success'],
+    [undefined, 'Tool terminal, finished', 'hammer.fill', 'textDim'],
+    ['ok', 'Tool terminal, finished', 'hammer.fill', 'textDim'],
     ['failed', 'Tool terminal, failed', 'xmark.circle.fill', 'danger'],
     ['denied', 'Tool terminal, denied', 'hand.raised.fill', 'textDim'],
     ['interrupted', 'Tool terminal, interrupted', 'stop.circle.fill', 'textDim'],
@@ -51,7 +53,7 @@ describe('tool row outcome', () => {
     mockIcon.mockClear();
     await render(<MessageRow item={tool(outcome)} />);
     expect(screen.getByLabelText(label)).toBeOnTheScreen();
-    const marks = mockIcon.mock.calls.map(([p]) => p).filter((p) => p.sf !== 'hammer.fill');
+    const marks = mockIcon.mock.calls.map(([p]) => p);
     expect(marks).toEqual([expect.objectContaining({ sf, color: colors[token] })]);
   });
 
@@ -74,5 +76,79 @@ describe('tool row outcome', () => {
   test('a running tool still says running', async () => {
     await render(<MessageRow item={{ ...tool(), tool: { id: 't1', name: 'terminal', running: true } }} />);
     expect(screen.getByLabelText('Tool terminal, running')).toBeOnTheScreen();
+  });
+
+  test('the summary shows under the line, and the duration after the title', async () => {
+    const item = tool('denied');
+    const summary = 'You denied this command — it did not run.';
+    await render(<MessageRow item={{ ...item, tool: { ...item.tool, summary, durationS: 1.24 } }} />);
+    expect(screen.getByText(summary)).toBeOnTheScreen();
+    expect(screen.getByText('1.2s')).toBeOnTheScreen();
+  });
+
+  test('a running tool shows no summary or duration yet', async () => {
+    await render(
+      <MessageRow item={{ ...tool(), tool: { id: 't1', name: 'terminal', running: true, summary: 'early', durationS: 3 } }} />,
+    );
+    expect(screen.queryByText('early')).toBeNull();
+    expect(screen.queryByText('3.0s')).toBeNull();
+  });
+
+  test('a tool with detail is a button that expands into it', async () => {
+    const item = tool();
+    await render(<MessageRow item={{ ...item, tool: { ...item.tool, detail: 'total 0' } }} />);
+    const trigger = screen.getByRole('button', { name: 'Tool terminal, finished, tap for details' });
+    expect(trigger).toBeCollapsed();
+    expect(screen.queryByText('total 0')).toBeNull();
+    await fireEvent.press(trigger);
+    expect(trigger).toBeExpanded();
+    expect(screen.getByText('total 0')).toBeOnTheScreen();
+  });
+
+  test('the detail sits on a raised block that stands out in both themes', async () => {
+    const colors = await themeColors();
+    const item = tool();
+    await render(<MessageRow item={{ ...item, tool: { ...item.tool, detail: 'total 0' } }} />);
+    await fireEvent.press(screen.getByRole('button'));
+    expect(screen.getByTestId('tool-detail')).toHaveStyle({ backgroundColor: colors.raised });
+  });
+
+  test('a long summary on a tool without detail shows in full', async () => {
+    const item = tool('denied');
+    await render(<MessageRow item={{ ...item, tool: { ...item.tool, summary: 'You denied this command.' } }} />);
+    expect(screen.getByText('You denied this command.').props.numberOfLines ?? 0).toBe(0);
+  });
+
+  test('a diff wins over the result text', async () => {
+    const item = tool();
+    await render(<MessageRow item={{ ...item, tool: { ...item.tool, detail: 'ok', diff: '+ added' } }} />);
+    await fireEvent.press(screen.getByRole('button'));
+    expect(screen.getByText('+ added')).toBeOnTheScreen();
+    expect(screen.queryByText('ok')).toBeNull();
+  });
+});
+
+describe('reasoning', () => {
+  test('headings and code inside reasoning are muted like its text', async () => {
+    let colors: ThemeColors | null = null;
+    function Probe() {
+      colors = useTheme().colors;
+      return null;
+    }
+    await render(<Probe />);
+    await render(
+      <MessageRow item={{ key: 'a1', role: 'assistant', text: 'A', complete: true, reasoning: '## Plan\n\nUse `tabs`.' }} />,
+    );
+    await fireEvent.press(screen.getByLabelText('Reasoning, tap to expand'));
+    expect(screen.getByText('Plan')).toHaveStyle({ color: colors!.textDim, fontSize: 15 });
+    expect(screen.getByText('tabs')).toHaveStyle({ color: colors!.textDim });
+  });
+
+  test('starts closed and expands into the reasoning text', async () => {
+    await render(<MessageRow item={{ key: 'a1', role: 'assistant', text: 'Answer', complete: true, reasoning: 'Because tabs.' }} />);
+    expect(screen.queryByText('Because tabs.')).toBeNull();
+    await fireEvent.press(screen.getByLabelText('Reasoning, tap to expand'));
+    expect(screen.getByText('Because tabs.')).toBeOnTheScreen();
+    expect(screen.getByLabelText('Reasoning, tap to collapse')).toBeExpanded();
   });
 });

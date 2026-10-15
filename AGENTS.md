@@ -70,7 +70,9 @@ src/lib/request-answers.ts answers cards (guards on the store's card, never the 
 src/lib/mcp.ts    pure connector logic (capabilities, status line, validation, error mapping,
                   the authorization-URL check)
 src/lib/mcp-oauth.ts connector OAuth sign-in sequence, I/O injected; cancels every flow it abandons
-src/components/   message rows, tool cards, composer, theme'd pieces
+src/components/   message rows, step lines, composer, theme'd pieces
+  trace.tsx       native port of shadcn/ui Trace: the one line shape (icon, title, description,
+                  status; expands, nests) for tool calls, reasoning, subagents, the plan, Stopped
   approval-card / clarify-card / secure-entry-card  server→client request cards
   connector-row / connector-test-card  the Connectors list row; the Test button + result
   connector-reload-banner  "the agent doesn't have your changes yet" + Reload now
