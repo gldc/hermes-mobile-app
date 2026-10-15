@@ -3,7 +3,7 @@ import { fireEvent, render, screen } from '@testing-library/react-native';
 import { LinkifiedText } from '../src/components/linkified-text';
 import { MarkdownView } from '../src/components/markdown-view';
 import { MessageRow } from '../src/components/message-row';
-import { isOpenableUrl, linkSegments, openExternal } from '../src/lib/links';
+import { isOpenableUrl, LINKIFY_MAX_CHARS, linkSegments, openExternal } from '../src/lib/links';
 
 jest.mock('../src/components/icon', () => ({ Icon: () => null }));
 jest.mock('expo-haptics', () => ({ impactAsync: jest.fn(async () => {}), ImpactFeedbackStyle: { Medium: 'medium' } }));
@@ -69,6 +69,32 @@ describe('linkSegments', () => {
   test('text without URLs is one plain segment', () => {
     expect(linkSegments('no links here')).toEqual([{ text: 'no links here' }]);
   });
+
+  test('a text that is only a URL is one link', () => {
+    expect(linkSegments('https://a.dev/x')).toEqual([{ text: 'https://a.dev/x', url: 'https://a.dev/x' }]);
+  });
+
+  test('a scheme the app refuses stays text between links', () => {
+    expect(linkSegments('https://a.dev ftp://b.dev https://c.dev')).toEqual([
+      { text: 'https://a.dev', url: 'https://a.dev' },
+      { text: ' ftp://b.dev ' },
+      { text: 'https://c.dev', url: 'https://c.dev' },
+    ]);
+  });
+
+  test('the empty string is one empty segment', () => {
+    expect(linkSegments('')).toEqual([{ text: '' }]);
+  });
+
+  // linkify's scan is quadratic on some inputs ('mailto:' repeated: ~1.2 s at 140 KB on a Mac),
+  // and agent output is untrusted: past the cap, text is not scanned at all.
+  test('text past the cap is not scanned', () => {
+    const huge = 'mailto:'.repeat(20_000);
+    const started = Date.now();
+    expect(linkSegments(huge)).toEqual([{ text: huge }]);
+    expect(Date.now() - started).toBeLessThan(50);
+    expect(linkSegments(`https://a.dev ${'x'.repeat(LINKIFY_MAX_CHARS)}`)).toHaveLength(1);
+  });
 });
 
 describe('LinkifiedText', () => {
@@ -94,10 +120,31 @@ describe('MarkdownView', () => {
     expect(openURL).toHaveBeenCalledWith('https://example.com/guide');
   });
 
-  test('a markdown link to a refused scheme stays inert', async () => {
-    await render(<MarkdownView text="[open settings](hermesmobileapp://settings)" />);
-    await fireEvent.press(screen.getByText('open settings'));
-    expect(openURL).not.toHaveBeenCalled();
+  test.each(['hermesmobileapp://settings', 'tel:5551234', 'ftp://files.example.com', 'javascript:alert(1)'])(
+    'a markdown link to %s is plain text, not a dead link',
+    async (href) => {
+      await render(<MarkdownView text={`[open it](${href})`} />);
+      expect(screen.queryByRole('link')).toBeNull();
+      await fireEvent.press(screen.getByText(/open it/));
+      expect(openURL).not.toHaveBeenCalled();
+    },
+  );
+
+  test.each([
+    ['[mail me](mailto:hi@example.com)', 'mail me', 'mailto:hi@example.com'],
+    ['[Shout](HTTPS://EXAMPLE.COM/A)', 'Shout', 'HTTPS://EXAMPLE.COM/A'],
+  ])('%s opens', async (text, name, url) => {
+    await render(<MarkdownView text={text} />);
+    await fireEvent.press(screen.getByRole('link', { name }));
+    expect(openURL).toHaveBeenCalledWith(url);
+  });
+
+  test('past the cap a bare URL is not linked, but a written link still is', async () => {
+    const pad = 'word '.repeat(LINKIFY_MAX_CHARS / 5);
+    await render(<MarkdownView text={`${pad}\n\nhttps://example.com/bare and [docs](https://example.com/docs)`} />);
+    expect(screen.queryByRole('link', { name: 'https://example.com/bare' })).toBeNull();
+    await fireEvent.press(screen.getByRole('link', { name: 'docs' }));
+    expect(openURL).toHaveBeenCalledWith('https://example.com/docs');
   });
 
   test('a file name is not linked', async () => {

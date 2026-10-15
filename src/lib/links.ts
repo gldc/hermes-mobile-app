@@ -10,6 +10,17 @@ import { MarkdownIt } from 'react-native-markdown-display';
  * means a link needs its scheme: `www.foo.org` alone is not linked. */
 export const markdownParser = MarkdownIt({ typographer: true, linkify: true });
 markdownParser.linkify.set({ fuzzyLink: false, fuzzyEmail: false, fuzzyIP: false });
+/** The library's default parser: written links only. */
+const plainMarkdownParser = MarkdownIt({ typographer: true });
+
+/** linkify's scan is quadratic on some inputs ('mailto:' repeated takes ~1.2 s at 140 KB on a
+ * Mac) and agent output is untrusted, so longer text isn't scanned for bare URLs. */
+export const LINKIFY_MAX_CHARS = 10_000;
+
+/** The parser for a message: bare URLs are linked up to the cap, written links always. */
+export function markdownParserFor(text: string) {
+  return text.length <= LINKIFY_MAX_CHARS ? markdownParser : plainMarkdownParser;
+}
 
 const OPENABLE = /^(https?:\/\/|mailto:)/i;
 
@@ -27,8 +38,9 @@ export function openExternal(url: string): void {
 
 export type LinkSegment = { text: string; url?: string };
 
-/** Splits plain text into runs of text and URLs, with the same rules as the markdown parser. */
+/** Splits plain text into runs of text and URLs, with the same rules (and cap) as the markdown parser. */
 export function linkSegments(text: string): LinkSegment[] {
+  if (text.length > LINKIFY_MAX_CHARS) return [{ text }];
   const matches = markdownParser.linkify.match(text) ?? [];
   const out: LinkSegment[] = [];
   let at = 0;
