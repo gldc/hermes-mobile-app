@@ -4,19 +4,27 @@ import type { ThemeColors } from '@/theme';
 import { useTheme } from '@/theme';
 
 function buildStyles(c: ThemeColors, muted: boolean) {
+  // Muted (reasoning inside a Trace): headings and code step down with the body, never louder.
+  const ink = muted ? c.textDim : c.text;
   const code = {
     backgroundColor: c.raised,
-    color: c.text,
+    color: ink,
     fontFamily: 'Menlo',
-    fontSize: 14,
+    fontSize: muted ? 12.5 : 14,
     borderWidth: 0,
   };
   return {
     body: muted ? { color: c.textDim, fontSize: 14, lineHeight: 22 } : { color: c.text, fontSize: 17, lineHeight: 27 },
     paragraph: { marginTop: 0, marginBottom: 10 },
-    heading1: { color: c.text, fontSize: 24, lineHeight: 32, fontWeight: '700', marginTop: 14, marginBottom: 6 },
-    heading2: { color: c.text, fontSize: 20, lineHeight: 28, fontWeight: '700', marginTop: 12, marginBottom: 6 },
-    heading3: { color: c.text, fontSize: 17, lineHeight: 24, fontWeight: '600', marginTop: 10, marginBottom: 4 },
+    heading1: muted
+      ? { color: ink, fontSize: 16, lineHeight: 22, fontWeight: '700', marginTop: 8, marginBottom: 4 }
+      : { color: ink, fontSize: 24, lineHeight: 32, fontWeight: '700', marginTop: 14, marginBottom: 6 },
+    heading2: muted
+      ? { color: ink, fontSize: 15, lineHeight: 22, fontWeight: '700', marginTop: 8, marginBottom: 4 }
+      : { color: ink, fontSize: 20, lineHeight: 28, fontWeight: '700', marginTop: 12, marginBottom: 6 },
+    heading3: muted
+      ? { color: ink, fontSize: 14, lineHeight: 22, fontWeight: '600', marginTop: 6, marginBottom: 2 }
+      : { color: ink, fontSize: 17, lineHeight: 24, fontWeight: '600', marginTop: 10, marginBottom: 4 },
     strong: { fontWeight: '600' },
     link: { color: c.accent, textDecorationLine: 'none' },
     blockquote: {

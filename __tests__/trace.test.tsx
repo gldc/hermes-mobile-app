@@ -79,6 +79,32 @@ describe('TraceLine', () => {
     expect(mockIcon.mock.calls.map(([p]) => p.sf)).toEqual(['hammer.fill']);
   });
 
+  test('a note on a line that cannot expand shows in full', async () => {
+    await render(
+      <TraceLine>
+        <TraceTitle>t</TraceTitle>
+      </TraceLine>,
+    );
+    await render(<TraceNote>long</TraceNote>);
+    expect(screen.getByText('long').props.numberOfLines ?? 0).toBe(0);
+  });
+
+  test('a note inside a trigger clamps to two lines while closed and shows in full when open', async () => {
+    await render(
+      <TraceCollapsible>
+        <TraceCollapsibleTrigger accessibilityLabel="x">
+          <TraceLine>
+            <TraceTitle>t</TraceTitle>
+          </TraceLine>
+          <TraceNote>long</TraceNote>
+        </TraceCollapsibleTrigger>
+      </TraceCollapsible>,
+    );
+    expect(screen.getByText('long').props.numberOfLines).toBe(2);
+    await fireEvent.press(screen.getByRole('button'));
+    expect(screen.getByText('long').props.numberOfLines ?? 0).toBe(0);
+  });
+
   test('a note renders under the line', async () => {
     await render(
       <Trace>
@@ -98,6 +124,8 @@ describe('running title', () => {
     jest.spyOn(Animated, 'loop').mockReturnValue(loop);
     return loop;
   }
+  // The preset's mock keeps a resolved value across tests: pin the setting off for each one.
+  beforeEach(() => jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(false));
   afterEach(() => jest.restoreAllMocks());
 
   test('pulses while running and stops when it finishes', async () => {
@@ -108,13 +136,61 @@ describe('running title', () => {
     expect(loop.stop).toHaveBeenCalled();
   });
 
-  test('does not pulse under Reduce Motion', async () => {
+  test('never starts the pulse under Reduce Motion, and swaps in a static running mark', async () => {
     jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
     const loop = mockLoop();
     await render(<Line status="running" />);
     await act(async () => {});
-    // The setting arrives asynchronously: any loop started before it is stopped, none restarted.
-    expect(loop.start.mock.calls.length).toBe(loop.stop.mock.calls.length);
+    expect(loop.start).not.toHaveBeenCalled();
+    // Without the pulse, a running line would look finished: its icon says it instead.
+    expect(mockIcon).toHaveBeenLastCalledWith(expect.objectContaining({ sf: 'hourglass' }));
+  });
+
+  test('keeps its own icon while it pulses', async () => {
+    mockLoop();
+    await render(<Line status="running" />);
+    await act(async () => {});
+    expect(mockIcon).toHaveBeenLastCalledWith(expect.objectContaining({ sf: 'hammer.fill' }));
+  });
+
+  test('follows Reduce Motion turned on mid-run, and unsubscribes on unmount', async () => {
+    const listeners: ((v: boolean) => void)[] = [];
+    const remove = jest.fn();
+    jest.spyOn(AccessibilityInfo, 'addEventListener').mockImplementation(((_: string, fn: (v: boolean) => void) => {
+      listeners.push(fn);
+      return { remove };
+    }) as never);
+    const onChange = (v: boolean) => listeners.forEach((fn) => fn(v));
+    const loop = mockLoop();
+    const { unmount } = await render(<Line status="running" />);
+    await act(async () => {});
+    expect(loop.start).toHaveBeenCalledTimes(1);
+    await act(async () => onChange(true));
+    expect(loop.stop).toHaveBeenCalled();
+    expect(mockIcon).toHaveBeenLastCalledWith(expect.objectContaining({ sf: 'hourglass' }));
+    await unmount();
+    expect(remove).toHaveBeenCalledTimes(listeners.length);
+  });
+
+  test('the chevron of a running line stays a chevron under Reduce Motion', async () => {
+    jest.spyOn(AccessibilityInfo, 'isReduceMotionEnabled').mockResolvedValue(true);
+    mockLoop();
+    await render(
+      <TraceCollapsible>
+        <TraceCollapsibleTrigger accessibilityLabel="x">
+          <TraceLine status="running">
+            <TraceIcon sf="cpu" />
+            <TraceTitle>x</TraceTitle>
+          </TraceLine>
+        </TraceCollapsibleTrigger>
+      </TraceCollapsible>,
+    );
+    await act(async () => {});
+    const drawn = mockIcon.mock.calls.map(([p]) => p as { sf: string; size?: number });
+    // The status icon turns into the hourglass; the 11pt chevron never does.
+    expect(drawn.some((p) => p.sf === 'hourglass' && p.size === 14)).toBe(true);
+    expect(drawn.filter((p) => p.size === 11).map((p) => p.sf)).toEqual(expect.arrayContaining(['chevron.right']));
+    expect(drawn.filter((p) => p.size === 11).every((p) => p.sf === 'chevron.right')).toBe(true);
   });
 
   test('a finished line never starts the pulse', async () => {

@@ -58,7 +58,8 @@ export function Trace({ children, style }: { children: ReactNode; style?: StyleP
 
 /**
  * One step. Plain text on its own; wrap it in a TraceCollapsibleTrigger to make it expand.
- * Status shows as color and motion only, so say it in the title or `accessibilityLabel` too.
+ * Status shows as color and motion (under Reduce Motion, a running line's icon becomes an
+ * hourglass instead), so say it in the title or `accessibilityLabel` too.
  */
 export function TraceLine({
   status,
@@ -85,13 +86,16 @@ export function TraceLine({
       >
         {children}
         {trigger ? (
-          // Upstream pulls the trailing icon 4pt toward the title.
-          <TraceIcon
-            testID="trace-chevron"
-            sf="chevron.right"
-            size={11}
-            style={{ marginLeft: -4, transform: [{ rotate: trigger.open ? '90deg' : '0deg' }] }}
-          />
+          // Not a status icon: a running line's chevron stays a chevron under Reduce Motion.
+          <LineContext.Provider value={{ status: status === 'running' ? undefined : status }}>
+            {/* Upstream pulls the trailing icon 4pt toward the title. */}
+            <TraceIcon
+              testID="trace-chevron"
+              sf="chevron.right"
+              size={11}
+              style={{ marginLeft: -4, transform: [{ rotate: trigger.open ? '90deg' : '0deg' }] }}
+            />
+          </LineContext.Provider>
         ) : null}
       </View>
     </LineContext.Provider>
@@ -115,6 +119,9 @@ export function TraceIcon({
   children?: ReactNode;
 }) {
   const tone = useTone();
+  const { status } = useContext(LineContext);
+  const glyph =
+    sf && status === 'running' ? <RunningIcon sf={sf} size={size} color={color ?? tone} /> : sf ? <Icon sf={sf} size={size} color={color ?? tone} /> : children;
   return (
     <View
       testID={testID}
@@ -122,9 +129,15 @@ export function TraceIcon({
       importantForAccessibility="no-hide-descendants"
       style={[{ width: ICON_BOX, height: LINE_HEIGHT, alignItems: 'center', justifyContent: 'center' }, style]}
     >
-      {sf ? <Icon sf={sf} size={size} color={color ?? tone} /> : children}
+      {glyph}
     </View>
   );
+}
+
+/** Without the pulse a running line would look finished, so under Reduce Motion its icon says it. */
+function RunningIcon({ sf, size, color }: { sf: string; size: number; color: string }) {
+  const reduceMotion = useReduceMotion();
+  return <Icon sf={reduceMotion ? 'hourglass' : sf} size={size} color={color} />;
 }
 
 /** What happened, as a sentence. Truncates; pulses while the line is running. */
@@ -160,7 +173,8 @@ function RunningTitle({ children, numberOfLines, style }: { children: ReactNode;
   const [pulse] = useState(() => new Animated.Value(1));
   const reduceMotion = useReduceMotion();
   useEffect(() => {
-    if (reduceMotion) return;
+    // Wait for the setting (null until it arrives) so the pulse never flashes under Reduce Motion.
+    if (reduceMotion !== false) return;
     const timing = (toValue: number) =>
       Animated.timing(pulse, { toValue, duration: 750, easing: Easing.inOut(Easing.quad), useNativeDriver: true });
     const loop = Animated.loop(Animated.sequence([timing(0.4), timing(1)]));
@@ -177,15 +191,18 @@ function RunningTitle({ children, numberOfLines, style }: { children: ReactNode;
   );
 }
 
-function useReduceMotion(): boolean {
-  const [reduce, setReduce] = useState(false);
+/** The Reduce Motion setting, live; null until the first read resolves. */
+function useReduceMotion(): boolean | null {
+  const [reduce, setReduce] = useState<boolean | null>(null);
   useEffect(() => {
     let live = true;
     AccessibilityInfo.isReduceMotionEnabled().then(
       (v) => {
         if (live) setReduce(v);
       },
-      () => {},
+      () => {
+        if (live) setReduce(false);
+      },
     );
     const sub = AccessibilityInfo.addEventListener('reduceMotionChanged', setReduce);
     return () => {
@@ -206,11 +223,15 @@ export function TraceDescription({ children }: { children: ReactNode }) {
   );
 }
 
-/** App addition: a muted line under a TraceLine, aligned with its title (an outcome, the current step). */
-export function TraceNote({ children, numberOfLines = 2 }: { children: ReactNode; numberOfLines?: number }) {
+/**
+ * App addition: a muted line under a TraceLine, aligned with its title (an outcome, the current step).
+ * Clamped to two lines only inside a closed trigger, where a tap shows the rest; in full otherwise.
+ */
+export function TraceNote({ children, numberOfLines }: { children: ReactNode; numberOfLines?: number }) {
   const { colors } = useTheme();
+  const trigger = useContext(TriggerContext);
   return (
-    <Text numberOfLines={numberOfLines} style={{ marginLeft: TITLE_INSET, color: colors.textFaint, fontSize: 13, lineHeight: 18 }}>
+    <Text numberOfLines={numberOfLines ?? (trigger && !trigger.open ? 2 : undefined)} style={{ marginLeft: TITLE_INSET, color: colors.textFaint, fontSize: 13, lineHeight: 18 }}>
       {children}
     </Text>
   );

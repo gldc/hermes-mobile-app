@@ -93,8 +93,8 @@ function SubagentLine({ s, now }: { s: SubagentState; now: number }) {
   );
 }
 
-/** A delegation batch: one line that opens while its subagents run (a tap wins), and a line per
- * subagent inside it that expands into its step log. */
+/** A delegation batch: one line that opens while its subagents run or when one failed (a tap wins),
+ * and a line per subagent inside it that expands into its step log. A failure turns the batch red. */
 export function SubagentMonitorCard({ batch }: { batch: SubagentBatch }) {
   const [open, setOpen] = useState<boolean>();
   const running = batch.subagents.some((s) => s.status === 'running');
@@ -107,17 +107,19 @@ export function SubagentMonitorCard({ batch }: { batch: SubagentBatch }) {
   }, [running]);
 
   const runningCount = batch.subagents.filter((s) => s.status === 'running').length;
-  const doneCount = batch.subagents.length - runningCount;
-  const header = running ? `${runningCount} running` : `${doneCount} done`;
+  const failedCount = batch.subagents.filter((s) => s.status === 'failed' || s.status === 'timeout').length;
+  const doneCount = batch.subagents.length - runningCount - failedCount;
+  const counts = [running ? `${runningCount} running` : `${doneCount} done`, failedCount ? `${failedCount} failed` : ''].filter(Boolean);
+  const header = counts.join(' · ');
   const totalCost = batch.subagents.reduce((acc, s) => acc + (s.costUsd ?? 0), 0);
   const cost = !running && totalCost > 0 ? ` · ~$${totalCost.toFixed(2)}` : '';
 
   return (
     <View style={{ paddingVertical: 4 }}>
       <Trace>
-        <TraceCollapsible open={open ?? running} onOpenChange={setOpen}>
-          <TraceCollapsibleTrigger accessibilityLabel={(isOpen) => `Subagents, ${header}, tap to ${isOpen ? 'collapse' : 'expand'}`}>
-            <TraceLine status={running ? 'running' : undefined}>
+        <TraceCollapsible open={open ?? (running || failedCount > 0)} onOpenChange={setOpen}>
+          <TraceCollapsibleTrigger accessibilityLabel={(isOpen) => `Subagents, ${counts.join(', ')}, tap to ${isOpen ? 'collapse' : 'expand'}`}>
+            <TraceLine status={running ? 'running' : failedCount > 0 ? 'error' : undefined}>
               <TraceIcon sf="square.grid.2x2" />
               <TraceTitle>Subagents</TraceTitle>
               <TraceDescription>

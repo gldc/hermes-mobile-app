@@ -105,6 +105,20 @@ describe('tool row outcome', () => {
     expect(screen.getByText('total 0')).toBeOnTheScreen();
   });
 
+  test('the detail sits on a raised block that stands out in both themes', async () => {
+    const colors = await themeColors();
+    const item = tool();
+    await render(<MessageRow item={{ ...item, tool: { ...item.tool, detail: 'total 0' } }} />);
+    await fireEvent.press(screen.getByRole('button'));
+    expect(screen.getByTestId('tool-detail')).toHaveStyle({ backgroundColor: colors.raised });
+  });
+
+  test('a long summary on a tool without detail shows in full', async () => {
+    const item = tool('denied');
+    await render(<MessageRow item={{ ...item, tool: { ...item.tool, summary: 'You denied this command.' } }} />);
+    expect(screen.getByText('You denied this command.').props.numberOfLines ?? 0).toBe(0);
+  });
+
   test('a diff wins over the result text', async () => {
     const item = tool();
     await render(<MessageRow item={{ ...item, tool: { ...item.tool, detail: 'ok', diff: '+ added' } }} />);
@@ -115,6 +129,21 @@ describe('tool row outcome', () => {
 });
 
 describe('reasoning', () => {
+  test('headings and code inside reasoning are muted like its text', async () => {
+    let colors: ThemeColors | null = null;
+    function Probe() {
+      colors = useTheme().colors;
+      return null;
+    }
+    await render(<Probe />);
+    await render(
+      <MessageRow item={{ key: 'a1', role: 'assistant', text: 'A', complete: true, reasoning: '## Plan\n\nUse `tabs`.' }} />,
+    );
+    await fireEvent.press(screen.getByLabelText('Reasoning, tap to expand'));
+    expect(screen.getByText('Plan')).toHaveStyle({ color: colors!.textDim, fontSize: 15 });
+    expect(screen.getByText('tabs')).toHaveStyle({ color: colors!.textDim });
+  });
+
   test('starts closed and expands into the reasoning text', async () => {
     await render(<MessageRow item={{ key: 'a1', role: 'assistant', text: 'Answer', complete: true, reasoning: 'Because tabs.' }} />);
     expect(screen.queryByText('Because tabs.')).toBeNull();

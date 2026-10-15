@@ -128,7 +128,7 @@ function ToolLine({ tool }: { tool: ToolInfo }) {
     <TraceCollapsible>
       <TraceCollapsibleTrigger accessibilityLabel={label}>{head}</TraceCollapsibleTrigger>
       <TraceCollapsibleContent>
-        <View style={{ backgroundColor: colors.surface, borderRadius: 10, borderCurve: 'continuous', padding: 10 }}>
+        <View testID="tool-detail" style={{ backgroundColor: colors.raised, borderRadius: 10, borderCurve: 'continuous', padding: 10 }}>
           <Text selectable style={{ color: colors.textDim, fontFamily: 'Menlo', fontSize: 11.5, lineHeight: 17 }}>
             {tool.diff ? tool.diff : tool.detail}
           </Text>
