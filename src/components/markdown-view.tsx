@@ -1,5 +1,7 @@
 import { memo } from 'react';
-import Markdown from 'react-native-markdown-display';
+import { Text } from 'react-native';
+import Markdown, { type RenderRules } from 'react-native-markdown-display';
+import { markdownParser, openExternal } from '@/lib/links';
 import type { ThemeColors } from '@/theme';
 import { useTheme } from '@/theme';
 
@@ -50,9 +52,28 @@ function buildStyles(c: ThemeColors, muted: boolean) {
   } as const;
 }
 
+/** Links (written or bare URLs) open in the default browser, and only for http(s)/mailto. */
+const rules: RenderRules = {
+  link: (node, children, _parent, styles) => (
+    <Text key={node.key} accessibilityRole="link" style={styles.link} onPress={() => openExternal(String(node.attributes.href ?? ''))}>
+      {children}
+    </Text>
+  ),
+};
+
+/** Image and block links go through the library's handler: open allowed URLs ourselves, never its default. */
+function onLinkPress(url: string): boolean {
+  openExternal(url);
+  return false;
+}
+
 /** Themed markdown for completed assistant messages. Memoized — re-renders only when text changes.
  * `muted`: smaller, dimmer body text for detail inside a Trace (reasoning). */
 export const MarkdownView = memo(function MarkdownView({ text, muted = false }: { text: string; muted?: boolean }) {
   const { colors } = useTheme();
-  return <Markdown style={buildStyles(colors, muted) as any}>{text}</Markdown>;
+  return (
+    <Markdown style={buildStyles(colors, muted) as any} markdownit={markdownParser} rules={rules} onLinkPress={onLinkPress}>
+      {text}
+    </Markdown>
+  );
 });
