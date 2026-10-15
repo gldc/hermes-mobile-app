@@ -3,6 +3,7 @@ import { Pressable, Share, Text, View } from 'react-native';
 import * as Haptics from 'expo-haptics';
 import { Image } from 'expo-image';
 import { Icon } from '@/components/icon';
+import { LinkifiedText } from '@/components/linkified-text';
 import { MarkdownView } from '@/components/markdown-view';
 import {
   Trace,
@@ -129,9 +130,9 @@ function ToolLine({ tool }: { tool: ToolInfo }) {
       <TraceCollapsibleTrigger accessibilityLabel={label}>{head}</TraceCollapsibleTrigger>
       <TraceCollapsibleContent>
         <View testID="tool-detail" style={{ backgroundColor: colors.raised, borderRadius: 10, borderCurve: 'continuous', padding: 10 }}>
-          <Text selectable style={{ color: colors.textDim, fontFamily: 'Menlo', fontSize: 11.5, lineHeight: 17 }}>
-            {tool.diff ? tool.diff : tool.detail}
-          </Text>
+          <LinkifiedText selectable style={{ color: colors.textDim, fontFamily: 'Menlo', fontSize: 11.5, lineHeight: 17 }}>
+            {(tool.diff ? tool.diff : tool.detail) ?? ''}
+          </LinkifiedText>
         </View>
       </TraceCollapsibleContent>
     </TraceCollapsible>
@@ -176,9 +177,9 @@ export const MessageRow = memo(function MessageRow({ item }: { item: ChatItem })
               paddingVertical: 11,
             }}
           >
-            <Text selectable style={{ color: colors.text, fontSize: 17, lineHeight: 24 }}>
+            <LinkifiedText selectable style={{ color: colors.text, fontSize: 17, lineHeight: 24 }}>
               {item.text}
-            </Text>
+            </LinkifiedText>
           </View>
         ) : null}
         {item.steered ? (
