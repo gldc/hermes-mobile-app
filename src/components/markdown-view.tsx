@@ -3,7 +3,7 @@ import Markdown from 'react-native-markdown-display';
 import type { ThemeColors } from '@/theme';
 import { useTheme } from '@/theme';
 
-function buildStyles(c: ThemeColors) {
+function buildStyles(c: ThemeColors, muted: boolean) {
   const code = {
     backgroundColor: c.raised,
     color: c.text,
@@ -12,7 +12,7 @@ function buildStyles(c: ThemeColors) {
     borderWidth: 0,
   };
   return {
-    body: { color: c.text, fontSize: 17, lineHeight: 27 },
+    body: muted ? { color: c.textDim, fontSize: 14, lineHeight: 22 } : { color: c.text, fontSize: 17, lineHeight: 27 },
     paragraph: { marginTop: 0, marginBottom: 10 },
     heading1: { color: c.text, fontSize: 24, lineHeight: 32, fontWeight: '700', marginTop: 14, marginBottom: 6 },
     heading2: { color: c.text, fontSize: 20, lineHeight: 28, fontWeight: '700', marginTop: 12, marginBottom: 6 },
@@ -42,8 +42,9 @@ function buildStyles(c: ThemeColors) {
   } as const;
 }
 
-/** Themed markdown for completed assistant messages. Memoized — re-renders only when text changes. */
-export const MarkdownView = memo(function MarkdownView({ text }: { text: string }) {
+/** Themed markdown for completed assistant messages. Memoized — re-renders only when text changes.
+ * `muted`: smaller, dimmer body text for detail inside a Trace (reasoning). */
+export const MarkdownView = memo(function MarkdownView({ text, muted = false }: { text: string; muted?: boolean }) {
   const { colors } = useTheme();
-  return <Markdown style={buildStyles(colors) as any}>{text}</Markdown>;
+  return <Markdown style={buildStyles(colors, muted) as any}>{text}</Markdown>;
 });

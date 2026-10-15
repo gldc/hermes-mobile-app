@@ -9,9 +9,12 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { ApprovalCard } from '@/components/approval-card';
 import { ClarifyCard } from '@/components/clarify-card';
 import { Composer } from '@/components/composer';
-import { MessageRow } from '@/components/message-row';
+import { MessageRow, type ChatItem, type ToolInfo } from '@/components/message-row';
 import { SecureEntryCard } from '@/components/secure-entry-card';
+import { SubagentMonitorCard } from '@/components/subagent-monitor-card';
+import { TodoCard } from '@/components/todo-card';
 import { VaultDeclinedNote } from '@/components/vault-declined-note';
+import type { SubagentBatch, SubagentState } from '@/lib/subagent-progress';
 import type { ComposerMode, RequestCardState } from '@/lib/turn-controller';
 import { useTheme } from '@/theme';
 
@@ -44,6 +47,34 @@ const devBatch = {
   ],
 };
 
+const devStarted = Date.now() - 83_000;
+function devSubagent(over: Partial<SubagentState> & Pick<SubagentState, 'key' | 'goal' | 'status'>): SubagentState {
+  return { taskIndex: 0, taskCount: 2, activity: '', log: [], toolCount: 0, startedAtMs: devStarted, ...over };
+}
+const devRunningBatch: SubagentBatch = {
+  finalized: false,
+  subagents: [
+    devSubagent({ key: 'r1', goal: 'Audit the auth middleware', status: 'running', activity: 'read_file src/auth.ts', toolCount: 4, log: ['search_files "session"', 'read_file src/auth.ts'] }),
+    devSubagent({ key: 'r2', goal: 'Draft the migration plan', status: 'completed', durationSeconds: 41, inputTokens: 9000, outputTokens: 3200, summary: 'Three steps, no downtime.', model: 'hermes-4' }),
+  ],
+};
+const devDoneBatch: SubagentBatch = {
+  finalized: true,
+  subagents: [
+    devSubagent({ key: 'd1', goal: 'Run the e2e suite', status: 'failed', durationSeconds: 95, summary: '2 specs failed: login, checkout.', costUsd: 0.04 }),
+    devSubagent({ key: 'd2', goal: 'Refresh the fixtures', status: 'stopped', durationSeconds: 12, costUsd: 0.01 }),
+  ],
+};
+const devTodos = [
+  { id: '1', content: 'Read the existing tool row', status: 'completed' as const },
+  { id: '2', content: 'Port Trace to React Native with the app theme, notes and nested detail', status: 'in_progress' as const },
+  { id: '3', content: 'Move every step onto it', status: 'pending' as const },
+  { id: '4', content: 'Ship a shimmer', status: 'cancelled' as const },
+];
+function devTool(key: string, tool: Omit<ToolInfo, 'id'>): ChatItem {
+  return { key, role: 'tool', text: tool.name, tool: { id: key, ...tool } };
+}
+
 function DevComposer({ mode, initial = '', image = false }: { mode: ComposerMode; initial?: string; image?: boolean }) {
   const [value, setValue] = useState(initial);
   return (
@@ -71,6 +102,17 @@ export default function DevCards() {
       <Section title="Transcript markers">
         <MessageRow item={{ key: 'd1', role: 'user', text: 'Actually, use tabs.', complete: true, steered: true }} />
         <MessageRow item={{ key: 'd2', role: 'status', text: 'Stopped', marker: 'stopped' }} />
+      </Section>
+      <Section title="Trace">
+        <MessageRow item={devTool('t1', { name: 'terminal', context: 'pnpm build', running: true })} />
+        <MessageRow item={devTool('t2', { name: 'read_file', context: 'src/components/trace.tsx', running: false, durationS: 0.4, detail: 'export function Trace(…)' })} />
+        <MessageRow item={devTool('t3', { name: 'terminal', context: 'pnpm lint', running: false, durationS: 12.6, outcome: 'failed', detail: 'error  Unexpected any  @typescript-eslint/no-explicit-any' })} />
+        <MessageRow item={devTool('t4', { name: 'terminal', context: 'rm -rf dist/', running: false, outcome: 'denied', summary: 'You denied this command — it did not run.' })} />
+        <MessageRow item={devTool('t5', { name: 'web_search', context: 'expo sdk 57 changelog', running: false, durationS: 3.2, outcome: 'interrupted' })} />
+        <MessageRow item={{ key: 'r1', role: 'assistant', text: 'Done — the steps now render as lines.', complete: true, reasoning: 'The tool row is a card today. **Trace** wants a line: icon, title, description, status.' }} />
+        <SubagentMonitorCard batch={devRunningBatch} />
+        <SubagentMonitorCard batch={devDoneBatch} />
+        <TodoCard items={devTodos} />
       </Section>
       <Section title="Composer">
         <DevComposer mode={{ kind: 'send', enabled: false }} />
